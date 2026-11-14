@@ -16,6 +16,9 @@
 #include <unistd.h>
 
 static ah_tool registered[16];
+ah_code ah_register_background_tool(ah_engine *engine, const ah_tool *tool, ah_error *error) {
+    return ah_register_tool(engine, tool, error);
+}
 static size_t tool_count;
 static pthread_t yield_owner;
 static unsigned yield_count;

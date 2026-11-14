@@ -1,11 +1,15 @@
 #include "extensions/extensions_internal.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdatomic.h>
+#include <time.h>
 
 /* Link the real extension wrapper to a deterministic transport boundary. */
 struct mcp_client {
     char *reply;
     unsigned requests;
+    bool slow;
+    atomic_uint active, peak;
 };
 
 ah_code mcp_client_open(const char *config, size_t limit, bool loopback, mcp_client **out,
@@ -22,9 +26,18 @@ ah_code mcp_client_request(mcp_client *client, const char *method, const char *p
     (void)call;
     (void)error;
     assert(!strcmp(method, "tools/list") || !strcmp(method, "resources/list") ||
-           !strcmp(method, "resources/templates/list"));
+           !strcmp(method, "resources/templates/list") || !strcmp(method, "tools/call"));
     assert(ah_json_valid(params) && client->reply);
     client->requests++;
+    if (client->slow) {
+        unsigned active = atomic_fetch_add(&client->active, 1) + 1;
+        unsigned peak = atomic_load(&client->peak);
+        while (active > peak && !atomic_compare_exchange_weak(&client->peak, &peak, active)) {
+        }
+        struct timespec pause = {.tv_nsec = 80000000};
+        nanosleep(&pause, NULL);
+        atomic_fetch_sub(&client->active, 1);
+    }
     *result = ah_strdup(client->reply);
     assert(*result);
     *sent = true;
@@ -40,6 +53,8 @@ static ah_extensions *fixture(size_t budget) {
     ah_extensions *extensions = calloc(1, sizeof(*extensions));
     ext_server *server = calloc(1, sizeof(*server));
     assert(extensions && server);
+    assert(pthread_mutex_init(&extensions->mutex, NULL) == 0);
+    assert(pthread_mutex_init(&server->request_mutex, NULL) == 0);
     ah_extensions_config_init(&extensions->config);
     extensions->config.max_catalog_bytes = budget;
     server->id = ah_strdup("fixture");
@@ -190,7 +205,67 @@ static void resource_templates(void) {
     ext_close(extensions);
 }
 
+typedef struct {
+    ah_extensions *extensions;
+    const char *server;
+    uint64_t deadline;
+    bool failed;
+} concurrent_call;
+
+static void *invoke(void *context) {
+    concurrent_call *request = context;
+    char args[128];
+    snprintf(args, sizeof(args), "{\"server\":\"%s\",\"name\":\"slow\",\"arguments\":{}}",
+             request->server);
+    ah_tool_call call = {.arguments_json = args, .deadline_ms = request->deadline};
+    ah_tool_result result = {0};
+    ah_error error = {0};
+    assert(ext_mcp_call(request->extensions, &call, &result, &error) == AH_OK);
+    assert(result.json && !result.outcome_unknown && result.is_error == request->failed);
+    free(result.json);
+    return NULL;
+}
+
+static uint64_t concurrent_requests(bool same_server, bool cancel_waiter) {
+    ah_extensions *extensions = fixture(8192), *other = fixture(8192);
+    ext_server *second = other->servers;
+    other->servers = NULL;
+    ext_close(other);
+    free(second->id);
+    second->id = ah_strdup("second");
+    extensions->servers->next = second;
+    extensions->server_count++;
+    for (ext_server *server = extensions->servers; server; server = server->next) {
+        server->client->slow = true;
+        server->client->reply = ah_strdup("{\"content\":[]}");
+        atomic_init(&server->client->active, 0);
+        atomic_init(&server->client->peak, 0);
+    }
+    concurrent_call calls[] = {{extensions, "fixture", ah_now_ms() + 1000, false},
+                               {extensions, same_server ? "fixture" : "second",
+                                ah_now_ms() + (cancel_waiter ? 10 : 1000), cancel_waiter}};
+    pthread_t threads[2];
+    uint64_t began = ah_now_ms();
+    assert(pthread_create(&threads[0], NULL, invoke, &calls[0]) == 0);
+    struct timespec pause = {.tv_nsec = 1000000};
+    while (!atomic_load(&extensions->servers->client->active))
+        nanosleep(&pause, NULL);
+    assert(pthread_create(&threads[1], NULL, invoke, &calls[1]) == 0);
+    for (unsigned i = 0; i < 2; i++)
+        assert(pthread_join(threads[i], NULL) == 0);
+    uint64_t elapsed = ah_now_ms() - began;
+    assert(extensions->servers->client->requests == (same_server && !cancel_waiter ? 2U : 1U));
+    assert(atomic_load(&extensions->servers->client->peak) == 1);
+    assert(second->client->requests == (same_server ? 0U : 1U));
+    ext_close(extensions);
+    return elapsed;
+}
+
 int main(void) {
+    uint64_t serial = concurrent_requests(true, false);
+    uint64_t parallel = concurrent_requests(false, false);
+    concurrent_requests(true, true);
+    assert(parallel * 4 < serial * 3);
     cursor_budget();
     cache_reuse_and_replacement();
     identities_survive_metadata();

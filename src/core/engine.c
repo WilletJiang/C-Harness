@@ -38,6 +38,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     e->config = *config;
     e->lock_fd = -1;
     atomic_init(&e->cancelled, false);
+    atomic_init(&e->jobs, NULL);
     if (pthread_mutex_init(&e->mailbox_lock, NULL) != 0) {
         free(e);
         return ah_fail(err, AH_IO, "cannot initialize steering mailbox");
@@ -95,7 +96,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         else {
             version = sqlite3_column_int(s, 0);
             e->utf8_store = sqlite3_column_int(s, 1) != 0;
-            if (version > 5)
+            if (version > 6)
                 rc = ah_fail(err, AH_PROTOCOL, "database schema is newer than this runtime");
         }
     }
@@ -152,6 +153,10 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     if (rc == AH_OK)
         rc = agents_schema(e, err);
     if (rc == AH_OK)
+        rc = core_content_schema(e, err);
+    if (rc == AH_OK)
+        rc = core_workspace_schema(e, err);
+    if (rc == AH_OK)
         rc = core_sql(e,
                       "CREATE TABLE IF NOT EXISTS extension_context("
                       "seq INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),"
@@ -159,6 +164,8 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
                       "bytes INTEGER NOT NULL CHECK(bytes>=0),"
                       "UNIQUE(session_id,identity));",
                       err);
+    if (rc == AH_OK)
+        rc = core_context_schema(e, version, err);
     if (rc == AH_OK)
         rc = core_prepare(e,
                           "UPDATE agent_nodes SET resume_pending=1 WHERE session_id IN "
@@ -169,13 +176,15 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         rc = core_done(e, s, err);
     }
     if (rc == AH_OK)
-        rc = core_sql(e, "PRAGMA user_version=5; COMMIT", err);
+        rc = core_sql(e, "PRAGMA user_version=6; COMMIT", err);
     if (rc != AH_OK)
         core_rollback(e);
     if (rc == AH_OK)
         rc = core_recover(e, err);
     if (rc == AH_OK)
         rc = core_task_recover(e, err);
+    if (rc == AH_OK)
+        rc = core_context_restore(e, err);
     if (rc != AH_OK) {
         ah_close(e);
         return rc;
@@ -187,6 +196,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
 void ah_close(ah_engine *e) {
     if (!e)
         return;
+    core_jobs_close(e);
     ext_close(e->extensions);
     core_mailbox_free(e);
     if (e->db)
@@ -216,7 +226,8 @@ ah_code ah_register_tool(ah_engine *e, const ah_tool *tool, ah_error *err) {
             return ah_fail(err, AH_INVALID, "tool names must be alphanumeric or underscore");
     if (isdigit((unsigned char)tool->name[0]) || !strcmp(tool->name, "ask") ||
         !strcmp(tool->name, "wait") || !strcmp(tool->name, "read_result") ||
-        !strcmp(tool->name, "harness_ask") || !strcmp(tool->name, "harness_wait") ||
+        !strcmp(tool->name, "recall") || !strcmp(tool->name, "harness_ask") ||
+        !strcmp(tool->name, "harness_wait") ||
         (e->agents_enabled && agents_tool_schema(tool->name)) || core_find_tool(e, tool->name))
         return ah_fail(err, AH_INVALID, "reserved or duplicate tool name");
     rc = ah_schema_check(tool->parameters_json, err);

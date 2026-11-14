@@ -222,5 +222,6 @@ void ext_catalog_close(ext_catalog *c) {
     free(c->home);
     free(c->workspace);
     free(c->user_home);
+    pthread_mutex_destroy(&c->mutex);
     free(c);
 }

@@ -1,4 +1,4 @@
-#include "core.h"
+#include "content_internal.h"
 
 ah_code ah_session_create(ah_engine *e, const char *model, const char *instructions,
                           char id[AH_ID_CAP], ah_error *err) {
@@ -32,25 +32,26 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
         core_rollback(e);
     return rc;
 }
-ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char *text,
-                  ah_error *err) {
+ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, const char *identity,
+                         int kind, const core_content *content, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
-    if (!sid || !command || !*command || strlen(command) > 256 || !text || !*text ||
-        strlen(text) > e->config.max_context_bytes)
-        return ah_fail(err, AH_INVALID, "bounded nonempty command id and text required");
+    if (!sid || !command || !*command || strlen(command) > 256 || !identity || !content ||
+        !content->json)
+        return ah_fail(err, AH_INVALID, "bounded command and input required");
     sqlite3_stmt *s = NULL;
-    rc = core_prepare(e, "SELECT text FROM commands WHERE session_id=? AND id=?", &s, err);
+    rc = core_prepare(e, "SELECT text,kind FROM commands WHERE session_id=? AND id=?", &s, err);
     if (rc != AH_OK)
         return rc;
     sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(s, 2, command, -1, SQLITE_TRANSIENT);
     int step = sqlite3_step(s);
     if (step == SQLITE_ROW) {
-        bool same = !strcmp((const char *)sqlite3_column_text(s, 0), text);
+        bool same = sqlite3_column_int(s, 1) == kind &&
+                    !strcmp((const char *)sqlite3_column_text(s, 0), identity);
         sqlite3_finalize(s);
-        return same ? AH_OK : ah_fail(err, AH_INVALID, "command id reused with different text");
+        return same ? AH_OK : ah_fail(err, AH_INVALID, "command id reused with different input");
     }
     sqlite3_finalize(s);
     if (step != SQLITE_DONE)
@@ -74,32 +75,22 @@ ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char
         core_session_free(&session);
         return ah_fail(err, AH_BUSY, "session cannot accept input in current state");
     }
-    yyjson_mut_doc *d = ah_mut_doc_new();
-    if (!d) {
-        core_session_free(&session);
-        return ah_fail(err, AH_IO, "out of memory");
-    }
-    yyjson_mut_val *item = yyjson_mut_obj(d);
-    yyjson_mut_doc_set_root(d, item);
-    yyjson_mut_obj_add_str(d, item, "role", "user");
-    yyjson_mut_obj_add_strcpy(d, item, "content", text);
-    char *json = ah_mut_write(d);
-    ah_mut_doc_free(d);
-    if (!json) {
-        core_session_free(&session);
-        return ah_fail(err, AH_IO, "out of memory");
-    }
+    const char *json = content->json;
     atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
     uint64_t after = 0;
     rc = core_begin(e, &after, err);
     if (rc == AH_OK)
-        rc = core_prepare(e, "INSERT INTO commands(session_id,id,text) VALUES(?,?,?)", &s, err);
+        rc = core_prepare(e, "INSERT INTO commands(session_id,id,text,kind) VALUES(?,?,?,?)", &s,
+                          err);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(s, 2, command, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(s, 3, text, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 3, identity, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(s, 4, kind);
         rc = core_done(e, s, err);
     }
+    if (rc == AH_OK)
+        rc = core_content_save(e, sid, content, err);
     unsigned turn = session.turn + (session.state == AH_READY ? 0 : 1);
     if (rc == AH_OK)
         rc = core_add_item(e, sid, turn, json, err);
@@ -119,8 +110,30 @@ ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char
         rc = core_commit(e, after, err);
     else
         core_rollback(e);
-    free(json);
     core_session_free(&session);
+    return rc;
+}
+ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char *text,
+                  ah_error *err) {
+    ah_code rc = core_guard(e, err);
+    if (rc != AH_OK)
+        return rc;
+    size_t complete = 0;
+    if (!text || !*text || strlen(text) > e->config.max_context_bytes ||
+        !ah_utf8_prefix(text, strlen(text), &complete) || complete != strlen(text))
+        return ah_fail(err, AH_INVALID, "bounded nonempty UTF-8 text required");
+    yyjson_mut_doc *d = ah_mut_doc_new();
+    if (!d)
+        return ah_fail(err, AH_IO, "out of memory");
+    yyjson_mut_val *item = yyjson_mut_obj(d);
+    yyjson_mut_doc_set_root(d, item);
+    yyjson_mut_obj_add_str(d, item, "role", "user");
+    yyjson_mut_obj_add_strcpy(d, item, "content", text);
+    core_content content = {.json = ah_mut_write(d)};
+    ah_mut_doc_free(d);
+    rc = content.json ? core_submit_item(e, sid, command, text, 0, &content, err)
+                      : ah_fail(err, AH_IO, "out of memory");
+    core_content_free(&content);
     return rc;
 }
 ah_code ah_resume(ah_engine *e, const char *sid, ah_error *err) {

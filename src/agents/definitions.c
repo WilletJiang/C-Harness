@@ -5,9 +5,13 @@ static const struct {
 } definitions[] = {
     {"spawn",
      "Delegate to a fresh agent with inherited model and instructions, without any "
-     "conversation history. Returns its session ID. Shared tree budgets apply.",
+     "conversation history. Returns its session ID. Shared tree budgets apply. Optional "
+     "write_paths transfers exact host-granted paths from you to the child; broad process "
+     "authority is never inherited.",
      "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\",\"minLength\":1,"
-     "\"maxLength\":64},\"message\":{\"type\":\"string\",\"minLength\":1}},"
+     "\"maxLength\":64},\"message\":{\"type\":\"string\",\"minLength\":1},"
+     "\"write_paths\":{\"type\":\"array\",\"maxItems\":64,\"items\":{\"type\":\"string\","
+     "\"minLength\":1,\"maxLength\":4096}}},"
      "\"required\":[\"name\",\"message\"],\"additionalProperties\":false}"},
     {"send",
      "Queue a message to any agent in this tree by session ID. wake=true starts a new "

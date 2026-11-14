@@ -62,6 +62,8 @@ static ah_code save(ah_engine *e, const char *sid, const char *id, const char *s
 
 ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *verifier,
                          const char *contract_revision, ah_error *error) {
+    if (core_jobs_running(e, NULL))
+        return ah_fail(error, AH_BUSY, "Settle background effects before host verification");
     ah_code code = core_task_allow(e, sid, false, 1, NULL, error);
     if (code != AH_OK)
         return code;

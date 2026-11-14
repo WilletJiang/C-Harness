@@ -9,6 +9,7 @@ ah_code agents_stop(ah_engine *e, const char *sender, const char *recipient, ah_
         return rc;
     if (strcmp(from, to) || !strcmp(sender, recipient) || !strcmp(to, recipient))
         return ah_fail(err, AH_INVALID, "stop requires another non-root agent in this tree");
+    core_jobs_cancel(e, recipient);
     sqlite3_stmt *s = NULL;
     rc = core_prepare(e,
                       "UPDATE agent_nodes SET generation=generation+1,resume_pending=0,"

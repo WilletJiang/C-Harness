@@ -1,4 +1,5 @@
 #include "extensions_internal.h"
+#include "ah/jobs.h"
 #include <ctype.h>
 
 static const char discover_schema[] =
@@ -114,6 +115,10 @@ ah_code ah_extensions_enable(ah_engine *e, const ah_extensions_config *config, a
     ah_extensions *x = calloc(1, sizeof(*x));
     if (!x)
         return ah_fail(error, AH_IO, "out of memory");
+    if (pthread_mutex_init(&x->mutex, NULL)) {
+        free(x);
+        return ah_fail(error, AH_IO, "cannot initialize extension server mutex");
+    }
     x->engine = e;
     x->config = *config;
     rc = ext_catalog_open(config, &x->catalog, error);
@@ -171,7 +176,8 @@ ah_code ah_extensions_enable(ah_engine *e, const ah_extensions_config *config, a
         if (core_find_tool(e, tools[i].name))
             rc = ah_fail(error, AH_INVALID, "extension tool name already registered");
         else
-            rc = ah_register_tool(e, &tools[i], error);
+            rc = i >= 2 ? ah_register_background_tool(e, &tools[i], error)
+                        : ah_register_tool(e, &tools[i], error);
     }
     if (rc != AH_OK) {
         while (e->tool_count > before) {
@@ -203,9 +209,11 @@ void ext_close(ah_extensions *x) {
         free(server->prompts_cursor);
         free(server->templates_cursor);
         free(server->id);
+        pthread_mutex_destroy(&server->request_mutex);
         free(server);
         server = next;
     }
     ext_catalog_close(x->catalog);
+    pthread_mutex_destroy(&x->mutex);
     free(x);
 }

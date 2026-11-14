@@ -2,6 +2,7 @@
 #define _GNU_SOURCE 1
 #endif
 #include "local_internal.h"
+#include "ah/jobs.h"
 #include <errno.h>
 #include <fcntl.h>
 
@@ -166,8 +167,8 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
         approval |= tools->checks[i].approval;
     ah_tool definitions[] = {
         {"apply_changes",
-         "Apply one or more files' non-overlapping exact hunks against optional base_revision "
-         "from read_file/find. Each old_text must match once in the original file. All files are "
+         "Apply non-overlapping exact hunks using base_revision from read_file/find "
+         "(required for coordinated writes). Each old_text must match once. All files are "
          "validated first; per-file writes are atomic, the group is not. Optionally run named host "
          "checks after all edits succeed. On partial/unknown results inspect receipts; never "
          "replay "
@@ -191,7 +192,8 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          ah_read_schema, AH_EFFECT_READ, false, ah_local_read_file, tools, true},
         {"write_file",
          "Atomically replace a workspace-relative regular file with UTF-8 content; refuses "
-         "symlinks.",
+         "symlinks. Supply base_revision from read_file/find, or expect_absent=true to create "
+         "a new file. An expectation is required for coordinated writes.",
          ah_write_schema, AH_EFFECT_WRITE, tools->approve_writes, ah_local_write_file, tools,
          false},
         {"exec",
@@ -202,7 +204,9 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
         if ((!tools->enable_workflows && !strcmp(definitions[i].name, "find")) ||
             (!tools->enable_exec && !strcmp(definitions[i].name, "exec")))
             continue;
-        ah_code code = ah_register_tool(engine, &definitions[i], error);
+        ah_code code = !strcmp(definitions[i].name, "exec")
+                           ? ah_register_background_tool(engine, &definitions[i], error)
+                           : ah_register_tool(engine, &definitions[i], error);
         if (code != AH_OK)
             return code;
     }

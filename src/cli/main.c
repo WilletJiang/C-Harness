@@ -1,5 +1,8 @@
 #include "cli.h"
 #include "extensions.h"
+#include "content.h"
+#include "policies.h"
+#include "ah/content.h"
 #include "ah/responses.h"
 #include "ah/tools.h"
 #include "ah/agents.h"
@@ -16,9 +19,11 @@ static void usage(void) {
     puts("ah " AH_VERSION " — durable C agent runtime\n"
          "Usage: ah COMMAND [options]\n"
          "Commands: new run resume approve deny reply resolve inspect list events fork compact "
-         "agents send stop rpc\n"
+         "agents send stop rpc submit-content artifact-import artifacts forget vacuum context "
+         "workspace\n"
          "  --db PATH            Session database (default ./harness.db)\n"
          "  --workspace PATH     Register bounded local file tools\n"
+         "  --coordinate-writes  Pin workspace and require explicit write grants via RPC\n"
          "  --enable-exec        Explicitly allow process execution (not sandboxed)\n"
          "  --workflows          Add find text search (apply_changes is always available)\n"
          "  --skills             Enable lazy skill discovery and loading (default off)\n"
@@ -31,6 +36,9 @@ static void usage(void) {
          "  --instructions TEXT  Developer instructions for new session\n"
          "  --session ID         Target session\n"
          "  --prompt TEXT        Submit user text before run\n"
+         "  --content JSON       Typed content for new/run/submit-content; excludes --prompt\n"
+         "  --artifact-path PATH --mime MIME  Import an immutable local file\n"
+         "  --forget-tree        Explicitly delete a complete agent tree from its root\n"
          "  --command-id ID      Stable idempotency key for prompt (required)\n"
          "  --operation ID       Approval/input/unknown-operation identity\n"
          "  --value JSON         Input or reconciliation result\n"
@@ -45,6 +53,11 @@ static void usage(void) {
          "  --target ID          Recipient for send/stop\n"
          "  --wake               Send a task that can wake an idle child\n"
          "  --model-tool-bytes N  Per-result model view (default 16384; 0 disables cap)\n"
+         "  --context-bytes N    Request byte limit (default 1 MiB; 4096..64 MiB)\n"
+         "  --auto-context       Archive older complete exchanges at settled boundaries\n"
+         "  --context-trigger N --context-target N --context-reserve N  Byte thresholds\n"
+         "  --keep-exchanges N   Recent exact exchanges (default 3; 0..64)\n"
+         "  --compact-tokens N   Explicit provider native-compaction capability and threshold\n"
          "  --events             Print structured execution events\n"
          "  --allow-http-loopback  Allow local HTTP Responses/MCP fixtures only\n"
          "RPC: bounded JSON lines; method/id/session fields. See docs/protocol.md.\n"
@@ -68,13 +81,20 @@ int main(int argc, char **argv) {
     const char *target = NULL;
     bool wake = false;
     size_t model_tool_bytes = 16384;
+    cli_content_options content = {0};
+    cli_policy_options policies;
+    cli_policy_init(&policies);
     ah_extensions_config extensions;
     ah_extensions_config_init(&extensions);
     for (int i = 2; i < argc; ++i) {
-        cli_option_status extension_option = cli_extension_option(&extensions, argc, argv, &i);
-        if (extension_option == CLI_OPTION_INVALID)
+        cli_option_status option = cli_extension_option(&extensions, argc, argv, &i);
+        if (option == CLI_OPTION_UNHANDLED)
+            option = cli_policy_option(&policies, argc, argv, &i);
+        if (option == CLI_OPTION_UNHANDLED)
+            option = cli_content_option(&content, argc, argv, &i);
+        if (option == CLI_OPTION_INVALID)
             return 2;
-        if (extension_option == CLI_OPTION_HANDLED)
+        if (option == CLI_OPTION_HANDLED)
             continue;
         const char *arg = argv[i];
         if (!strcmp(arg, "--wake")) {
@@ -172,18 +192,20 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if ((exec_enabled || workflows) && !workspace) {
-        fputs("--enable-exec/--workflows require --workspace\n", stderr);
+    if ((exec_enabled || workflows || policies.coordinate_writes) && !workspace) {
+        fputs("--enable-exec/--workflows/--coordinate-writes require --workspace\n", stderr);
         return 2;
     }
     if (prompt && !command_id) {
         fputs("--prompt requires --command-id\n", stderr);
         return 2;
     }
+    if (!cli_content_options_valid(&content, command, prompt, command_id))
+        return 2;
     const char *commands[] = {"new",     "run",     "resume", "approve", "deny", "reply",
                               "resolve", "inspect", "list",   "events",  "fork", "compact",
                               "agents",  "send",    "stop",   "rpc"};
-    bool known = false;
+    bool known = cli_content_command(command) || cli_policy_command(command);
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++)
         if (!strcmp(command, commands[i]))
             known = true;
@@ -195,8 +217,9 @@ int main(int argc, char **argv) {
         fputs("--model is required\n", stderr);
         return 2;
     }
-    bool standalone =
-        !strcmp(command, "new") || !strcmp(command, "list") || !strcmp(command, "rpc");
+    bool standalone = !strcmp(command, "new") || !strcmp(command, "list") ||
+                      !strcmp(command, "rpc") || !strcmp(command, "vacuum") ||
+                      !strcmp(command, "workspace");
     if (!standalone && !session) {
         fputs("--session is required\n", stderr);
         return 2;
@@ -231,12 +254,16 @@ int main(int argc, char **argv) {
     ah_config config;
     ah_config_init(&config);
     config.database_path = db;
+    if (policies.context_bytes)
+        config.max_context_bytes = policies.context_bytes;
     config.max_parallel_tools = parallel;
     config.max_model_tool_bytes = model_tool_bytes;
     config.provider = ah_responses_provider(responses);
     config.observer = cli_observe;
     config.observer_context = &cli;
     code = ah_open(&config, &cli.engine, &error);
+    if (code == AH_OK)
+        code = cli_policy_enable(cli.engine, &policies, workspace, &error);
     if (code == AH_OK &&
         (extensions.enable_skills || extensions.enable_mcp || extensions.enable_plugins)) {
         extensions.workspace = workspace;
@@ -277,7 +304,12 @@ int main(int argc, char **argv) {
         } else if (!strcmp(command, "new")) {
             code = ah_session_create(cli.engine, model, instructions, id, &error);
             session = id;
-        } else if (!strcmp(command, "list"))
+        } else if (cli_content_command(command))
+            code = cli_content_execute(cli.engine, command, session, command_id, &content, &json,
+                                       &error);
+        else if (cli_policy_command(command))
+            code = cli_policy_execute(cli.engine, command, session, &json, &error);
+        else if (!strcmp(command, "list"))
             code = ah_sessions_json(cli.engine, &json, &error);
         else if (!strcmp(command, "agents"))
             code = ah_agents_json(cli.engine, session, &json, &error);
@@ -305,6 +337,8 @@ int main(int argc, char **argv) {
             code = ah_compact(cli.engine, session, summary, keep, &error);
         if (code == AH_OK && prompt && strcmp(command, "send"))
             code = ah_submit(cli.engine, session, command_id, prompt, &error);
+        if (code == AH_OK && content.json && strcmp(command, "submit-content"))
+            code = ah_submit_content(cli.engine, session, command_id, content.json, &error);
         if (code == AH_OK && !strcmp(command, "run"))
             code = ah_run(cli.engine, session, &error);
         if (!cli.rpc && !json && session && code == AH_OK)

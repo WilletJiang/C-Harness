@@ -5,6 +5,7 @@
 #include "ah/tools.h"
 #include "ah/task.h"
 #include "ah/agents.h"
+#include "ah/context.h"
 #include <sqlite3.h>
 #include <stdatomic.h>
 #include <pthread.h>
@@ -15,6 +16,7 @@ typedef struct core_steering {
 } core_steering;
 typedef struct {
     ah_tool tool;
+    bool background;
     char *name, *description, *schema;
 } core_tool;
 struct ah_engine {
@@ -22,6 +24,9 @@ struct ah_engine {
     ah_agents_config agents;
     bool agents_enabled;
     struct ah_extensions *extensions;
+    ah_context_config context_policy;
+    bool context_enabled;
+    bool context_history;
     void (*yield)(void *);
     void *yield_context;
     sqlite3 *db;
@@ -29,6 +34,7 @@ struct ah_engine {
     int lock_fd;
     core_tool *tools;
     size_t tool_count;
+    _Atomic(struct core_jobs *) jobs;
     atomic_bool cancelled;
     bool running;
     bool observing;
@@ -68,6 +74,17 @@ ah_code core_load(ah_engine *, const char *, core_session *, ah_error *);
 void core_session_free(core_session *);
 ah_code core_id(char[AH_ID_CAP], ah_error *);
 ah_code core_add_item(ah_engine *, const char *, unsigned, const char *, ah_error *);
+ah_code core_content_schema(ah_engine *, ah_error *);
+ah_code core_content_fork(ah_engine *, const char *, const char *, ah_error *);
+ah_code core_content_expand(ah_engine *, const char *, yyjson_mut_doc *, yyjson_mut_val *, size_t *,
+                            ah_error *);
+ah_code core_context_schema(ah_engine *, int, ah_error *);
+ah_code core_context_restore(ah_engine *, ah_error *);
+const char *core_context_tool_schema(void);
+ah_code core_context_compact(ah_engine *, core_session *, size_t, bool *, ah_error *);
+ah_code core_context_fork(ah_engine *, const char *, const char *, ah_error *);
+ah_code core_context_recall(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
+ah_code core_context_native(ah_engine *, const char *, sqlite3_int64, ah_error *);
 ah_code core_next_operation(ah_engine *, const char *, core_operation *, ah_error *);
 ah_code core_get_operation(ah_engine *, const char *, const char *, core_operation *, ah_error *);
 void core_operation_free(core_operation *);
@@ -84,9 +101,23 @@ const char *core_builtin_schema(const char *);
 ah_code core_request(ah_engine *, const core_session *, char **, ah_error *);
 ah_code core_accept_response(ah_engine *, core_session *, const char *, ah_error *);
 ah_code core_execute_operation(ah_engine *, core_session *, core_operation *, ah_error *);
+ah_code core_complete_operation(ah_engine *, core_session *, core_operation *, ah_tool_result *,
+                                ah_code, const ah_error *, ah_code, ah_error *);
+bool core_jobs_available(ah_engine *);
+bool core_jobs_running(ah_engine *, const char *);
+ah_code core_jobs_start(ah_engine *, core_session *, core_operation *, core_tool *,
+                        const ah_tool_call *, ah_error *);
+ah_code core_jobs_finish(ah_engine *, core_session *, ah_error *);
+void core_jobs_wait(ah_engine *, unsigned);
+void core_jobs_cancel(ah_engine *, const char *);
+void core_jobs_close(ah_engine *);
 ah_code core_execute_parallel(ah_engine *, core_session *, const core_operation *, bool *,
                               ah_error *);
 ah_code core_guard(ah_engine *, ah_error *);
+ah_code core_workspace_schema(ah_engine *, ah_error *);
+ah_code core_workspace_authorize(ah_engine *, const char *, const core_operation *,
+                                 const core_tool *, bool *, ah_error *);
+ah_code core_workspace_delegate(ah_engine *, const char *, const char *, yyjson_val *, ah_error *);
 char *core_result_view(ah_engine *, const char *, const char *, bool);
 char *core_observation_view(ah_engine *, const char *, const core_operation *, const char *, bool,
                             char[65], ah_error *);

@@ -10,7 +10,7 @@ from .common import terminate, drain_stderr
 
 
 async def run_harness(
-    directory, driver, codex, model, effort, prompt, duration, barrier=None
+    directory, driver, codex, model, effort, prompt, duration, barrier=None, environment=None
 ):
     directory = pathlib.Path(directory)
     workspace = directory / "workspace"
@@ -38,6 +38,7 @@ async def run_harness(
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
         limit=8 * 1024 * 1024,
+        env=environment,
     )
     p.stdin.write(prompt.encode())
     await p.stdin.drain()

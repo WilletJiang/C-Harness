@@ -130,3 +130,51 @@ after retaining the necessary compact measurements; retain the Keychain login.
 Historical reports and ledgers live in [docs/evaluations](../docs/evaluations/README.md).
 The layout changed after those experiments; their recorded source hashes refer to
 the original commits. Prompt/specification contents remain unchanged.
+
+## Repeated baseline/candidate acceptance comparison
+
+Keep separately built baseline and candidate drivers, then run the fixed short
+(`update`) and medium (`intervals`, `reconcile`) tasks in paired trials:
+
+```sh
+python3 -B -m host.auth exec -- python3 -B -m evals.compare \
+  --baseline-driver /private/baseline/live_driver \
+  --candidate-driver /private/candidate/live_driver \
+  --output /private/fresh-paired-report --model gpt-6.1-sol --effort low \
+  --repetitions 3 --seed 417 --order alternating
+```
+
+Add `--long` for Workboard or use repeated `--case` selections. `--timeout` and
+`--long-timeout` are external observation ceilings, never added to prompts. The
+same model and effort apply to both arms. `--baseline-runner codex` optionally
+uses the existing Codex adapter instead of a baseline C driver. Model/tool counts
+unavailable from that adapter remain null; observed actions and reported usage
+are separate fields.
+
+`--env AH_EVAL_AUTO_CONTEXT=1`, `--env AH_EVAL_AGENTS=4` and
+`--env AH_EVAL_PARALLEL_TOOLS=4` set shared C-driver controls. The defaults preserve
+the existing driver behavior: context management and agents off, four parallel
+read workers. Agent runs decorate root and child requests identically and dispatch
+sandboxed exec as background jobs. Per-arm `--baseline-env` / `--candidate-env`
+make deliberate differences explicit. Only documented feature flags are accepted;
+inherited `AH_EVAL_*` options are removed, and token values never enter manifests.
+Drivers report applied controls; older binaries that ignore flags remain visibly
+unconfirmed. Codex does not consume these C-driver controls.
+
+The manifest records binary hashes, grader hashes, exact input hashes, prompts,
+seed and actual pair order before work starts. Graders are copied outside model
+workspaces, made read-only and hash-checked before and after use. Every attempt is
+retained, including exceptions, failed graders and externally censored work. The
+endurance acceptance rule includes both original checks and the existing audit,
+plus preserved inputs, requested deliverables and independently rerun generated
+tests; the audit is frozen before these trials.
+
+`results.json` contains every attempt and its observed usage; `summary.json`
+reports acceptance, censoring, per-case accepted completion times and paired time
+ratios only when both attempts pass. Time to acceptance includes runner startup,
+execution, shutdown and host grading. Correct files found after a timeout remain
+censored, with no accepted time. Missing usage is unknown or explicitly incomplete;
+cached/reasoning tokens remain subsets. No P95 or broad speed claim is inferred
+from a few trials. Compare acceptance first and preserve failed attempts when
+repeating a study. Offline orchestration tests use injected runners; driver tests
+use loopback fixtures only.

@@ -10,7 +10,12 @@ consume subscription/API quotas. Tests create temporary state and clean it up.
 | stream | Every fragmentation width, UTF-8/CRLF/BOM, duplicate/oversized/deep JSON, terminal barriers |
 | stream_items | Completed item reconstruction when terminal output is empty; out-of-order indices, gaps, duplicate/conflicting identities and snapshots, encrypted reasoning, failure/EOF barriers |
 | tools | Descriptor-relative paths, traversal/symlinks/FIFOs, UTF-8 line/byte paging with complete-file revisions, atomic writes, schema numeric edges, process environment/FD isolation, cancellation/flood/descendant cleanup |
+| jobs | Real subprocess overlap with fixed receipts at limits 1 and 2, approvals, per-operation cancellation, agent interruption, deadline/unknown recovery, killed worker process and no repeated effect |
 | parallel | Opt-in concurrency, write/input/approval barriers, cancellation/deadlines, budget enforcement, receipt replay after task budget exhaustion, ordered receipts and worker timing |
+| context_policy | Complete-exchange archives, exact user/human constraints across fork/reopen, bounded recall, native encrypted compaction, rollback and cap-crossing acceptance |
+| content / retention | Native content shapes, immutable blobs, private/shared references, size/digest checks, transactional import, protected deletion and physical VACUUM |
+| workspace | Disjoint ownership, atomic delegation, revision-bound writes, absent-file creation and broad-effect barriers |
+| eval_compare / eval_driver | Frozen graders, natural-completion pairing, failures/censoring, configuration fairness, child request parity and out-of-order usage attribution |
 | context | Over-budget/failed-turn compaction recovery, retained user constraints/steering, unresolved exchange rejection, transactional forks |
 | results | Bounded previews, exact UTF-8 retrieval, session/fork access, stable history, new/legacy pause names |
 | recovery | Whole-batch process-crash recovery, no silent retries, version 1 schema migration/backfill |
@@ -27,7 +32,7 @@ consume subscription/API quotas. Tests create temporary state and clean it up.
 | extension_catalog | Lazy metadata discovery, Codex effective policy, portable/compatibility plugins, installed symlinks, unavailable components, 1,000-skill scale and bounded scanning |
 | mcp | Actual stdio/HTTP JSON/SSE, handshake/version/session reuse, cancellation/deadlines, server requests, process cleanup, secret redaction and no implicit POST replay |
 | extension_mcp | Public CLI discovery/schema/cache/call flow, approval across restart, disabled tools, unknown effects and explicit reconciliation |
-| extension_server_cache | Real wrapper with transport fixture: retained cursor accounting, atomic cache replacement, metadata reuse, exact resource identities |
+| extension_server_cache | Real wrapper with transport fixture: retained cursor accounting, atomic cache replacement, metadata reuse, exact resource identities, concurrent server isolation and deadline-aware serialization |
 | http_async | Real concurrent HTTP/SSE, per-request cancellation/retries/routing, token ownership and public CLI delegation/follow-up |
 | http | Scripted real HTTP/SSE, rate/transport retries, no retry after output, auth/MIME/redirect rejection, deadline/cancellation, connection reuse |
 | cli | Actual executable: network-to-tool-to-model loop, persisted approval and Ask across restarts, dedupe/fork/checkpoint, RPC |
@@ -78,6 +83,8 @@ these tests. External executor cancellation is cooperative and arbitrary shell
 side effects cannot be transactionally rolled back.
 
 ## Recorded evidence
+
+- [Long-task runtime, concurrency and subscription checks](evaluations/long-task-validation.md)
 
 The 0.6 extension change passed 34 Release/sanitizer contracts and the isolated
 build/test/install/external-client check on macOS. A metadata-only check of the

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ah VERSION 0.6.0 LANGUAGES C)
+project(ah VERSION 0.7.0 LANGUAGES C)
 
 include(CTest)
 include(GNUInstallDirs)
@@ -39,8 +39,10 @@ set_target_properties(ah_toml PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(ah STATIC
   src/common.c src/hash.c
-  src/core/context.c src/core/engine.c src/core/execute.c src/core/mailbox.c src/core/observations.c
-  src/core/operations.c src/core/parallel.c src/core/recovery.c src/core/response.c
+  src/core/content.c src/core/content_codec.c src/core/content_store.c src/core/content_expand.c src/core/retention.c
+  src/core/context_policy.c src/core/context_archive.c src/core/context_recall.c
+  src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/mailbox.c src/core/observations.c
+  src/core/operations.c src/core/jobs.c src/core/parallel.c src/core/recovery.c src/core/response.c src/core/request.c
   src/core/results.c src/core/runtime.c src/core/inference.c src/core/session.c src/core/store.c src/core/telemetry.c
   src/core/task_budget.c src/core/task_store.c src/core/task_verify.c src/core/task.c
   src/agents/scheduler.c src/agents/model.c src/agents/store.c src/agents/mail.c
@@ -62,13 +64,15 @@ target_include_directories(ah PUBLIC
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_include_directories(ah PRIVATE src)
 target_link_libraries(ah PRIVATE ah_json ah_toml CURL::libcurl SQLite::SQLite3 Threads::Threads)
-if(UNIX AND NOT APPLE)
+if(APPLE)
+  target_link_libraries(ah PRIVATE "-framework CoreFoundation")
+elseif(UNIX)
   target_link_libraries(ah PRIVATE m)
 endif()
 
 add_executable(ah_cli
   src/cli/main.c src/cli/output.c src/cli/rpc.c src/cli/credential.c src/cli/signals.c
-  src/cli/extensions.c)
+  src/cli/extensions.c src/cli/content.c src/cli/policies.c)
 set_target_properties(ah_cli PROPERTIES OUTPUT_NAME ah)
 ah_compile_target(ah_cli)
 target_include_directories(ah_cli PRIVATE src)

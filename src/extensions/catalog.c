@@ -8,6 +8,10 @@ ah_code ext_catalog_open(const ah_extensions_config *options, ext_catalog **out,
     ext_catalog *c = calloc(1, sizeof(*c));
     if (!c)
         return ah_fail(error, AH_IO, "Out of memory");
+    if (pthread_mutex_init(&c->mutex, NULL)) {
+        free(c);
+        return ah_fail(error, AH_IO, "Cannot initialize extension catalog mutex");
+    }
     c->options = *options;
     if (!c->options.max_catalog_entries)
         c->options.max_catalog_entries = 512;
@@ -17,6 +21,7 @@ ah_code ext_catalog_open(const ah_extensions_config *options, ext_catalog **out,
         c->options.max_result_bytes = 64u * 1024u;
     if (c->options.max_catalog_entries > 10000 ||
         c->options.max_catalog_bytes > 64u * 1024u * 1024u) {
+        pthread_mutex_destroy(&c->mutex);
         free(c);
         return ah_fail(error, AH_LIMIT, "Extension catalog limits exceed hard limits");
     }
@@ -116,8 +121,9 @@ static ah_code discover(ext_catalog *c, const char *kind, const char *plugin, ah
     return rc;
 }
 
-ah_code ext_catalog_query(ext_catalog *c, const char *kind, const char *query, const char *plugin,
-                          size_t offset, size_t limit, char **json, ah_error *error) {
+static ah_code catalog_query(ext_catalog *c, const char *kind, const char *query,
+                             const char *plugin, size_t offset, size_t limit, char **json,
+                             ah_error *error) {
     if (!c || !kind || !json)
         return ah_fail(error, AH_INVALID, "Missing catalog query");
     *json = NULL;
@@ -193,7 +199,7 @@ static ah_code lookup(ext_catalog *c, const char *id, const char *kind, ext_entr
     return AH_OK;
 }
 
-ah_code ext_catalog_skill(ext_catalog *c, const char *id, char **path, ah_error *error) {
+static ah_code catalog_skill(ext_catalog *c, const char *id, char **path, ah_error *error) {
     if (!c || !id || !path)
         return ah_fail(error, AH_INVALID, "Missing skill selection");
     *path = NULL;
@@ -215,7 +221,7 @@ ah_code ext_catalog_skill(ext_catalog *c, const char *id, char **path, ah_error 
     return AH_OK;
 }
 
-ah_code ext_catalog_server(ext_catalog *c, const char *id, char **json, ah_error *error) {
+static ah_code catalog_server(ext_catalog *c, const char *id, char **json, ah_error *error) {
     if (!c || !id || !json)
         return ah_fail(error, AH_INVALID, "Missing server selection");
     *json = NULL;
@@ -227,4 +233,32 @@ ah_code ext_catalog_server(ext_catalog *c, const char *id, char **json, ah_error
         return rc;
     *json = ah_strdup(entry->config);
     return *json ? AH_OK : ah_fail(error, AH_IO, "Out of memory");
+}
+
+ah_code ext_catalog_query(ext_catalog *c, const char *kind, const char *query, const char *plugin,
+                          size_t offset, size_t limit, char **json, ah_error *error) {
+    if (!c)
+        return ah_fail(error, AH_INVALID, "Missing catalog");
+    pthread_mutex_lock(&c->mutex);
+    ah_code code = catalog_query(c, kind, query, plugin, offset, limit, json, error);
+    pthread_mutex_unlock(&c->mutex);
+    return code;
+}
+
+ah_code ext_catalog_skill(ext_catalog *c, const char *id, char **path, ah_error *error) {
+    if (!c)
+        return ah_fail(error, AH_INVALID, "Missing catalog");
+    pthread_mutex_lock(&c->mutex);
+    ah_code code = catalog_skill(c, id, path, error);
+    pthread_mutex_unlock(&c->mutex);
+    return code;
+}
+
+ah_code ext_catalog_server(ext_catalog *c, const char *id, char **json, ah_error *error) {
+    if (!c)
+        return ah_fail(error, AH_INVALID, "Missing catalog");
+    pthread_mutex_lock(&c->mutex);
+    ah_code code = catalog_server(c, id, json, error);
+    pthread_mutex_unlock(&c->mutex);
+    return code;
 }

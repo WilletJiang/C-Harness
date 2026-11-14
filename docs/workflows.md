@@ -180,5 +180,6 @@ the older apply schema, fail the normal availability/policy check before effects
 historical receipts are not rewritten. Default C builds require no new package.
 WebSocket remains gated: the tested
 system libcurl 8.7.1 has exported WS APIs but no compiled `ws/wss` protocol support.
-Early dispatch, asynchronous tool delivery and raw/custom patch protocols remain
-unimplemented experiments, independent of these synchronous combinations.
+Early dispatch, provider-native asynchronous tool delivery and raw/custom patch
+protocols remain unimplemented experiments. Host background jobs for native exec
+and MCP are available independently of these synchronous workflow combinations.

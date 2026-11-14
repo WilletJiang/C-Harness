@@ -4,7 +4,9 @@ Version 0.5 adds opt-in delegation through `ah/agents.h`. Every child starts wit
 its assigned task and the parent's model, host instructions and registered tools.
 Conversation items, summaries, previous tool output and historical result access
 belong to their original sessions. Each child has a stable session ID and its own
-cache routing key. The workspace and host tool contexts are shared.
+cache routing key. The workspace and host tool contexts are shared. Opt-in
+[workspace coordination](workspaces.md) gives agents disjoint write ownership;
+children receive no grants unless explicitly delegated.
 
 ## Embedding
 
@@ -52,17 +54,26 @@ transfers a completed JSON response or reports a terminal error. Release cancels
 and frees a handle synchronously. An error from poll stops the tree and settles
 the active execution state.
 
-Registered effect callbacks execute serially on the owner and can persist their
-existing checkpoints. Long callbacks can call `ah_tool_call.yield` to advance
-concurrent model transport. Native `exec` and the owner waiting for parallel READ
-workers use this hook. It advances I/O while retaining the current effect's
-execution boundary. Parallel READ workers receive a null yield hook.
+Ordinary registered effect callbacks execute on the owner and can persist their
+existing checkpoints. They can call `ah_tool_call.yield` to advance model transport;
+the hook does not reenter other tool callbacks. Parallel READ workers receive a null
+yield hook.
+
+`ah_register_background_tool` opts thread-safe, cancellation-aware callbacks into
+bounded jobs. Native `exec` and the MCP entrypoints use this path. A slow job parks
+only its own session: other agents can accept model responses and dispatch tools.
+The owner alone records operation intents and final receipts. Jobs preserve session
+order, consume the existing budgets once, and receive no checkpoint/yield callbacks.
+`ah_cancel_job` targets the durable operation ID; stopping an agent cancels its live
+job and fences late receipts. Run cancellation drains jobs before releasing contexts.
+Unknown external effects still require explicit reconciliation. This host scheduling
+does not implement or advertise a provider's native `async:true` tool protocol.
 
 ## Model tools
 
 | Tool | Arguments | Behavior |
 | --- | --- | --- |
-| `spawn` | `name`, `message` | Create a fresh child and return its `id` and name |
+| `spawn` | `name`, `message`, optional `write_paths` | Create a fresh child; atomically transfer exact parent grants when requested |
 | `send` | `target`, `message`, optional `wake` | Send attributed mail within the tree |
 | `join` | `ids`, optional `mode`, `timeout_ms` | Park until the selected children settle or attention is needed |
 | `stop` | `target` | Interrupt another child, retaining its identity and recorded effects |

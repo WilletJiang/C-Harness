@@ -204,7 +204,7 @@ class Transport(unittest.TestCase):
     def stdio(self, mode="echo", requests=None, limit=1024 * 1024, extra=None):
         with tempfile.TemporaryDirectory(prefix="ah-mcp-test-") as tmp:
             marker = Path(tmp) / "pid"
-            config = {"command": sys.executable, "args": [__file__, "--stdio", mode, str(marker)]}
+            config = {"command": sys.executable, "args": ["-B", __file__, "--stdio", mode, str(marker)]}
             config.update(extra or {})
             result = self.run_client(config, requests, limit)
             if marker.exists():

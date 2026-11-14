@@ -2,6 +2,9 @@
 #include "ah/ah.h"
 #include "ah/responses.h"
 #include "ah/tools.h"
+#include "ah/agents.h"
+#include "ah/context.h"
+#include "ah/jobs.h"
 #include "internal.h"
 #include "cli/cli.h"
 #include "tools/local_internal.h"
@@ -16,6 +19,20 @@ typedef struct {
     const char *workspace;
     const char *codex;
 } evaluation;
+
+static bool option(const char *name, unsigned fallback, unsigned maximum, unsigned *out) {
+    const char *text = getenv(name);
+    if (!text) {
+        *out = fallback;
+        return true;
+    }
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 10);
+    if (!*text || *end || value > maximum)
+        return false;
+    *out = (unsigned)value;
+    return true;
+}
 
 static ah_code sandbox_exec(void *context, const ah_tool_call *call, ah_tool_result *result,
                             ah_error *error) {
@@ -85,6 +102,13 @@ int main(int argc, char **argv) {
         return 2;
     }
     const char *effort = argc == 7 ? argv[5] : "low";
+    unsigned auto_context, agents, parallel;
+    if (!option("AH_EVAL_AUTO_CONTEXT", 0, 1, &auto_context) ||
+        !option("AH_EVAL_AGENTS", 0, 32, &agents) ||
+        !option("AH_EVAL_PARALLEL_TOOLS", 4, 16, &parallel) || !parallel) {
+        fputs("Invalid evaluation runtime option\n", stderr);
+        return 2;
+    }
     unsigned long run_seconds = 240;
     if (argc == 7) {
         char *end = NULL;
@@ -116,7 +140,9 @@ int main(int argc, char **argv) {
     pc.max_retries = 0;
     pc.observe = eval_transport_observe;
     ah_code code = ah_responses_open(&pc, &provider, &error);
-    evaluation eval = {.model = {.inner = ah_responses_provider(provider), .effort = effort},
+    evaluation eval = {.model = {.inner = ah_responses_provider(provider),
+                                 .async_inner = ah_responses_async_provider(provider),
+                                 .effort = effort},
                        .workspace = argv[1],
                        .codex = argv[4]};
     const char *cache_key = getenv("AH_EVAL_CACHE_KEY"),
@@ -140,6 +166,7 @@ int main(int argc, char **argv) {
     config.provider = eval_model_provider(&eval.model);
     config.observer = observe;
     config.run_timeout_ms = run_seconds * 1000;
+    config.max_parallel_tools = parallel;
     if (argc == 7) {
         config.max_model_calls = 1024;
         config.max_tool_calls = 4096;
@@ -156,6 +183,16 @@ int main(int argc, char **argv) {
         .workspace = argv[1], .enable_exec = true, .approve_writes = false};
     if (code == AH_OK)
         code = ah_open(&config, &engine, &error);
+    ah_context_config context_config;
+    ah_context_config_init(&context_config);
+    if (code == AH_OK && auto_context)
+        code = ah_context_enable(engine, &context_config, &error);
+    ah_agents_config agent_config;
+    ah_agents_config_init(&agent_config);
+    agent_config.provider = eval_model_async_provider(&eval.model);
+    agent_config.max_active = agents;
+    if (code == AH_OK && agents)
+        code = ah_agents_enable(engine, &agent_config, &error);
     if (code == AH_OK)
         code = ah_local_tools_open(&file_config, &files, &error);
     if (code == AH_OK)
@@ -176,7 +213,17 @@ int main(int argc, char **argv) {
                        &eval,
                        false};
     if (code == AH_OK)
-        code = ah_register_tool(engine, &process, &error);
+        code = agents ? ah_register_background_tool(engine, &process, &error)
+                      : ah_register_tool(engine, &process, &error);
+    if (code == AH_OK) {
+        printf("{\"event\":\"evaluation.config\",\"data\":{"
+               "\"AH_EVAL_AUTO_CONTEXT\":\"%u\",\"AH_EVAL_AGENTS\":\"%u\","
+               "\"AH_EVAL_PARALLEL_TOOLS\":\"%u\",\"AH_EVAL_CACHE_KEY\":\"%s\","
+               "\"AH_EVAL_CACHE_DIAGNOSTICS\":\"%u\",\"AH_EVAL_TRACE_REQUESTS\":\"%u\"}}\n",
+               auto_context, agents, parallel, eval.model.omit_cache_key ? "omit" : "session",
+               eval.model.diagnostics, eval.model.trace);
+        fflush(stdout);
+    }
     bool signals = code == AH_OK && cli_signals_start(engine);
     if (code == AH_OK && !signals)
         code = ah_fail(&error, AH_IO, "Could not install evaluation cancellation handler");

@@ -156,6 +156,11 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
     sqlite3_finalize(current);
     if (code != AH_OK)
         return code;
+    if (core_jobs_running(e, session->id)) {
+        if (session->state != AH_RUNNING)
+            core_jobs_cancel(e, session->id);
+        return core_jobs_finish(e, session, error);
+    }
     if (job->handle) {
         bool done = false;
         ah_code code = agents_model_finish(job, &done, error);
@@ -207,10 +212,21 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
 static ah_code suspend_jobs(agent_scheduler *scheduler, ah_error *error) {
     ah_engine *e = scheduler->engine;
     ah_code code = AH_OK;
+    core_jobs_cancel(e, NULL);
+    for (size_t i = 0; i < scheduler->count; ++i) {
+        scheduler->jobs[i]->cancelled = true;
+        agents_model_release(scheduler->jobs[i]);
+    }
+    while (core_jobs_running(e, NULL)) {
+        core_jobs_wait(e, 20);
+        for (size_t i = 0; i < scheduler->count; ++i) {
+            ah_code finished = core_jobs_finish(e, &scheduler->jobs[i]->session, error);
+            if (finished != AH_OK && finished != AH_CANCELLED && finished != AH_LIMIT)
+                code = finished;
+        }
+    }
     for (size_t i = 0; i < scheduler->count; ++i) {
         agent_job *job = scheduler->jobs[i];
-        job->cancelled = true;
-        agents_model_release(job);
         if (job->session.state != AH_RUNNING && job->session.state != AH_READY &&
             job->session.state != AH_WAITING_AGENTS &&
             (i != 0 || job->session.state != AH_COMPLETED))
@@ -291,8 +307,9 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
         for (size_t i = 0; i < scheduler.count && code == AH_OK; ++i) {
             agent_job *job = scheduler.jobs[i];
             ah_state state = job->session.state;
-            if (!job->handle && (state == AH_COMPLETED || state == AH_IDLE || state == AH_STOPPED ||
-                                 state == AH_FAILED)) {
+            if (!job->handle && !core_jobs_running(e, job->session.id) &&
+                (state == AH_COMPLETED || state == AH_IDLE || state == AH_STOPPED ||
+                 state == AH_FAILED)) {
                 bool changed = false;
                 code = agents_drain(e, &job->session, &changed, error);
             }
@@ -338,11 +355,14 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
             break;
         bool changed =
             before != sqlite3_total_changes64(e->db) || active_before != scheduler.active;
-        if (!scheduler.active && !changed && !waiting)
+        bool tools_active = core_jobs_running(e, NULL);
+        if (!scheduler.active && !tools_active && !changed && !waiting)
             break;
         e->deadline = scheduler.deadline;
         unsigned delay = changed ? 0 : 20;
-        code = e->agents.provider.poll(e->agents.provider.context, delay, error);
+        code = e->agents.provider.poll(e->agents.provider.context, tools_active ? 0 : delay, error);
+        if (tools_active && code == AH_OK)
+            core_jobs_wait(e, delay);
     }
     if (code != AH_OK) {
         ah_error cleanup_error = {0};

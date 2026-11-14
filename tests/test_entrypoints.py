@@ -39,6 +39,7 @@ class PackageChecks(unittest.TestCase):
             for module in (
                 "host.auth",
                 "evals.smoke.run",
+                "evals.compare",
                 "evals.endurance.run",
                 "evals.cache.run",
                 "evals.transport.c_sanity",

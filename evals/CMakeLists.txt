@@ -9,12 +9,15 @@ if(AH_LIVE_EVAL)
 endif()
 
 if(BUILD_TESTING)
+  add_test(NAME eval_compare COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.test_compare)
   add_test(NAME eval_cases COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.smoke.test_cases)
   add_test(NAME eval_endurance COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.endurance.test_endurance)
   add_test(NAME cache_trace COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.cache.test_cache)
-  set_tests_properties(eval_cases eval_endurance cache_trace PROPERTIES
+  set_tests_properties(eval_compare eval_cases eval_endurance cache_trace PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} TIMEOUT 30)
   if(AH_LIVE_EVAL)
+    add_test(NAME eval_driver COMMAND ${Python3_EXECUTABLE} -B -m evals.test_driver $<TARGET_FILE:live_driver>)
+    set_tests_properties(eval_driver PROPERTIES WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} TIMEOUT 30)
     add_test(NAME cache_transport COMMAND ${Python3_EXECUTABLE} -B
       ${CMAKE_CURRENT_SOURCE_DIR}/cache/test_transport.py $<TARGET_FILE:cache_driver> $<TARGET_FILE:live_driver>)
     set_tests_properties(cache_transport PROPERTIES TIMEOUT 45)

@@ -4,7 +4,9 @@ Status: design and rollout gates, 2026-11-05. The bounded phase 0–3 implementa
 is now documented in [workflows](workflows.md): telemetry, optional contextual search,
 versioned structured hunks, durable edit/check phases, active-context read reuse and
 task acceptance with persistent budgets. The observations below explain the design;
-unified/custom patch encoding and asynchronous overlap remain proposals. The
+unified/custom patch encoding remains a proposal. Bounded host-side tool jobs now
+overlap across agents as documented in [subagents](subagents.md); provider-native
+asynchronous tool delivery remains separate. The
 [paired smoke evaluation](evaluations/execution-evaluation.md) does not show a general
 speedup, so expanded tools are opt-in. The production provider remains HTTP/SSE;
 native WS is blocked by missing compiled libcurl support on the tested machine.
