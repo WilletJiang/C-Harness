@@ -6,15 +6,17 @@
 
 const char ah_write_schema[] =
     "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\",\"minLength\":1,"
-    "\"maxLength\":4096},\"content\":{\"type\":\"string\",\"maxLength\":1048576}},"
+    "\"maxLength\":4096},\"content\":{\"type\":\"string\",\"maxLength\":1048576},"
+    "\"base_revision\":{\"type\":\"string\",\"minLength\":64,\"maxLength\":64},"
+    "\"expect_absent\":{\"type\":\"boolean\"}},"
     "\"required\":[\"path\",\"content\"],\"additionalProperties\":false}";
 ah_code ah_local_replace(int parent, const char *leaf, const char *content, size_t length,
-                         const struct stat *original, const ah_tool_call *call,
+                         const struct stat *original, bool expect_absent, const ah_tool_call *call,
                          ah_tool_result *result, ah_error *error) {
     struct stat st;
     int exists = fstatat(parent, leaf, &st, AT_SYMLINK_NOFOLLOW);
     if ((!exists && !S_ISREG(st.st_mode)) || (exists && errno != ENOENT) ||
-        (original && (exists || !ah_local_same_file(original, &st))))
+        (original && (exists || !ah_local_same_file(original, &st))) || (expect_absent && !exists))
         return ah_local_error(call, result, error, AH_INVALID,
                               "Write target is not regular or changed during edit");
     mode_t mode = exists ? 0600 : st.st_mode & 07777;
@@ -51,16 +53,21 @@ ah_code ah_local_replace(int parent, const char *leaf, const char *content, size
     if (code == AH_OK) {
         exists = fstatat(parent, leaf, &st, AT_SYMLINK_NOFOLLOW);
         if ((!exists && !S_ISREG(st.st_mode)) || (exists && errno != ENOENT) ||
-            (original && (exists || !ah_local_same_file(original, &st))))
+            (original && (exists || !ah_local_same_file(original, &st))) ||
+            (expect_absent && !exists))
             code = AH_INVALID;
     }
     bool committed = false;
     if (code == AH_OK) {
-        if (renameat(parent, temporary, parent, leaf))
+        /* linkat supplies atomic create-if-absent on POSIX, unlike renameat. */
+        int replaced = expect_absent ? linkat(parent, temporary, parent, leaf, 0)
+                                     : renameat(parent, temporary, parent, leaf);
+        if (replaced)
             code = AH_IO;
         else {
             committed = true;
-            if (fsync(parent)) {
+            bool cleanup_failed = expect_absent && unlinkat(parent, temporary, 0);
+            if (fsync(parent) || cleanup_failed) {
                 code = AH_UNCERTAIN;
                 result->outcome_unknown = true;
             }
@@ -105,6 +112,31 @@ static yyjson_doc *write_arguments(const ah_tool_call *call, const char *schema,
     return args;
 }
 
+static ah_code write_expected(int parent, const char *leaf, yyjson_val *root,
+                              const ah_tool_call *call, struct stat *original, bool *observed,
+                              ah_error *error) {
+    yyjson_val *base = yyjson_obj_get(root, "base_revision");
+    bool absent = yyjson_is_true(yyjson_obj_get(root, "expect_absent"));
+    if ((base && absent) || (call->require_revision && !base && !absent))
+        return ah_fail(error, AH_INVALID,
+                       "Supply base_revision or expect_absent=true for a coordinated write");
+    if (!base)
+        return AH_OK;
+    char *source = NULL, revision[65];
+    size_t length = 0;
+    ah_code code = ah_local_source(parent, leaf, call, original, &source, &length, NULL);
+    if (code == AH_OK) {
+        ah_hash_bytes(source, length, revision);
+        if (!yyjson_equals_str(base, revision))
+            code = ah_fail(error, AH_INVALID, "Base revision changed; read the current file first");
+        else
+            *observed = true;
+    } else
+        code = ah_fail(error, code, "Cannot read stable write source");
+    free(source);
+    return code;
+}
+
 ah_code ah_local_write_file(void *context, const ah_tool_call *call, ah_tool_result *result,
                             ah_error *error) {
     ah_error local_error;
@@ -121,11 +153,20 @@ ah_code ah_local_write_file(void *context, const ah_tool_call *call, ah_tool_res
     }
     char leaf[4097];
     int parent = ah_local_parent_fd(context, yyjson_obj_get(root, "path"), leaf);
-    ah_code code = parent < 0
-                       ? ah_local_error(call, result, error, AH_INVALID,
-                                        "Path is invalid or cannot be traversed without symlinks")
-                       : ah_local_replace(parent, leaf, yyjson_get_str(content), length, NULL, call,
-                                          result, error);
+    struct stat original;
+    bool observed = false;
+    ah_code code =
+        parent < 0
+            ? ah_fail(error, AH_INVALID, "Path is invalid or cannot be traversed without symlinks")
+            : write_expected(parent, leaf, root, call, &original, &observed, error);
+    if (code != AH_OK) {
+        char message[AH_ERROR_CAP];
+        snprintf(message, sizeof(message), "%s", error->message);
+        code = ah_local_error(call, result, error, code, message);
+    } else
+        code = ah_local_replace(
+            parent, leaf, yyjson_get_str(content), length, observed ? &original : NULL,
+            yyjson_is_true(yyjson_obj_get(root, "expect_absent")), call, result, error);
     if (parent >= 0)
         close(parent);
     if (code == AH_OK && !result->is_error)

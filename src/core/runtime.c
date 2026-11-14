@@ -58,6 +58,8 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
             if (rc == AH_OK && !batched)
                 rc = core_execute_operation(e, &session, &op, err);
             core_operation_free(&op);
+            if (rc == AH_OK && core_jobs_running(e, sid))
+                core_jobs_wait(e, 20);
             continue;
         }
         if (found != AH_NOT_FOUND) {
@@ -101,6 +103,18 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
         free(request);
         rc = core_model_finish(e, &session, response, rc, err);
         free(response);
+    }
+    if (core_jobs_running(e, sid))
+        core_jobs_cancel(e, sid);
+    while (core_jobs_running(e, sid)) {
+        core_jobs_wait(e, 20);
+        ah_error failure = {0};
+        ah_code finished = core_jobs_finish(e, &session, &failure);
+        if (finished != AH_OK && (rc == AH_OK || finished == AH_UNCERTAIN || finished == AH_IO)) {
+            rc = finished;
+            if (err)
+                *err = failure;
+        }
     }
     rc = core_run_failure(e, &session, rc, err, NULL);
     core_mailbox_active(e, NULL);

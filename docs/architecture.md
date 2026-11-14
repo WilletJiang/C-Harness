@@ -64,3 +64,12 @@ Version 0.6 makes this an independent repository and adds lazy extensions. The c
 owns durable session skill snapshots (schema 5); the extension catalog owns bounded
 metadata and the transport owns live MCP connections. Parsing uses pinned tomlc17
 alongside yyjson. See [extensions](extensions.md) and [usage](usage.md).
+
+Version 0.7 adds schema-6 exchange identities, checkpoint references, immutable
+artifacts and workspace ownership. `request.c` assembles and budgets outgoing
+content; `response.c` accepts completed provider output. `context_*` owns exact
+archives/recall and native compaction, `content_*` owns typed inputs and blob
+references, `retention.c` owns explicit deletion, and `workspace_*` owns grants
+and dispatch policy. `jobs.c` schedules thread-safe callbacks around existing
+operation intents and receipts; workers never own SQLite or observers. Native
+exec and MCP opt into those bounded jobs. The core still has one database owner.

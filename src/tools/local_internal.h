@@ -36,7 +36,7 @@ ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
                         struct stat *original, char **text, size_t *length, ah_scan_budget *budget);
 ah_code ah_local_revision(int fd, const ah_tool_call *call, char revision[65]);
 ah_code ah_local_replace(int parent, const char *leaf, const char *content, size_t length,
-                         const struct stat *original, const ah_tool_call *call,
+                         const struct stat *original, bool expect_absent, const ah_tool_call *call,
                          ah_tool_result *result, ah_error *error);
 ah_code ah_local_stopped(const ah_tool_call *call);
 ah_code ah_local_error(const ah_tool_call *call, ah_tool_result *result, ah_error *error,

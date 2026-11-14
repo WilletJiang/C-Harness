@@ -1,4 +1,6 @@
 #include "cli.h"
+#include "content.h"
+#include "policies.h"
 #include "ah/agents.h"
 #include "../internal.h"
 #include <errno.h>
@@ -105,6 +107,12 @@ static void dispatch(cli_context *cli, run_job *job, const char *line) {
         job->started = false;
         free(job->request_id);
         job->request_id = NULL;
+    }
+    if (cli_content_rpc(cli->engine, method, obj, &code, &result, &error) ||
+        cli_policy_rpc(cli->engine, method, obj, &code, &result, &error)) {
+        reply(cli, id, code, result, &error);
+        ah_free(result);
+        goto done;
     }
     if (!strcmp(method, "create")) {
         code = ah_session_create(cli->engine, str(obj, "model"),

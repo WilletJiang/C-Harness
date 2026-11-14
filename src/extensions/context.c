@@ -84,14 +84,31 @@ ah_code ext_skill(void *context, const ah_tool_call *call, ah_tool_result *resul
     size_t length = 0;
     if (unload) {
         sqlite3_stmt *s = NULL;
-        rc = core_prepare(x->engine,
-                          "DELETE FROM extension_context WHERE session_id=? AND identity=?", &s,
-                          error);
+        uint64_t after = 0;
+        rc = core_begin(x->engine, &after, error);
+        if (rc == AH_OK)
+            rc = core_prepare(x->engine,
+                              "UPDATE items SET active=0 WHERE seq IN (SELECT item_seq "
+                              "FROM extension_context WHERE session_id=? AND identity=?)",
+                              &s, error);
         if (rc == AH_OK) {
             sqlite3_bind_text(s, 1, call->session_id, -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(s, 2, id, -1, SQLITE_TRANSIENT);
             rc = core_done(x->engine, s, error);
         }
+        if (rc == AH_OK)
+            rc = core_prepare(x->engine,
+                              "DELETE FROM extension_context WHERE session_id=? AND identity=?", &s,
+                              error);
+        if (rc == AH_OK) {
+            sqlite3_bind_text(s, 1, call->session_id, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(s, 2, id, -1, SQLITE_TRANSIENT);
+            rc = core_done(x->engine, s, error);
+        }
+        if (rc == AH_OK)
+            rc = core_commit(x->engine, after, error);
+        else
+            core_rollback(x->engine);
     } else {
         rc = ext_catalog_skill(x->catalog, id, &path, error);
         if (rc == AH_OK)
@@ -130,37 +147,80 @@ ah_code ext_skill(void *context, const ah_tool_call *call, ah_tool_result *resul
     yyjson_doc_free(args);
     return rc;
 }
-ah_code ext_context(ah_engine *e, const char *sid, yyjson_mut_doc *doc, yyjson_mut_val *input,
-                    ah_error *error) {
+/* Append newly loaded references after settled exchanges. Existing input prefixes
+ * remain byte-identical when a new skill is added. Compaction can deactivate a
+ * reference; its pinned snapshot is then appended again at the next boundary. */
+ah_code ext_context_sync(ah_engine *e, const char *sid, ah_error *error) {
     if (!e->extensions || !e->extensions->config.enable_skills)
         return AH_OK;
     sqlite3_stmt *s = NULL;
-    ah_code rc = core_prepare(e,
-                              "SELECT message FROM extension_context WHERE session_id=? "
-                              "ORDER BY seq",
-                              &s, error);
+    ah_code rc = core_prepare(
+        e, "SELECT COALESCE(SUM(bytes),0) FROM extension_context WHERE session_id=?", &s, error);
     if (rc != AH_OK)
         return rc;
     sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
-    size_t bytes = 0;
-    int step;
+    int step = sqlite3_step(s);
+    bool fits = step == SQLITE_ROW &&
+                (uint64_t)sqlite3_column_int64(s, 0) <= e->extensions->config.max_context_bytes;
+    sqlite3_finalize(s);
+    if (!fits)
+        return ah_fail(error, step == SQLITE_ROW ? AH_LIMIT : AH_IO,
+                       "saved skills exceed current extension context budget");
+    rc = core_prepare(e,
+                      "SELECT x.seq,x.message,x.item_seq FROM extension_context x LEFT JOIN items "
+                      "i ON i.seq=x.item_seq "
+                      "WHERE x.session_id=? AND (i.seq IS NULL OR i.active=0 OR i.json!=x.message) "
+                      "ORDER BY x.seq",
+                      &s, error);
+    if (rc != AH_OK)
+        return rc;
+    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    bool transaction = false;
+    uint64_t after = 0;
     while ((step = sqlite3_step(s)) == SQLITE_ROW) {
-        const char *json = (const char *)sqlite3_column_text(s, 0);
-        bytes += strlen(json);
-        if (bytes > e->extensions->config.max_context_bytes) {
-            rc = ah_fail(error, AH_LIMIT, "saved skills exceed current extension context budget");
-            break;
+        if (!transaction) {
+            rc = core_begin(e, &after, error);
+            transaction = rc == AH_OK;
+            if (rc != AH_OK)
+                break;
         }
-        yyjson_doc *parsed = yyjson_read(json, strlen(json), 0);
-        if (!parsed) {
-            rc = ah_fail(error, AH_IO, "corrupt saved skill context");
-            break;
+        sqlite3_stmt *update = NULL;
+        rc = core_prepare(e, "UPDATE items SET active=0 WHERE seq=?", &update, error);
+        if (rc == AH_OK) {
+            sqlite3_bind_int64(update, 1, sqlite3_column_int64(s, 2));
+            rc = core_done(e, update, error);
         }
-        yyjson_mut_arr_append(input, yyjson_val_mut_copy(doc, yyjson_doc_get_root(parsed)));
-        yyjson_doc_free(parsed);
+        if (rc == AH_OK)
+            rc = core_prepare(e,
+                              "INSERT INTO items(session_id,turn,round,json,active) "
+                              "SELECT id,turn,model_calls,?,1 FROM sessions WHERE id=?",
+                              &update, error);
+        if (rc == AH_OK) {
+            sqlite3_bind_text(update, 1, (const char *)sqlite3_column_text(s, 1), -1,
+                              SQLITE_TRANSIENT);
+            sqlite3_bind_text(update, 2, sid, -1, SQLITE_TRANSIENT);
+            rc = core_done(e, update, error);
+        }
+        sqlite3_int64 item = sqlite3_last_insert_rowid(e->db);
+        if (rc == AH_OK)
+            rc = core_prepare(e, "UPDATE extension_context SET item_seq=? WHERE seq=?", &update,
+                              error);
+        if (rc == AH_OK) {
+            sqlite3_bind_int64(update, 1, item);
+            sqlite3_bind_int64(update, 2, sqlite3_column_int64(s, 0));
+            rc = core_done(e, update, error);
+        }
+        if (rc != AH_OK)
+            break;
     }
     if (rc == AH_OK && step != SQLITE_DONE)
-        rc = ah_fail(error, AH_IO, "cannot read saved skill context");
+        rc = ah_fail(error, AH_IO, "cannot synchronize skill references");
     sqlite3_finalize(s);
+    if (transaction) {
+        if (rc == AH_OK)
+            rc = core_commit(e, after, error);
+        else
+            core_rollback(e);
+    }
     return rc;
 }

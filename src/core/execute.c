@@ -99,6 +99,8 @@ static ah_code publish_received(ah_engine *e, core_session *session, core_operat
 }
 ah_code core_execute_operation(ah_engine *e, core_session *session, core_operation *op,
                                ah_error *err) {
+    if (core_jobs_running(e, session->id))
+        return core_jobs_finish(e, session, err);
     if (!strcmp(op->status, "approval")) {
         session->state = AH_WAITING_APPROVAL;
         return AH_OK;
@@ -143,7 +145,7 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
     if (op->approval && op->decision != 1)
         return set_pause(e, session, op, "approval", AH_WAITING_APPROVAL, "approval.requested",
                          err);
-    if (builtin && strcmp(op->name, "read_result")) {
+    if (builtin && strcmp(op->name, "read_result") && strcmp(op->name, "recall")) {
         uint64_t after = 0;
         ah_code rc = core_begin(e, &after, err);
         if (rc == AH_OK)
@@ -166,6 +168,18 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
         }
         return rc;
     }
+    if (registered && registered->background && !core_jobs_available(e))
+        return AH_OK;
+    bool coordinated = false;
+    ah_code authorized =
+        core_workspace_authorize(e, session->id, op, registered, &coordinated, err);
+    if (authorized == AH_BUSY)
+        return AH_OK;
+    if (authorized == AH_AUTH || authorized == AH_INVALID)
+        return finish_error(e, session, op, err ? err->message : "workspace access denied", true,
+                            err);
+    if (authorized != AH_OK)
+        return authorized;
     uint64_t after = 0;
     ah_code rc = core_begin(e, &after, err);
     if (rc == AH_OK)
@@ -208,63 +222,77 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                          .checkpoint = op->effect == AH_EFFECT_READ ? NULL : checkpoint,
                          .checkpoint_context = &checkpoints,
                          .yield = e->yield,
-                         .yield_context = e->yield_context};
+                         .yield_context = e->yield_context,
+                         .require_revision = coordinated};
+    if (registered && registered->background) {
+        e->deadline = run_deadline;
+        return core_jobs_start(e, session, op, registered, &call, err);
+    }
     ah_tool_result result = {0};
     ah_error execution = {0};
     uint64_t started = ah_now_us();
     ah_code executed =
-        builtin ? core_read_result(e, &call, &result, &execution)
+        builtin ? (!strcmp(op->name, "recall") ? core_context_recall(e, &call, &result, &execution)
+                                               : core_read_result(e, &call, &result, &execution))
                 : registered->tool.execute(registered->tool.context, &call, &result, &execution);
     core_metric(e, session->id, op->id, "tool", started, ah_now_us(),
                 result.json ? strlen(result.json) : 0, 1, executed);
-    bool late = core_cancelled(e);
+    ah_code stopped = !core_cancelled(e)                                          ? AH_OK
+                      : atomic_load_explicit(&e->cancelled, memory_order_relaxed) ? AH_CANCELLED
+                                                                                  : AH_LIMIT;
     e->deadline = run_deadline;
-    bool valid_result = result.json && strlen(result.json) <= e->config.max_output_bytes &&
-                        ah_json_valid(result.json);
-    bool unknown = result.outcome_unknown ||
+    rc = core_complete_operation(e, session, op, &result, executed, &execution, stopped, err);
+    free(result.json);
+    return rc;
+}
+
+ah_code core_complete_operation(ah_engine *e, core_session *session, core_operation *op,
+                                ah_tool_result *result, ah_code executed, const ah_error *execution,
+                                ah_code stopped, ah_error *err) {
+    bool valid_result = result->json && strlen(result->json) <= e->config.max_output_bytes &&
+                        ah_json_valid(result->json);
+    bool unknown = result->outcome_unknown ||
                    (op->effect != AH_EFFECT_READ && (executed != AH_OK || !valid_result));
     if (!valid_result && !unknown) {
-        free(result.json);
-        result.json = core_object_string(
-            "error", execution.message[0] ? execution.message
-                                          : "tool returned no valid bounded JSON result");
-        result.is_error = true;
+        free(result->json);
+        result->json = core_object_string(
+            "error", execution->message[0] ? execution->message
+                                           : "tool returned no valid bounded JSON result");
+        result->is_error = true;
     }
-    if (!result.json && !unknown) {
+    if (!result->json && !unknown) {
         session->state = AH_OUTCOME_UNKNOWN;
         return ah_fail(err, AH_IO, "out of memory recording tool failure");
     }
-    rc = core_begin(e, &after, err);
+    uint64_t after = 0;
+    ah_code rc = core_begin(e, &after, err);
     if (rc == AH_OK && unknown) {
         rc = core_set_operation(e, session->id, op->id, "unknown", err);
         if (rc == AH_OK)
             rc = core_event(
                 e, session->id, op->id, "tool.outcome_unknown",
                 valid_result
-                    ? result.json
+                    ? result->json
                     : "{\"reason\":\"tool failed without a trustworthy completion receipt\"}",
                 err);
         if (rc == AH_OK)
             rc = core_state(e, session->id, AH_OUTCOME_UNKNOWN, err);
         session->state = AH_OUTCOME_UNKNOWN;
     } else if (rc == AH_OK)
-        rc = core_receipt(e, session->id, op, result.json, result.is_error || executed != AH_OK,
-                          late ? "tool.late_result" : "tool.completed", err);
+        rc = core_receipt(e, session->id, op, result->json, result->is_error || executed != AH_OK,
+                          stopped != AH_OK ? "tool.late_result" : "tool.completed", err);
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else
         core_rollback(e);
-    free(result.json);
     if (rc != AH_OK) {
         session->state = AH_OUTCOME_UNKNOWN;
         return rc;
     }
     if (unknown)
         return ah_fail(err, AH_UNCERTAIN, "tool outcome is unknown; explicit resolution required");
-    if (late)
-        return ah_fail(err,
-                       atomic_load_explicit(&e->cancelled, memory_order_relaxed) ? AH_CANCELLED
-                                                                                 : AH_LIMIT,
+    if (stopped != AH_OK)
+        return ah_fail(err, stopped,
                        "tool completed after cancellation or deadline; receipt recorded");
     return AH_OK;
 }

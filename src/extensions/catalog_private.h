@@ -3,6 +3,7 @@
 #include "catalog.h"
 #include "tomlc17.h"
 #include <limits.h>
+#include <pthread.h>
 
 #define EXT_METADATA_MAX (256u * 1024u)
 #define EXT_FRONTMATTER_MAX (16u * 1024u)
@@ -16,6 +17,7 @@ typedef struct {
 } ext_entry;
 
 struct ext_catalog {
+    pthread_mutex_t mutex;
     ah_extensions_config options;
     char *home, *workspace, *user_home;
     ext_entry *entries;

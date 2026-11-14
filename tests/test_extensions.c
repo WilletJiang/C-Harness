@@ -13,7 +13,7 @@ typedef struct {
     agent_fixture agent;
     char home[128], database[256], primary[256], secondary[256];
     char skill[96], other[96], revision[65];
-    char *catalog;
+    char *catalog, *previous_request;
 } fixture;
 
 static void path(char *out, size_t capacity, const char *root, const char *suffix) {
@@ -104,6 +104,21 @@ static char *runtime_reply(agent_fixture *agent, agent_request *request) {
         return af_text("fresh child completed");
     }
     unsigned phase = agent->phase++;
+    if (f->previous_request) {
+        yyjson_doc *before = yyjson_read(f->previous_request, strlen(f->previous_request), 0),
+                   *after = yyjson_read(request->request, strlen(request->request), 0);
+        assert(before && after);
+        yyjson_val *old_input = yyjson_obj_get(yyjson_doc_get_root(before), "input"),
+                   *new_input = yyjson_obj_get(yyjson_doc_get_root(after), "input");
+        assert(yyjson_arr_size(new_input) >= yyjson_arr_size(old_input));
+        for (size_t i = 0; i < yyjson_arr_size(old_input); ++i)
+            assert(yyjson_equals(yyjson_arr_get(old_input, i), yyjson_arr_get(new_input, i)));
+        yyjson_doc_free(before);
+        yyjson_doc_free(after);
+    }
+    free(f->previous_request);
+    f->previous_request = ah_strdup(request->request);
+    assert(f->previous_request);
     assert(af_occurrences(request->request, old_body) == (phase >= 3 ? 1 : 0));
     if (!phase)
         return af_call("discover", "catalog", "{\"kind\":\"all\",\"query\":\"741852963\"}");
@@ -313,6 +328,7 @@ static void runtime_and_context(bool utf16) {
     af_close(&f.agent);
     af_remove_database(f.database);
     free(f.catalog);
+    free(f.previous_request);
     assert(unlink(f.primary) == 0 && unlink(f.secondary) == 0 && unlink(filename) == 0);
     for (size_t i = 3; i > 0; --i) {
         path(filename, sizeof(filename), f.home, directories[i - 1]);

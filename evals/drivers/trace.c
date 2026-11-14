@@ -49,13 +49,14 @@ void eval_transport_observe(void *context, const ah_responses_metrics *m) {
     }
 }
 
-static void response_event(const char *json, ah_code code, const ah_error *error,
-                           uint64_t elapsed) {
+static void response_event(const char *json, ah_code code, const ah_error *error, uint64_t elapsed,
+                           unsigned request_id) {
     yyjson_doc *parsed = json ? yyjson_read(json, strlen(json), 0) : NULL;
     yyjson_mut_doc *doc = ah_mut_doc_new();
     yyjson_mut_val *root = yyjson_mut_obj(doc), *data = yyjson_mut_obj(doc);
     yyjson_mut_doc_set_root(doc, root);
     yyjson_mut_obj_add_str(doc, root, "event", "provider.response");
+    yyjson_mut_obj_add_uint(doc, root, "request_id", request_id);
     yyjson_mut_obj_add_uint(doc, root, "elapsed_ms", elapsed);
     yyjson_mut_obj_add_val(doc, root, "data", data);
     const char *fields[] = {"id",
@@ -88,16 +89,15 @@ static void response_event(const char *json, ah_code code, const ah_error *error
     ah_mut_doc_free(doc);
     yyjson_doc_free(parsed);
 }
-static ah_code complete(void *context, const char *request, ah_delta_sink delta, void *delta_ctx,
-                        ah_cancel_check cancelled, void *cancel_ctx, char **response,
-                        ah_error *error) {
-    eval_model *model = context;
+static char *prepare_request(eval_model *model, const char *request, unsigned request_id,
+                             ah_error *error) {
     yyjson_doc *parsed = yyjson_read(request, strlen(request), 0);
     yyjson_mut_doc *doc = ah_mut_doc_new();
     if (!parsed || !doc) {
         yyjson_doc_free(parsed);
         ah_mut_doc_free(doc);
-        return ah_fail(error, AH_IO, "cannot prepare evaluation request");
+        ah_fail(error, AH_IO, "cannot prepare evaluation request");
+        return NULL;
     }
     yyjson_mut_val *root = yyjson_val_mut_copy(doc, yyjson_doc_get_root(parsed));
     yyjson_mut_doc_set_root(doc, root);
@@ -114,30 +114,110 @@ static ah_code complete(void *context, const char *request, ah_delta_sink delta,
     char *json = ah_mut_write(doc);
     yyjson_doc_free(parsed);
     ah_mut_doc_free(doc);
-    if (!json)
-        return ah_fail(error, AH_IO, "cannot encode evaluation request");
+    if (!json) {
+        ah_fail(error, AH_IO, "cannot encode evaluation request");
+        return NULL;
+    }
     /* Optional stdout event is consumed in memory by the evaluator, which
      * persists fingerprints, not the request content. Never includes headers. */
     if (model->trace) {
-        printf("{\"event\":\"provider.request\",\"data\":%s}\n", json);
+        printf("{\"event\":\"provider.request\",\"request_id\":%u,\"data\":%s}\n", request_id,
+               json);
         fflush(stdout);
     }
+    return json;
+}
+
+static void remember_response(eval_model *model, const char *response) {
+    if (!model->diagnostics || !response)
+        return;
+    yyjson_doc *parsed = yyjson_read(response, strlen(response), 0);
+    const char *id =
+        parsed ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(parsed), "id")) : NULL;
+    char *next = id && strlen(id) <= 512 ? ah_strdup(id) : NULL;
+    free(model->comparison_id);
+    model->comparison_id = next;
+    yyjson_doc_free(parsed);
+}
+
+static ah_code complete(void *context, const char *request, ah_delta_sink delta, void *delta_ctx,
+                        ah_cancel_check cancelled, void *cancel_ctx, char **response,
+                        ah_error *error) {
+    eval_model *model = context;
+    unsigned request_id = ++model->request_serial;
+    char *json = prepare_request(model, request, request_id, error);
+    if (!json)
+        return AH_IO;
     uint64_t started = ah_now_ms();
     ah_code code = model->inner.complete(model->inner.context, json, delta, delta_ctx, cancelled,
                                          cancel_ctx, response, error);
     if (model->trace)
-        response_event(*response, code, error, ah_now_ms() - started);
+        response_event(*response, code, error, ah_now_ms() - started, request_id);
+    if (code == AH_OK)
+        remember_response(model, *response);
     free(json);
-    if (code == AH_OK && model->diagnostics && *response) {
-        parsed = yyjson_read(*response, strlen(*response), 0);
-        const char *id =
-            parsed ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(parsed), "id")) : NULL;
-        char *next = id && strlen(id) <= 512 ? ah_strdup(id) : NULL;
-        free(model->comparison_id);
-        model->comparison_id = next;
-        yyjson_doc_free(parsed);
+    return code;
+}
+
+typedef struct {
+    void *inner;
+    char *request;
+    uint64_t started;
+    bool reported;
+    unsigned request_id;
+} eval_request;
+
+static ah_code start(void *context, const char *request, ah_delta_sink delta, void *delta_ctx,
+                     ah_cancel_check cancelled, void *cancel_ctx, void **out, ah_error *error) {
+    eval_model *model = context;
+    eval_request *call = calloc(1, sizeof(*call));
+    if (!call)
+        return ah_fail(error, AH_IO, "cannot allocate evaluation request");
+    call->request_id = ++model->request_serial;
+    call->request = prepare_request(model, request, call->request_id, error);
+    call->started = ah_now_ms();
+    ah_async_provider *inner = &model->async_inner;
+    ah_code code = call->request ? inner->start(inner->context, call->request, delta, delta_ctx,
+                                                cancelled, cancel_ctx, &call->inner, error)
+                                 : AH_IO;
+    if (code != AH_OK) {
+        free(call->request);
+        free(call);
+    } else
+        *out = call;
+    return code;
+}
+
+static ah_code poll(void *context, unsigned timeout, ah_error *error) {
+    ah_async_provider *inner = &((eval_model *)context)->async_inner;
+    return inner->poll(inner->context, timeout, error);
+}
+
+static ah_code result(void *context, void *handle, bool *done, char **response, ah_error *error) {
+    eval_model *model = context;
+    eval_request *call = handle;
+    ah_async_provider *inner = &model->async_inner;
+    ah_code code = inner->result(inner->context, call->inner, done, response, error);
+    if ((*done || code != AH_OK) && !call->reported) {
+        if (model->trace)
+            response_event(*response, code, error, ah_now_ms() - call->started, call->request_id);
+        if (code == AH_OK)
+            remember_response(model, *response);
+        call->reported = true;
     }
     return code;
+}
+
+static void release(void *context, void *handle) {
+    ah_async_provider *inner = &((eval_model *)context)->async_inner;
+    eval_request *call = handle;
+    inner->release(inner->context, call->inner);
+    free(call->request);
+    free(call);
+}
+
+ah_async_provider eval_model_async_provider(eval_model *model) {
+    return (ah_async_provider){model, start, poll, result, release};
 }
 ah_provider eval_model_provider(eval_model *model) {
     return (ah_provider){complete, model};

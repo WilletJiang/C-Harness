@@ -68,6 +68,9 @@ ah_code agents_spawn(ah_engine *e, const core_session *parent, const core_operat
             rc = core_done(e, s, err);
         }
         if (rc == AH_OK)
+            rc = core_workspace_delegate(e, parent->id, child, yyjson_obj_get(args, "write_paths"),
+                                         err);
+        if (rc == AH_OK)
             rc = core_event(e, child, NULL, "session.created", "{}", err);
         if (rc == AH_OK)
             rc = agents_queue(e, parent->id, child, op->id, message, true, false, err);

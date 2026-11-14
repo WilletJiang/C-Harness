@@ -1,7 +1,9 @@
 #include "extensions_internal.h"
 #include <stdio.h>
+#include <errno.h>
+#include <time.h>
 
-ah_code ext_server_get(ah_extensions *x, const char *id, ext_server **out, ah_error *error) {
+static ah_code server_get(ah_extensions *x, const char *id, ext_server **out, ah_error *error) {
     *out = NULL;
     if (!id || !*id)
         return ah_fail(error, AH_INVALID, "server ID required");
@@ -21,6 +23,11 @@ ah_code ext_server_get(ah_extensions *x, const char *id, ext_server **out, ah_er
         free(json);
         return ah_fail(error, AH_IO, "out of memory");
     }
+    if (pthread_mutex_init(&s->request_mutex, NULL)) {
+        free(json);
+        free(s);
+        return ah_fail(error, AH_IO, "cannot initialize MCP server mutex");
+    }
     s->id = ah_strdup(id);
     s->config = yyjson_read(json, strlen(json), 0);
     if (!s->id || !s->config)
@@ -30,6 +37,7 @@ ah_code ext_server_get(ah_extensions *x, const char *id, ext_server **out, ah_er
                              &s->client, error);
     free(json);
     if (rc != AH_OK) {
+        pthread_mutex_destroy(&s->request_mutex);
         free(s->id);
         yyjson_doc_free(s->config);
         free(s);
@@ -41,6 +49,31 @@ ah_code ext_server_get(ah_extensions *x, const char *id, ext_server **out, ah_er
     *out = s;
     return AH_OK;
 }
+ah_code ext_server_get(ah_extensions *x, const char *id, ext_server **out, ah_error *error) {
+    pthread_mutex_lock(&x->mutex);
+    ah_code code = server_get(x, id, out, error);
+    pthread_mutex_unlock(&x->mutex);
+    return code;
+}
+
+/* Only worker callbacks use this request lock. Waiting honors cancellation;
+ * unrelated servers retain independent transport and cache ownership. */
+static ah_code acquire(ext_server *server, const ah_tool_call *call, ah_error *error) {
+    for (;;) {
+        if (call->cancelled && call->cancelled(call->cancel_context))
+            return ah_fail(error, AH_CANCELLED, "cancelled while waiting for MCP server");
+        if (call->deadline_ms && ah_now_ms() >= call->deadline_ms)
+            return ah_fail(error, AH_LIMIT, "deadline while waiting for MCP server");
+        int code = pthread_mutex_trylock(&server->request_mutex);
+        if (!code)
+            return AH_OK;
+        if (code != EBUSY)
+            return ah_fail(error, AH_IO, "cannot acquire MCP server");
+        struct timespec delay = {.tv_nsec = 10000000};
+        nanosleep(&delay, NULL);
+    }
+}
+
 static bool contains(yyjson_val *array, const char *name) {
     if (!yyjson_is_arr(array))
         return false;
@@ -107,21 +140,27 @@ static ah_code list_page(ah_extensions *x, ext_server *s, const char *kind, cons
                        (*stored_cursor ? strlen(*stored_cursor) + 1 : 0);
     size_t bytes = strlen(json) + strlen(page_cursor) + 1;
     free(json);
-    size_t retained = x->cache_bytes - old_bytes;
-    if (retained > x->config.max_catalog_bytes || bytes > x->config.max_catalog_bytes - retained) {
-        yyjson_doc_free(parsed);
-        return ah_fail(error, AH_LIMIT, "MCP metadata cache budget exceeded");
-    }
     char *copy = ah_strdup(page_cursor);
     if (!copy) {
         yyjson_doc_free(parsed);
         return ah_fail(error, AH_IO, "cannot retain MCP list cursor");
     }
+    pthread_mutex_lock(&x->mutex);
+    size_t retained = x->cache_bytes - old_bytes;
+    bool fits =
+        retained <= x->config.max_catalog_bytes && bytes <= x->config.max_catalog_bytes - retained;
+    if (fits)
+        x->cache_bytes = retained + bytes;
+    pthread_mutex_unlock(&x->mutex);
+    if (!fits) {
+        free(copy);
+        yyjson_doc_free(parsed);
+        return ah_fail(error, AH_LIMIT, "MCP metadata cache budget exceeded");
+    }
     yyjson_doc_free(*cache);
     free(*stored_cursor);
     *cache = parsed;
     *stored_cursor = copy;
-    x->cache_bytes = x->cache_bytes - old_bytes + bytes;
     *root = value;
     return AH_OK;
 }
@@ -190,6 +229,9 @@ ah_code ext_mcp(void *context, const ah_tool_call *call, ah_tool_result *result,
     const char *action = ext_string(args, "action"), *name = ext_string(args, "name");
     ext_server *s = NULL;
     ah_code rc = ext_server_get(x, ext_string(args, "server"), &s, error);
+    if (rc == AH_OK)
+        rc = acquire(s, call, error);
+    bool acquired = rc == AH_OK;
     if (rc == AH_OK && (!strcmp(action, "read") || !strcmp(action, "get"))) {
         bool read = !strcmp(action, "read"), sent = false;
         const char *value = read ? ext_string(args, "uri") : name;
@@ -226,6 +268,8 @@ ah_code ext_mcp(void *context, const ah_tool_call *call, ah_tool_result *result,
         result->is_error = yyjson_is_true(yyjson_obj_get(yyjson_doc_get_root(response), "isError"));
         yyjson_doc_free(response);
     }
+    if (acquired)
+        pthread_mutex_unlock(&s->request_mutex);
     yyjson_doc_free(doc);
     return rc;
 }
@@ -238,6 +282,9 @@ ah_code ext_mcp_call(void *context, const ah_tool_call *call, ah_tool_result *re
     ext_server *s = NULL;
     bool sent = false;
     ah_code rc = ext_server_get(x, ext_string(args, "server"), &s, error);
+    if (rc == AH_OK)
+        rc = acquire(s, call, error);
+    bool acquired = rc == AH_OK;
     if (rc == AH_OK && !ext_tool_allowed(s, name))
         rc = ah_fail(error, AH_INVALID, "MCP tool disabled by host configuration");
     char *params = rc == AH_OK ? parameters("name", name, yyjson_obj_get(args, "arguments")) : NULL;
@@ -246,6 +293,8 @@ ah_code ext_mcp_call(void *context, const ah_tool_call *call, ah_tool_result *re
                                          &sent, error)
                     : ah_fail(error, AH_IO, "cannot encode MCP tool call");
     free(params);
+    if (acquired)
+        pthread_mutex_unlock(&s->request_mutex);
     yyjson_doc_free(doc);
     if (rc != AH_OK) {
         result->outcome_unknown = sent;

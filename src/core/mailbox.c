@@ -88,14 +88,16 @@ static char *ack_json(const core_steering *message, bool duplicate) {
 static ah_code persist_message(ah_engine *e, core_session *session, core_steering *message,
                                bool *added, ah_error *err) {
     sqlite3_stmt *s = NULL;
-    ah_code rc = core_prepare(e, "SELECT text FROM commands WHERE session_id=? AND id=?", &s, err);
+    ah_code rc =
+        core_prepare(e, "SELECT text,kind FROM commands WHERE session_id=? AND id=?", &s, err);
     if (rc != AH_OK)
         return rc;
     sqlite3_bind_text(s, 1, message->session, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(s, 2, message->command, -1, SQLITE_TRANSIENT);
     int step = sqlite3_step(s);
     bool exists = step == SQLITE_ROW,
-         same = exists && !strcmp((const char *)sqlite3_column_text(s, 0), message->text);
+         same = exists && sqlite3_column_int(s, 1) == 0 &&
+                !strcmp((const char *)sqlite3_column_text(s, 0), message->text);
     sqlite3_finalize(s);
     if (step != SQLITE_ROW && step != SQLITE_DONE)
         return ah_fail(err, AH_IO, "steering command lookup failed");

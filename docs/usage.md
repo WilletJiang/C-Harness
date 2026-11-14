@@ -60,15 +60,43 @@ File writes pause for approval in the CLI. Inspect the returned pending operatio
 then use `approve` or `deny` with its exact ID and run the session again. Process
 execution is disabled unless `--enable-exec` is supplied, and remains approval-gated.
 
+## Long tasks and typed input
+
+Add `--auto-context` to a run or RPC owner to archive older complete model/tool
+exchanges at settled boundaries. Exact user inputs, human replies, loaded skills,
+and recent exchanges remain available. `--context-trigger`, `--context-target`,
+`--context-reserve`, and `--keep-exchanges` customize this opt-in policy; supplying
+one also enables it. These settings apply to the current process. Inspect them
+with `context` using the same flags, or with the RPC `context` method.
+
+`--compact-tokens N` is a separate explicit provider capability setting and uses
+tokens. Structural byte limits do not estimate tokens. When protected inputs and
+definitions cannot fit, the runtime still returns `limit` rather than discarding
+them. No model name silently enables native compaction.
+
+`new`, `run`, and `submit-content` accept `--content JSON` with native typed
+text/image/file parts and a required `--command-id`. It cannot be combined with
+`--prompt`. Import local files with `artifact-import`, then select their returned
+identifiers in typed content. Importing or listing artifacts never sends them.
+`--context-bytes N` changes the complete request byte limit from 1 MiB, up to
+64 MiB, when larger selected assets need room. See [content and retention](content.md)
+for formats, examples, and explicit permanent deletion commands.
+
+Use `--coordinate-writes --workspace ROOT` for persisted exclusive write grants.
+The RPC host must assign paths before work; the flag grants no implicit authority.
+See [workspace coordination](workspaces.md) for the setup sequence.
+
 ## Deliberate boundaries
 
-Session state, SQLite and events have one owner; `ah_cancel` and `ah_steer` are the
-cross-thread API entry points. Consecutive independent READ tools run in bounded
-batches only when their registration opts in with `parallel_safe`. The default is
+Session state, SQLite and events have one owner; `ah_cancel`, `ah_cancel_job` and
+`ah_steer` are the cross-thread API entry points. Consecutive independent READ
+tools run in bounded batches only when their registration opts in with `parallel_safe`. The default is
 four workers (`max_parallel_tools`); 0 or 1 selects serial execution. Writes,
-external effects and user questions remain ordered barriers. Callbacks must not
-reenter owner APIs or block indefinitely. Independent
-engines can run independently against different databases. One engine exclusively
+external effects and user questions remain ordered barriers within a session.
+Native `exec` and MCP callbacks run as background jobs, allowing other agents to
+advance; hosts can opt in additional thread-safe callbacks through `ah/jobs.h`.
+Callbacks must not reenter owner APIs or block indefinitely. Independent engines
+can run independently against different databases. One engine exclusively
 owns a database; multiplex sessions through that owner.
 
 `exec` is **not an OS sandbox**. The file tools reject symlinks and traversal, but

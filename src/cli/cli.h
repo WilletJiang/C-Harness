@@ -4,6 +4,7 @@
 #include "yyjson.h"
 #include <pthread.h>
 #include <stdatomic.h>
+typedef enum { CLI_OPTION_UNHANDLED, CLI_OPTION_HANDLED, CLI_OPTION_INVALID } cli_option_status;
 typedef struct {
     ah_engine *engine;
     pthread_mutex_t output;

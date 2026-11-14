@@ -19,6 +19,9 @@ Durable event cursors are monotonically increasing database sequence numbers.
 | --- | --- | --- |
 | `create` | `model`, optional `instructions` | New session |
 | `submit` | `session`, `command`, `text` | Durable, idempotent input |
+| `submit_content` | `session`, `command`, `content` array | Typed text/image/file input; local binary data becomes immutable references |
+| `artifact_import` | `session`, `path`, `mime` | Import a bounded local regular file; return `artifact_id` |
+| `artifacts` | `session` | List authorized artifact metadata without bytes |
 | `run` | `session` | Start owner-thread execution; reply when it stops/waits/completes |
 | `cancel` | none | Request active execution cancellation; not proof of undo |
 | `steer` | `session`, `command`, `text` | Queue an update during a run |
@@ -34,11 +37,32 @@ Durable event cursors are monotonically increasing database sequence numbers.
 | `events` | `session`, optional `after` sequence | Replay durable facts, never actions |
 | `fork` | `session` | Copy completed/idle context and stored result access into an independent session |
 | `compact` | `session`, `summary`, `keep_turns` | Atomically summarize model-visible history at a settled boundary |
+| `context` | `session` | Inspect the active context policy and checkpoint counts |
+| `workspace` | none | Inspect persisted workspace ownership |
+| `workspace_assign` | `session`, `paths` array, optional boolean `broad` | Atomically replace explicit write grants; empty paths and `broad:false` release them |
+| `workspace_transfer` | `from`, `to`, `path` | Move one exact grant between a parent and its direct child |
+| `forget` | `session`, optional boolean `tree` | Permanently delete a settled session or explicitly selected complete tree |
+| `storage_vacuum` | none | Explicitly reclaim SQLite file space without deleting additional history |
 
 During `run`, only `cancel` and `steer` are accepted; other requests return `busy`.
 The client can consume events while a run executes. Closing stdin or sending SIGTERM
 cancels and joins active execution. SIGINT cancels the active run while keeping RPC
 available. Idle RPC blocks on descriptors without a polling timer. A UI hiding its window must keep its app-level connection alive.
+
+Start RPC with `--auto-context` to enable structural context archiving. Byte
+threshold flags are `--context-bytes`, `--context-trigger`, `--context-target`,
+and `--context-reserve`; `--keep-exchanges` controls recent exact exchanges.
+`--compact-tokens` explicitly opts into provider native compaction; it is not
+inferred from the model name. Context configuration belongs to this process.
+`--coordinate-writes --workspace ROOT` enables durable workspace coordination
+without granting any session write authority. Assign paths before running work;
+see [workspace coordination](workspaces.md).
+
+`forget` deletes audit history rather than archiving it. Pending/unknown effects,
+unknown/in-progress verification, pending messages, and surviving receipt/checkpoint
+references block deletion. Stopped/failed work with settled effects may be forgotten
+without first accepting its task. Shared artifacts remain until their final reference is removed.
+See [content and retention](content.md) for exact input shapes and limits.
 
 `steer` returning `queued:true` is not a durable acknowledgment. The owner emits
 `input.steered` after committing the command at a safe model boundary. It does not
@@ -79,8 +103,8 @@ the earlier `harness_ask` and `harness_wait` names remain supported.
 | `wait` | `reason` | Wait for an explicit host `reply` |
 | `read_result` | `operation_id`, optional `offset`, `limit` | Read a UTF-8 page of a captured JSON tool result available to this session |
 | `read_file` | `path`, optional `offset_line` or `offset_bytes`, `max_lines`, `force` | Read a UTF-8 file page; report its revision; reuse identical active content unless forced |
-| `write_file` | `path`, `content` | Replace a workspace file atomically |
-| `apply_changes` | `files` containing `path`, `edits`, optional `base_revision`; optional `checks` | Unified exact edits, one or multiple hunks/files; optional named checks after successful application |
+| `write_file` | `path`, `content`; optional `base_revision` or `expect_absent` | Replace a workspace file atomically; an expectation is required for coordinated writes |
+| `apply_changes` | `files` containing `path`, `edits`, `base_revision` (required when coordinated); optional `checks` | Unified exact edits, one or multiple hunks/files; optional named checks after successful application |
 | `find` (workflow profile) | `path`, `query`, optional `glob`, `context_lines`, `max_results`, `offset`, `snapshot` | Native literal search with merged source context, revisions and bounded pagination |
 | `check` (registered presets) | `checks` | Run host-fixed named checks for current inputs |
 | `exec` | `argv` | Execute a process when explicitly enabled, with approval |

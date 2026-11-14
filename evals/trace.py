@@ -205,6 +205,7 @@ class Trace:
         self.secret = secret
         self.start = time.monotonic()
         self.cache = CacheTrace()
+        self.pending_requests = {}
         self.cache_file = None
         self.events = []
         self.count = 0
@@ -217,12 +218,23 @@ class Trace:
                 self.cache_file = (self.directory / "cache-metrics.jsonl").open("w")
             if event["event"] == "provider.request":
                 safe = self.cache.request(event["data"])
+                if "request_id" in event:
+                    self.pending_requests[event["request_id"]] = (
+                        safe["request_index"], safe["cache_key_sha256"]
+                    )
             else:
                 safe = self.cache.response(
                     event.get("data"),
                     elapsed_ms=event.get("elapsed_ms"),
                     transport_error=event.get("transport_error"),
                 )
+                pending = self.pending_requests.pop(event.get("request_id"), None)
+                if pending:
+                    safe["request_index"], expected = pending
+                    echoed = safe["cache_key_echo_sha256"]
+                    safe["cache_key_echo_matches_request"] = (
+                        expected == echoed if expected is not None and echoed is not None else None
+                    )
             self.cache_file.write(json.dumps(safe) + "\n")
             self.cache_file.flush()
             event = {"event": safe["kind"], "data": safe}

@@ -1,142 +1,6 @@
 #include "core.h"
 #include "../agents/agents_internal.h"
-#include "../extensions/extensions_internal.h"
 
-static const char ask_schema[] =
-    "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\"},\"options\":{\"type\":"
-    "\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"question\"],"
-    "\"additionalProperties\":false}";
-static const char wait_schema[] =
-    "{\"type\":\"object\",\"properties\":{\"reason\":{\"type\":\"string\"}},\"required\":["
-    "\"reason\"],\"additionalProperties\":false}";
-static const char result_schema[] =
-    "{\"type\":\"object\",\"properties\":{\"operation_id\":{\"type\":\"string\"},"
-    "\"offset\":{\"type\":\"integer\",\"minimum\":0},\"limit\":{\"type\":\"integer\","
-    "\"minimum\":1,\"maximum\":65536}},\"required\":[\"operation_id\"],\"additionalProperties\":"
-    "false}";
-const char *core_builtin_schema(const char *name) {
-    if (!strcmp(name, "ask") || !strcmp(name, "harness_ask"))
-        return ask_schema;
-    if (!strcmp(name, "wait") || !strcmp(name, "harness_wait"))
-        return wait_schema;
-    if (!strcmp(name, "read_result"))
-        return result_schema;
-    return agents_tool_schema(name);
-}
-static bool add_definition(yyjson_mut_doc *d, yyjson_mut_val *arr, const char *name,
-                           const char *description, const char *schema) {
-    yyjson_doc *parsed = yyjson_read(schema, strlen(schema), 0);
-    if (!parsed)
-        return false;
-    yyjson_mut_val *tool = yyjson_mut_obj(d);
-    yyjson_mut_obj_add_str(d, tool, "type", "function");
-    yyjson_mut_obj_add_strcpy(d, tool, "name", name);
-    yyjson_mut_obj_add_strcpy(d, tool, "description", description);
-    yyjson_mut_obj_add_bool(d, tool, "strict", false);
-    yyjson_mut_obj_add_val(d, tool, "parameters",
-                           yyjson_val_mut_copy(d, yyjson_doc_get_root(parsed)));
-    yyjson_doc_free(parsed);
-    return yyjson_mut_arr_append(arr, tool);
-}
-ah_code core_request(ah_engine *e, const core_session *session, char **json, ah_error *err) {
-    *json = NULL;
-    sqlite3_stmt *measure = NULL;
-    ah_code measured = core_prepare(
-        e, "SELECT COALESCE(SUM(length(json)),0) FROM items WHERE session_id=? AND active=1",
-        &measure, err);
-    if (measured != AH_OK)
-        return measured;
-    sqlite3_bind_text(measure, 1, session->id, -1, SQLITE_TRANSIENT);
-    int measured_step = sqlite3_step(measure);
-    sqlite3_int64 bytes = measured_step == SQLITE_ROW ? sqlite3_column_int64(measure, 0) : -1;
-    sqlite3_finalize(measure);
-    if (bytes < 0)
-        return ah_fail(err, AH_IO, "cannot measure model context");
-    if ((uint64_t)bytes > e->config.max_context_bytes)
-        return ah_fail(err, AH_LIMIT,
-                       "stored context exceeds byte budget; compact after all tools are settled");
-    yyjson_mut_doc *d = ah_mut_doc_new();
-    if (!d)
-        return ah_fail(err, AH_IO, "out of memory");
-    yyjson_mut_val *root = yyjson_mut_obj(d);
-    yyjson_mut_doc_set_root(d, root);
-    yyjson_mut_obj_add_strcpy(d, root, "model", session->model);
-    yyjson_mut_obj_add_strcpy(d, root, "prompt_cache_key", session->id);
-    yyjson_mut_obj_add_strcpy(d, root, "instructions", session->instructions);
-    yyjson_mut_obj_add_bool(d, root, "store", false);
-    yyjson_mut_obj_add_bool(d, root, "stream", true);
-    yyjson_mut_val *include = yyjson_mut_arr(d);
-    yyjson_mut_arr_add_str(d, include, "reasoning.encrypted_content");
-    yyjson_mut_obj_add_val(d, root, "include", include);
-    yyjson_mut_val *input = yyjson_mut_arr(d);
-    yyjson_mut_obj_add_val(d, root, "input", input);
-    if (*session->summary) {
-        yyjson_mut_val *item = yyjson_mut_obj(d);
-        yyjson_mut_obj_add_str(d, item, "role", "user");
-        yyjson_mut_obj_add_strcpy(d, item, "content", session->summary);
-        yyjson_mut_arr_append(input, item);
-    }
-    sqlite3_stmt *s = NULL;
-    ah_code rc = ext_context(e, session->id, d, input, err);
-    if (rc == AH_OK)
-        rc = core_prepare(e, "SELECT json FROM items WHERE session_id=? AND active=1 ORDER BY seq",
-                          &s, err);
-    if (rc == AH_OK) {
-        sqlite3_bind_text(s, 1, session->id, -1, SQLITE_TRANSIENT);
-        int step;
-        while ((step = sqlite3_step(s)) == SQLITE_ROW) {
-            const char *text = (const char *)sqlite3_column_text(s, 0);
-            yyjson_doc *item = yyjson_read(text, strlen(text), 0);
-            if (!item) {
-                rc = ah_fail(err, AH_IO, "corrupt stored context");
-                break;
-            }
-            yyjson_mut_arr_append(input, yyjson_val_mut_copy(d, yyjson_doc_get_root(item)));
-            yyjson_doc_free(item);
-        }
-        if (rc == AH_OK && step != SQLITE_DONE)
-            rc = ah_fail(err, AH_IO, "context read failed");
-    }
-    sqlite3_finalize(s);
-    yyjson_mut_val *tools = yyjson_mut_arr(d), *space = yyjson_mut_obj(d),
-                   *functions = yyjson_mut_arr(d);
-    yyjson_mut_obj_add_val(d, root, "tools", tools);
-    yyjson_mut_arr_append(tools, space);
-    yyjson_mut_obj_add_str(d, space, "type", "namespace");
-    yyjson_mut_obj_add_str(d, space, "name", "local");
-    yyjson_mut_obj_add_str(d, space, "description", "Host controlled tools and input requests.");
-    yyjson_mut_obj_add_val(d, space, "tools", functions);
-    if (!add_definition(d, functions, "ask", "Ask the user a question and wait for a JSON reply.",
-                        ask_schema) ||
-        !add_definition(d, functions, "wait",
-                        "Pause until the host explicitly supplies a JSON continuation.",
-                        wait_schema) ||
-        !add_definition(d, functions, "read_result",
-                        "Read a saved tool result as UTF-8 JSON text. Use next_offset to continue; "
-                        "offset defaults to 0 and limit to 4096 bytes.",
-                        result_schema))
-        rc = ah_fail(err, AH_IO, "cannot encode built-in definitions");
-    for (size_t i = 0; i < e->tool_count && rc == AH_OK; i++)
-        if (!add_definition(d, functions, e->tools[i].name, e->tools[i].description,
-                            e->tools[i].schema))
-            rc = ah_fail(err, AH_IO, "cannot encode tool definition");
-    if (rc == AH_OK && e->agents_enabled && !agents_definitions(d, functions))
-        rc = ah_fail(err, AH_IO, "cannot encode agent definitions");
-    if (rc == AH_OK) {
-        *json = ah_mut_write(d);
-        if (!*json)
-            rc = ah_fail(err, AH_IO, "out of memory");
-        else if (strlen(*json) > e->config.max_context_bytes) {
-            free(*json);
-            *json = NULL;
-            rc = ah_fail(
-                err, AH_LIMIT,
-                "model request exceeds context byte budget; compact after all tools are settled");
-        }
-    }
-    ah_mut_doc_free(d);
-    return rc;
-}
 static bool optional_string(yyjson_val *object, const char *key, bool nullable) {
     yyjson_val *value = yyjson_obj_get(object, key);
     return !value || (nullable && yyjson_is_null(value)) || yyjson_is_str(value);
@@ -224,6 +88,13 @@ static ah_code validate_response(ah_engine *e, yyjson_val *root, ah_error *err) 
                 (summary && !content_parts(summary, "summary_text")) ||
                 (content && !yyjson_is_null(content) && !content_parts(content, "reasoning_text")))
                 return ah_fail(err, AH_PROTOCOL, "malformed reasoning item");
+        } else if (!strcmp(type, "compaction")) {
+            yyjson_val *opaque = yyjson_obj_get(item, "encrypted_content");
+            if (!e->context_enabled || !e->context_policy.compact_threshold_tokens ||
+                !yyjson_is_str(opaque) || !yyjson_get_len(opaque))
+                return ah_fail(err, AH_PROTOCOL,
+                               "native compaction requires an explicit provider capability and "
+                               "encrypted content");
         } else
             return ah_fail(err, AH_PROTOCOL, "unsupported output item type: %s", type);
     }
@@ -245,6 +116,20 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
     uint64_t after = 0;
     if (rc == AH_OK)
         rc = core_begin(e, &after, err);
+    sqlite3_int64 prefix_end = 0;
+    sqlite3_stmt *prefix = NULL;
+    if (rc == AH_OK)
+        rc = core_prepare(e, "SELECT COALESCE(MAX(seq),0) FROM items WHERE session_id=?", &prefix,
+                          err);
+    if (rc == AH_OK) {
+        sqlite3_bind_text(prefix, 1, session->id, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(prefix) == SQLITE_ROW)
+            prefix_end = sqlite3_column_int64(prefix, 0);
+        else
+            rc = ah_fail(err, AH_IO, "cannot read context boundary");
+    }
+    sqlite3_finalize(prefix);
+    bool native_compaction = false;
     yyjson_val *output = yyjson_obj_get(root, "output"), *item;
     size_t index, max, calls = 0;
     yyjson_arr_foreach(output, index, max, item) {
@@ -258,6 +143,7 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
         rc = core_add_item(e, session->id, session->turn, serialized, err);
         free(serialized);
         const char *type = yyjson_get_str(yyjson_obj_get(item, "type"));
+        native_compaction |= type && !strcmp(type, "compaction");
         if (rc == AH_OK && type && !strcmp(type, "function_call")) {
             const char *name = yyjson_get_str(yyjson_obj_get(item, "name")),
                        *args = yyjson_get_str(yyjson_obj_get(item, "arguments")),
@@ -307,6 +193,8 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
             calls++;
         }
     }
+    if (rc == AH_OK && native_compaction)
+        rc = core_context_native(e, session->id, prefix_end, err);
     if (rc == AH_OK && e->agents_enabled)
         rc = agents_record_usage(e, session, root, err);
     if (rc == AH_OK)
@@ -333,6 +221,8 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
         rc = core_commit(e, after, err);
     else
         core_rollback(e);
+    if (rc == AH_OK && native_compaction)
+        e->context_history = true;
     yyjson_doc_free(d);
     return rc;
 }

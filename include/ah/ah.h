@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define AH_VERSION "0.6.0"
+#define AH_VERSION "0.7.0"
 #define AH_ID_CAP 37
 #define AH_ERROR_CAP 512
 
@@ -87,6 +87,9 @@ typedef struct {
      * synchronous tool. Never supplied to parallel READ worker callbacks. */
     void (*yield)(void *);
     void *yield_context;
+    /* Owner-authorized coordinated writes must supply an observed revision or
+     * explicit absent expectation; immutable through background dispatch. */
+    bool require_revision;
 } ah_tool_call;
 typedef struct {
     char *json; /* malloc-owned valid JSON; runtime frees it. */

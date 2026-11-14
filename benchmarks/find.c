@@ -6,6 +6,9 @@
 #include <time.h>
 
 static ah_tool finder;
+ah_code ah_register_background_tool(ah_engine *engine, const ah_tool *tool, ah_error *error) {
+    return ah_register_tool(engine, tool, error);
+}
 ah_code ah_register_tool(ah_engine *engine, const ah_tool *tool, ah_error *error) {
     (void)engine;
     (void)error;

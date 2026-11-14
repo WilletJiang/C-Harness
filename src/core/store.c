@@ -228,8 +228,10 @@ ah_code core_id(char id[AH_ID_CAP], ah_error *err) {
 ah_code core_add_item(ah_engine *e, const char *sid, unsigned turn, const char *json,
                       ah_error *err) {
     sqlite3_stmt *s = NULL;
-    ah_code rc =
-        core_prepare(e, "INSERT INTO items(session_id,turn,json,active) VALUES(?,?,?,1)", &s, err);
+    ah_code rc = core_prepare(e,
+                              "INSERT INTO items(session_id,turn,json,active,round) VALUES(?,?,?,1,"
+                              "(SELECT model_calls FROM sessions WHERE id=?1))",
+                              &s, err);
     if (rc != AH_OK)
         return rc;
     sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);

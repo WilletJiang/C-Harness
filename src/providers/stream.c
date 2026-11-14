@@ -123,6 +123,8 @@ static ah_code event(ah_stream *s) {
                equal(type, "error")) {
         yyjson_val *response = yyjson_obj_get(root, "response");
         yyjson_val *error = yyjson_obj_get(response, "error");
+        if (!error)
+            error = yyjson_obj_get(root, "error");
         yyjson_val *reason =
             yyjson_obj_get(yyjson_obj_get(response, "incomplete_details"), "reason");
         yyjson_val *error_code = yyjson_obj_get(error, "code");
@@ -136,7 +138,17 @@ static ah_code event(ah_stream *s) {
             status = AH_LIMIT;
         else if (equal(error_code, "invalid_api_key") || equal(error_code, "authentication_error"))
             status = AH_AUTH;
-        code = fail(s, status, "provider returned a failed or incomplete response");
+        const char *message =
+            equal(error_code, "subscription_sharing_usage_limit_exceeded")
+                ? "provider subscription sharing usage limit exceeded"
+            : equal(error_code, "subscription_sharing_usage_unavailable")
+                ? "provider subscription sharing usage unavailable"
+            : equal(error_code, "insufficient_quota")  ? "provider quota exhausted"
+            : equal(error_code, "rate_limit_exceeded") ? "provider rate limit exceeded"
+            : equal(reason, "max_output_tokens")       ? "provider output token limit reached"
+            : status == AH_AUTH                        ? "provider authentication failed"
+                                : "provider returned a failed or incomplete response";
+        code = fail(s, status, message);
         phase(s, AH_STREAM_TERMINAL);
     } else if (equal(type, "response.output_item.added") ||
                equal(type, "response.output_item.done")) {

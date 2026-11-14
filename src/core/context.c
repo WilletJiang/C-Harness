@@ -49,8 +49,8 @@ ah_code ah_fork(ah_engine *e, const char *sid, char new_id[AH_ID_CAP], ah_error 
     }
     if (rc == AH_OK)
         rc = core_prepare(e,
-                          "INSERT INTO items(session_id,turn,json,active) SELECT "
-                          "?,turn,json,active FROM items WHERE session_id=? ORDER BY seq",
+                          "INSERT INTO items(session_id,turn,json,active,round) SELECT "
+                          "?,turn,json,active,round FROM items WHERE session_id=? ORDER BY seq",
                           &s, err);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, new_id, -1, SQLITE_TRANSIENT);
@@ -89,6 +89,10 @@ ah_code ah_fork(ah_engine *e, const char *sid, char new_id[AH_ID_CAP], ah_error 
         sqlite3_bind_text(s, 2, sid, -1, SQLITE_TRANSIENT);
         rc = core_done(e, s, err);
     }
+    if (rc == AH_OK)
+        rc = core_content_fork(e, sid, new_id, err);
+    if (rc == AH_OK)
+        rc = core_context_fork(e, sid, new_id, err);
     char *source = core_object_string("source_session", sid);
     if (rc == AH_OK && !source)
         rc = ah_fail(err, AH_IO, "out of memory");

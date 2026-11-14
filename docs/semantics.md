@@ -9,11 +9,25 @@ tools explicitly registered as `parallel_safe` may run on worker threads, up to
 Their callbacks and shared context must support concurrent use. Workers do not
 write SQLite or notify observers; the owner records receipts in operation order
 after joining them. Writes, external effects, approvals and input waits remain
-serial boundaries. Callbacks must not re-enter owner-thread engine APIs.
+serial boundaries within each session. Callbacks must not re-enter owner-thread
+engine APIs.
+
+`ah_register_background_tool` (`ah/jobs.h`) opts an existing callback into bounded
+background execution. Native `exec`, `mcp` and `mcp_call` use it. The agent scheduler
+continues other agents while a job waits; ordinary sessions wait on a completion
+condition. Each job uses the existing durable operation ID and executing intent,
+not a second ledger. The owner validates and publishes its receipt once, in session
+order. `max_parallel_tools` also bounds background jobs across the engine (0 means
+one); existing READ batches retain their separate bound. Background callbacks must
+support concurrent use and honor cancellation/deadlines; checkpoint and yield are
+null. Every run drains workers before returning. A callback that ignores cancellation
+can delay shutdown indefinitely. Interrupted effects retain the normal unknown-outcome
+recovery rule; cancellation never proves an effect was undone.
 
 `ah_cancel` sets an atomic flag; `ah_steer` copies bounded input into a protected
-mailbox. Those are the only cross-thread APIs. Independent engines may execute
-concurrently against separate databases.
+mailbox; `ah_cancel_job` cancels one active operation under the job mutex. These
+are the cross-thread APIs. Independent engines may execute concurrently against
+separate databases.
 
 A submitted command is durable only after its transaction commits. Reusing a
 command ID with identical content is idempotent; changed content is rejected.
@@ -162,6 +176,13 @@ the same load. Ordinary context compaction retains these explicit reference slot
 Extension flags are process configuration, not persisted grants; reopening without
 `enable_skills` omits the slots. Fresh child agents do not copy them. See
 [extensions](extensions.md) for opt-in discovery and transport boundaries.
+
+Schema version 6 adds exchange identities, exact context checkpoints, typed-command
+identities, immutable artifact references and durable workspace ownership. New
+`ah_tool_call.require_revision` requires embedding clients to rebuild against the
+new headers. Existing text commands retain their idempotency identity. Context
+maintenance and storage deletion are distinct operations; see [context](context.md),
+[content](content.md) and [workspace coordination](workspaces.md).
 
 ## Schema subset
 

@@ -5,6 +5,7 @@
 #include "../core/core.h"
 
 typedef struct ext_server {
+    pthread_mutex_t request_mutex;
     char *id;
     yyjson_doc *config, *tools, *resources, *prompts, *templates;
     char *tools_cursor, *resources_cursor, *prompts_cursor, *templates_cursor;
@@ -13,6 +14,7 @@ typedef struct ext_server {
 } ext_server;
 
 typedef struct ah_extensions {
+    pthread_mutex_t mutex;
     ah_engine *engine;
     ah_extensions_config config;
     ext_catalog *catalog;
@@ -21,7 +23,7 @@ typedef struct ah_extensions {
 } ah_extensions;
 
 void ext_close(ah_extensions *);
-ah_code ext_context(ah_engine *, const char *, yyjson_mut_doc *, yyjson_mut_val *, ah_error *);
+ah_code ext_context_sync(ah_engine *, const char *, ah_error *);
 ah_code ext_skill(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
 ah_code ext_skill_read(ah_extensions *, const ah_tool_call *, yyjson_val *, ah_tool_result *,
                        ah_error *);

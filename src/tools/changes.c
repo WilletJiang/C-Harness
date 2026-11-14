@@ -52,6 +52,8 @@ static void conflict_receipt(const change *c, const ah_edit_text *source, const 
 static ah_code prepare(ah_local_tools *tools, change *c, yyjson_val *file, const ah_tool_call *call,
                        ah_tool_result *result, ah_error *error) {
     yyjson_val *path = yyjson_obj_get(file, "path");
+    if (call->require_revision && !yyjson_obj_get(file, "base_revision"))
+        return ah_fail(error, AH_INVALID, "Coordinated edits require base_revision for every file");
     c->path = yyjson_get_str(path);
     c->parent = ah_local_parent_fd(tools, path, c->leaf);
     ah_edit_text source = {0};
@@ -131,7 +133,7 @@ ah_code ah_local_apply(void *context, const ah_tool_call *call, ah_tool_result *
                 break;
             ah_tool_result written = {0};
             code = ah_local_replace(c->parent, c->leaf, c->edited.text, c->edited.length, &c->stat,
-                                    call, &written, error);
+                                    false, call, &written, error);
             unknown |= written.outcome_unknown;
             bool committed = code == AH_OK && !written.is_error;
             if (committed)

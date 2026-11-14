@@ -77,7 +77,7 @@ static bool eligible(ah_engine *e, read_worker *worker) {
     core_operation *op = &worker->operation;
     core_tool *tool = core_find_tool(e, op->name);
     if (strcmp(op->status, "pending") || op->effect != AH_EFFECT_READ || op->approval || !tool ||
-        !tool->tool.parallel_safe || tool->tool.effect != op->effect ||
+        tool->background || !tool->tool.parallel_safe || tool->tool.effect != op->effect ||
         tool->tool.requires_approval != op->approval || !op->schema ||
         strcmp(tool->schema, op->schema))
         return false;

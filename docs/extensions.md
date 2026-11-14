@@ -28,9 +28,9 @@ does not start MCP servers, read skill bodies or expand every installed plugin.
 The default page contains at most 12 entries; the maximum is 32.
 
 `skill {"id":"…"}` loads one skill into a session reference slot. The full text is
-included once in subsequent requests, while the tool receipt contains only its
+appended once at the next settled model boundary, while the tool receipt contains only its
 identity, path and content revision. Loading the same ID again replaces its slot
-without adding another copy; changes on disk are picked up by explicit reloading.
+without adding another copy or moving earlier input items; changes on disk are picked up by explicit reloading.
 `skill {"id":"…","action":"unload"}` removes the slot. References, scripts and
 assets are read separately when needed; loading a skill never executes its scripts.
 Use `skill` with `action:"read"`, a relative `path` and optional byte `offset`/`limit`
@@ -51,7 +51,12 @@ page until `refresh:true` or an engine restart. `next_offset` pages within the c
 server page; once exhausted, pass `next_cursor` to fetch the next remote page.
 `mcp_call` invokes a tool with a `server`, `name` and `arguments` object. Configured
 enabled/disabled tool filters apply both to discovery and execution. The CLI pauses
-for approval before external calls, just as for its local write/process tools.
+for approval before external calls, just as for its local write/process tools. Both MCP
+entrypoints run as bounded background jobs. Requests to one server serialize with
+cancellation/deadline-aware waiting; independent servers may overlap. Catalog and
+cache mutation are protected separately from transport I/O. Shutdown joins requests
+before closing clients. This does not enable MCP task negotiation or provider-native
+asynchronous tool delivery.
 
 Only these small entrypoint schemas enter the tool namespace; installing more
 extensions does not append their catalogs, schemas or instructions to every request.

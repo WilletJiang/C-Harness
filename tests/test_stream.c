@@ -82,6 +82,20 @@ static void failures(void) {
         "{\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_"
         "usage_limit_exceeded\"}}}\n\n";
     expect(subscription_limit, strlen(subscription_limit), AH_LIMIT);
+    const char nested_limit[] =
+        "data: "
+        "{\"type\":\"error\",\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\","
+        "\"message\":\"SECRET_MUST_NOT_PROPAGATE\"}}\n\n";
+    expect(nested_limit, strlen(nested_limit), AH_LIMIT);
+    ah_stream nested;
+    ah_stream_init(&nested, 4096, 8192, NULL, NULL);
+    assert(ah_stream_feed(&nested, nested_limit, strlen(nested_limit)) == AH_LIMIT);
+    assert(strstr(nested.error.message, "subscription sharing usage limit"));
+    assert(!strstr(nested.error.message, "SECRET_MUST_NOT_PROPAGATE"));
+    ah_stream_destroy(&nested);
+    const char nested_auth[] =
+        "data: {\"type\":\"error\",\"error\":{\"code\":\"invalid_api_key\"}}\n\n";
+    expect(nested_auth, strlen(nested_auth), AH_AUTH);
     const char subscription_unavailable[] =
         "data: "
         "{\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_"
