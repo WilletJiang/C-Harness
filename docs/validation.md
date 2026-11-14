@@ -84,6 +84,8 @@ side effects cannot be transactionally rolled back.
 
 ## Recorded evidence
 
+- [Long-task runtime, concurrency and subscription checks](evaluations/long-task-validation.md)
+
 The 0.6 extension change passed 34 Release/sanitizer contracts and the isolated
 build/test/install/external-client check on macOS. A metadata-only check of the
 installed Codex profile found 28 local skills, 3 MCP configurations and 28 plugins;
