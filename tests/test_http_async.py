@@ -9,14 +9,15 @@ import tempfile
 import threading
 import time
 import traceback
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from loopback import LoopbackServer
 
 
 def event(value):
     return b"data: " + json.dumps(value).encode() + b"\r\n\r\n"
 
 
-class Server(ThreadingHTTPServer):
+class Server(LoopbackServer):
     daemon_threads = True
     request_queue_size = 32
 

@@ -6,7 +6,8 @@ import subprocess
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from loopback import LoopbackServer
 
 
 def event(value):
@@ -158,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LoopbackServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()

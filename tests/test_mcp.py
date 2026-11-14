@@ -1,5 +1,6 @@
 """Local-only protocol fixtures. Also acts as the subprocess MCP peer."""
 import http.server
+from loopback import LoopbackServer
 import json
 import os
 import signal
@@ -96,7 +97,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--stdio":
     sys.exit(0)
 
 
-class Server(http.server.ThreadingHTTPServer):
+class Server(LoopbackServer):
     daemon_threads = True
 
     def handle_error(self, request, client_address):

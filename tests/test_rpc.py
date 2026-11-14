@@ -1,5 +1,6 @@
 """Exercise RPC concurrency, strict framing, offline metadata, and shutdown."""
 import http.server
+from loopback import LoopbackServer
 import json
 import os
 import pathlib
@@ -114,7 +115,7 @@ def start_run(client, label):
 
 
 def main():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Service)
+    server = LoopbackServer(("127.0.0.1", 0), Service)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

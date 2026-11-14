@@ -1,5 +1,6 @@
 """Public executable contracts against a deterministic Responses service, no secrets/network API."""
 import http.server
+from loopback import LoopbackServer
 import json
 import os
 import pathlib
@@ -46,7 +47,7 @@ class Service(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Service)
+server = LoopbackServer(('127.0.0.1', 0), Service)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 endpoint = f'http://127.0.0.1:{server.server_port}/responses'
 env = dict(os.environ, AH_ACCESS_TOKEN='local-fixture-not-a-credential')

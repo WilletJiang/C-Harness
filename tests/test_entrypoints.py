@@ -13,6 +13,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PackageChecks(unittest.TestCase):
+
+    def test_loopback_bind_does_not_resolve_dns(self):
+        import http.server
+        from unittest.mock import patch
+        from tests.loopback import LoopbackServer
+
+        with patch("socket.getfqdn", side_effect=AssertionError("unexpected DNS lookup")):
+            server = LoopbackServer(("127.0.0.1", 0), http.server.BaseHTTPRequestHandler)
+            try:
+                self.assertEqual(server.server_name, "127.0.0.1")
+                self.assertGreater(server.server_port, 0)
+            finally:
+                server.server_close()
     def test_command_help_without_credentials(self):
         env = dict(os.environ)
         for key in ("AH_ACCESS_TOKEN", "ACCESS_TOKEN", "OPENAI_API_KEY", "PYTHONPATH"):

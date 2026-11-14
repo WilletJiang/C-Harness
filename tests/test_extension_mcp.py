@@ -1,5 +1,6 @@
 """MCP catalog/dispatch/recovery through the public CLI, using only loopback services."""
 import http.server
+from loopback import LoopbackServer
 import json
 import os
 import pathlib
@@ -103,7 +104,7 @@ class Service(http.server.BaseHTTPRequestHandler):
         self.respond("data: " + json.dumps(event) + "\n\n", "text/event-stream")
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Service)
+server = LoopbackServer(("127.0.0.1", 0), Service)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 try:
     with tempfile.TemporaryDirectory(prefix="ah-extension-mcp-") as directory:
