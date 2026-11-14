@@ -42,7 +42,7 @@ static void excerpt(find_output *out, const char *path, const char *revision, co
         out->full = true;
         return;
     }
-    if (!ah_local_utf8(source + offset, keep, &complete)) {
+    if (!ah_utf8_prefix(source + offset, keep, &complete)) {
         out->full = true;
         return;
     }

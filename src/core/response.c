@@ -1,5 +1,6 @@
 #include "core.h"
 #include "../agents/agents_internal.h"
+#include "../extensions/extensions_internal.h"
 
 static const char ask_schema[] =
     "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\"},\"options\":{\"type\":"
@@ -76,8 +77,10 @@ ah_code core_request(ah_engine *e, const core_session *session, char **json, ah_
         yyjson_mut_arr_append(input, item);
     }
     sqlite3_stmt *s = NULL;
-    ah_code rc = core_prepare(
-        e, "SELECT json FROM items WHERE session_id=? AND active=1 ORDER BY seq", &s, err);
+    ah_code rc = ext_context(e, session->id, d, input, err);
+    if (rc == AH_OK)
+        rc = core_prepare(e, "SELECT json FROM items WHERE session_id=? AND active=1 ORDER BY seq",
+                          &s, err);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, session->id, -1, SQLITE_TRANSIENT);
         int step;

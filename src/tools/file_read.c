@@ -164,7 +164,7 @@ static ah_code read_page_from_fd(int fd, const ah_tool_call *call, read_page *pa
         ah_hash_finish(&hash, page->revision);
     size_t complete;
     if (memchr(page->content, '\0', page->length) ||
-        !ah_local_utf8(page->content, page->length, &complete) ||
+        !ah_utf8_prefix(page->content, page->length, &complete) ||
         (!page->truncated && complete != page->length))
         return AH_INVALID;
     page->length = complete;

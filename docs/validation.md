@@ -23,6 +23,11 @@ consume subscription/API quotas. Tests create temporary state and clean it up.
 | find | Independent line-mask oracle, seeded Unicode/CR/overlap cases, dense matches, unaligned ASCII/UTF-8 validation boundaries |
 | task | Bounded repair, revision/policy validation, budgets across submissions/restarts, killed verification/repair-intent recovery, explicit reconciliation and local-check adapter |
 | agents | Fresh contexts, concurrent model requests, one-slot nested joins, messaging and wake boundaries, interruption/steering, saved result access, shared budgets/usage, transaction faults and six killed-process checkpoints |
+| extensions | Explicit opt-in, skill snapshot dedup/reload, UTF-8/UTF-16 persistence, compaction/fork/reopen and fresh-child isolation, atomic budgets, confined paged references |
+| extension_catalog | Lazy metadata discovery, Codex effective policy, portable/compatibility plugins, installed symlinks, unavailable components, 1,000-skill scale and bounded scanning |
+| mcp | Actual stdio/HTTP JSON/SSE, handshake/version/session reuse, cancellation/deadlines, server requests, process cleanup, secret redaction and no implicit POST replay |
+| extension_mcp | Public CLI discovery/schema/cache/call flow, approval across restart, disabled tools, unknown effects and explicit reconciliation |
+| extension_server_cache | Real wrapper with transport fixture: retained cursor accounting, atomic cache replacement, metadata reuse, exact resource identities |
 | http_async | Real concurrent HTTP/SSE, per-request cancellation/retries/routing, token ownership and public CLI delegation/follow-up |
 | http | Scripted real HTTP/SSE, rate/transport retries, no retry after output, auth/MIME/redirect rejection, deadline/cancellation, connection reuse |
 | cli | Actual executable: network-to-tool-to-model loop, persisted approval and Ask across restarts, dedupe/fork/checkpoint, RPC |
@@ -73,6 +78,19 @@ these tests. External executor cancellation is cooperative and arbitrary shell
 side effects cannot be transactionally rolled back.
 
 ## Recorded evidence
+
+The 0.6 extension change passed 34 Release/sanitizer contracts and the isolated
+build/test/install/external-client check on macOS. A metadata-only check of the
+installed Codex profile found 28 local skills, 3 MCP configurations and 28 plugins;
+26 enabled bundles expanded without starting servers or loading skill bodies.
+
+A temporary Release-library probe with 1,000 generated skills measured a 1,260-byte
+base request and a 3,856-byte request with all extension entrypoints enabled. That
+request remained byte-identical after catalog discovery. Across three fresh catalog
+instances with recently written, filesystem-cached files, initial discovery took
+76.8–81.6 ms; 100 repeated filtered queries per instance averaged 295–298 µs each.
+This measures local metadata/context overhead, not model latency or token usage.
+The probe and generated files were removed after the measurements.
 
 - [Local runtime/file-tool measurements](evaluations/local-performance.md)
 - [Terra endurance comparison](evaluations/endurance-evaluation.md)

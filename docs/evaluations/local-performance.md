@@ -143,6 +143,6 @@ instructions, independent routing, join receipts and follow-up tasks against the
 native concurrent transport. These tests exercise loopback HTTP and synthetic
 responses. Subscription-model task latency and quality require separate measurement.
 
-Build with `-AH_BENCHMARK=ON` and run `./build/bench_agents` to reproduce. The
+Build with `-DAH_BENCHMARK=ON` and run `./build/bench_agents` to reproduce. The
 measured binary SHA-256 was
 `2d7ee4cb9e7c783187e176963dc4b1a0db83e02c72f490b4b2afb8d375c39bb7`.

@@ -23,4 +23,5 @@ ah_code ah_schema_parse(const char *schema, const char *value, yyjson_doc **pars
                         ah_error *error);
 void ah_error_clear(ah_error *error);
 uint64_t ah_now_us(void);
+bool ah_utf8_prefix(const char *text, size_t length, size_t *complete);
 #endif

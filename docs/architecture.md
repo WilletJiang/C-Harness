@@ -11,6 +11,7 @@ of the library.
 | `src/agents/` | Fresh child sessions, owner scheduling, durable mail, joins and tree accounting | Shared tools, independent request state, explicit wake and recovery |
 | `src/providers/` | Responses lifecycle, HTTP transport and SSE assembly | Returns a validated complete response; no tool execution |
 | `src/tools/` | Local file/process tools and argument validation | Reports results/effect uncertainty to the core |
+| `src/extensions/` | Opt-in Codex catalogs, pinned skills and lazy MCP clients | Fixed discovery schemas; no process/network activity before use |
 | `src/cli/` | CLI/RPC protocol, credentials and signals | Embeds the public runtime |
 | `host/` | Optional ChatGPT OAuth/Keychain adapter | Supplies/refreshes a bearer; keeps refresh credentials private |
 | `evals/` | Workloads, shared runner adapters and measurements | Can use private APIs; not a stable embedding interface |
@@ -58,3 +59,8 @@ failure handling between the synchronous loop and the agent scheduler.
 `src/providers/responses_async.c` drives concurrent requests on a shared multi
 transport. The extended tool-call struct exposes cooperative owner-thread I/O
 progress. See [subagents](subagents.md) for execution and ownership details.
+
+Version 0.6 makes this an independent repository and adds lazy extensions. The core
+owns durable session skill snapshots (schema 5); the extension catalog owns bounded
+metadata and the transport owns live MCP connections. Parsing uses pinned tomlc17
+alongside yyjson. See [extensions](extensions.md) and [usage](usage.md).

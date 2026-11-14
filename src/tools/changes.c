@@ -35,7 +35,7 @@ static void conflict_receipt(const change *c, const ah_edit_text *source, const 
         keep = 4096;
     if (keep > source->length)
         keep = source->length;
-    ah_local_utf8(source->text, keep, &complete);
+    ah_utf8_prefix(source->text, keep, &complete);
     keep = complete;
     yyjson_mut_obj_add_bool(doc, out, "ok", false);
     yyjson_mut_obj_add_str(doc, out, "error", "conflict");

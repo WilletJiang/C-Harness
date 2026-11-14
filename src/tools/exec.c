@@ -175,7 +175,7 @@ static bool drain(capture *stream, size_t *remaining, bool *truncated) {
 static bool add_capture(yyjson_mut_doc *doc, yyjson_mut_val *root, const char *key,
                         const char *encoding_key, capture *stream, bool truncated) {
     size_t complete;
-    if (ah_local_utf8(stream->bytes, stream->length, &complete) &&
+    if (ah_utf8_prefix(stream->bytes, stream->length, &complete) &&
         (complete == stream->length || truncated)) {
         return yyjson_mut_obj_add_strncpy(doc, root, key, stream->bytes, complete) &&
                yyjson_mut_obj_add_str(doc, root, encoding_key, "utf-8");

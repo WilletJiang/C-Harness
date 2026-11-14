@@ -55,6 +55,15 @@ with tempfile.TemporaryDirectory(prefix='ah-cli-') as tmp:
     workspace = pathlib.Path(tmp) / 'workspace'
     workspace.mkdir()
     (workspace / 'source.txt').write_text('hello 世界')
+    codex_home = pathlib.Path(tmp) / 'codex home'
+    codex_home.mkdir()
+    (codex_home / 'config.toml').write_text('Malformed configuration must remain unread: [')
+    skill = codex_home / 'skills' / 'fixture'
+    skill.mkdir(parents=True)
+    skill_body = 'PRIVATE_SKILL_BODY_MUST_ONLY_LOAD_ON_DEMAND'
+    (skill / 'SKILL.md').write_text(
+        '---\nname: fixture\ndescription: Offline fixture\n---\n' + skill_body)
+    env['CODEX_HOME'] = str(codex_home)
     base = ['--db', tmp + '/state.db', '--workspace', str(workspace),
             '--endpoint', endpoint, '--allow-http-loopback']
 
@@ -75,6 +84,8 @@ with tempfile.TemporaryDirectory(prefix='ah-cli-') as tmp:
     names = {tool['name'] for tool in requests[-1]['tools'][0]['tools']}
     assert 'apply_changes' in names and 'find' not in names
     assert not names.intersection({'list_directory', 'edit_file', 'search'})
+    extension_names = {'discover', 'skill', 'mcp', 'mcp_call'}
+    assert not names.intersection(extension_names), 'Installed extensions must be opt-in'
     before = len(requests)
     run('run', '--session', plain, '--prompt', 'Hello', '--command-id', 'u1')
     assert len(requests) == before, 'Duplicate command must not execute again'
@@ -114,5 +125,41 @@ with tempfile.TemporaryDirectory(prefix='ah-cli-') as tmp:
     assert replies['c']['status'] == 'ok' and replies[2]['status'] == 'ok'
     assert replies[3]['status'] == 'invalid'
 
+    # Configuration paths alone do not enable features; absent paths stay inert.
+    missing_home = str(pathlib.Path(tmp) / 'does not exist')
+    disabled = run('new', '--model', 'simple', '--codex-home', missing_home)['id']
+    run('run', '--session', disabled, '--prompt', 'No extensions', '--command-id', 'd1',
+        '--codex-home', missing_home, '--extension-context-bytes', '1024')
+    names = {tool['name'] for tool in requests[-1]['tools'][0]['tools']}
+    assert not names.intersection(extension_names)
+
+    # Each feature registers only its small entrypoints, without parsing config
+    # or loading installed skill bodies. Opt-in is required again on reopen.
+    cases = [
+        (['--skills'], {'discover', 'skill'}),
+        (['--mcp'], {'discover', 'mcp', 'mcp_call'}),
+        (['--plugins'], {'discover'}),
+        (['--skills', '--mcp'], extension_names),
+        (['--plugins', '--skills'], {'discover', 'skill'}),
+        (['--plugins', '--mcp'], {'discover', 'mcp', 'mcp_call'}),
+        (['--skills', '--mcp', '--plugins'], extension_names),
+    ]
+    for flags, expected in cases:
+        enabled = run('new', '--model', 'simple', '--codex-home', str(codex_home), *flags)['id']
+        run('run', '--session', enabled, '--prompt', 'Enabled explicitly', '--command-id', 'e1',
+            '--codex-home', str(codex_home), '--extension-context-bytes', '1024', *flags)
+        names = {tool['name'] for tool in requests[-1]['tools'][0]['tools']}
+        assert names.intersection(extension_names) == expected, (flags, names)
+        assert skill_body not in json.dumps(requests[-1]), 'Skill bodies must load on demand'
+        run('run', '--session', enabled, '--prompt', 'Reopened without opt-in', '--command-id', 'e2')
+        names = {tool['name'] for tool in requests[-1]['tools'][0]['tools']}
+        assert not names.intersection(extension_names), 'Flags must not persist in the database'
+
+    for invalid in ('', '0', '1023', '-1024', ' -1024', '+1024', ' 1024', 'bad', '1024x', str(2**128)):
+        run('new', '--model', 'simple', '--extension-context-bytes', invalid, ok=False)
+    run('new', '--model', 'simple', '--extension-context-bytes', ok=False)
+    run('new', '--model', 'simple', '--codex-home', ok=False)
+
 server.shutdown()
-print('CLI integration passed: real HTTP tool loop, approval/restart, Ask/reply, dedupe, fork, compaction, RPC')
+server.server_close()
+print('CLI integration passed: HTTP tools, approval/restart, input, dedupe, fork, compaction, RPC, extension opt-in')

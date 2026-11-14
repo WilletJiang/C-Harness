@@ -12,3 +12,14 @@ SHA-256:
 libcurl and SQLite are external system dependencies. Record their runtime versions
 when comparing benchmark results. The store uses rollback journaling with FULL
 synchronization and a single owner; it does not depend on concurrent WAL writers.
+
+`tomlc17` is vendored unmodified at commit
+`aa4ca1bc5fe6382ac631a8d1428077a9a084a64d` from
+https://github.com/cktan/tomlc17. Its MIT license is in `tomlc17/LICENSE`.
+It parses Codex configuration only after explicit extension discovery.
+
+SHA-256:
+
+- `tomlc17/tomlc17.h`: `29c0909092f4b23c7edce705167064f4a90548db5334b4aa2cd95d7ad801adb9`
+- `tomlc17/tomlc17.c`: `7476923b6c9b8f0858b82b63ed6107f57448882983390e70c31327f7d3e2a362`
+- `tomlc17/LICENSE`: `f949d0976f85076c96fc5122f0632b5a1b806d8b2badbe968c42c97230e6e79e`

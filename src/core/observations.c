@@ -6,14 +6,18 @@ char *core_observation_view(ah_engine *e, const char *sid, const core_operation 
                             const char *json, bool is_error, char digest[65], ah_error *error) {
     digest[0] = 0;
     char *view = core_result_view(e, op->id, json, is_error);
-    if (!view || is_error || strcmp(op->name, "read_file"))
+    bool file = !strcmp(op->name, "read_file");
+    bool extension = !strcmp(op->name, "discover") || !strcmp(op->name, "mcp");
+    if (!view || is_error || (!file && !extension))
         return view;
     yyjson_doc *args = yyjson_read(op->arguments, strlen(op->arguments), 0),
                *parsed = yyjson_read(view, strlen(view), 0);
     yyjson_val *result = parsed ? yyjson_obj_get(yyjson_doc_get_root(parsed), "result") : NULL;
     yyjson_val *revision = yyjson_obj_get(result, "revision"),
                *content = yyjson_obj_get(result, "content");
-    bool eligible = args && yyjson_is_str(content) && yyjson_get_len(revision) == 64;
+    bool eligible =
+        args && ((file && yyjson_is_str(content) && yyjson_get_len(revision) == 64) ||
+                 (extension && result && !yyjson_is_true(yyjson_obj_get(result, "truncated"))));
     bool force = args && yyjson_is_true(yyjson_obj_get(yyjson_doc_get_root(args), "force"));
     if (eligible)
         ah_hash_bytes(json, strlen(json), digest);

@@ -30,6 +30,13 @@ files, remote responses, and subprocess output are untrusted data.
   not print provisional deltas unless events/RPC are selected. Secure the host's logs.
 - A disconnected UI is not evidence that an operation stopped; a timed-out write is
   not evidence that it failed. Unknown outcomes require target-side reconciliation.
+- Skills, MCP and plugin loading are independent opt-ins. Loading skill instructions
+  does not execute scripts or hooks. Plugin entries requiring a hosted connector/UI
+  are marked unavailable. MCP process tools retain the OS authority of their host;
+  cancellation and bounded transport buffers do not constitute an OS sandbox.
+- MCP credentials stay in host transport configuration, outside discovery metadata.
+  Effectful calls are journaled before dispatch. Automatic POST rewind/replay is
+  disabled, including libcurl's internal retry on a failed reused connection.
 
 Third-party library fixes and tool-platform support must be reviewed before each
 release. Sanitizer/fuzz success reduces implementation risk but does not prove

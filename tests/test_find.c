@@ -97,7 +97,7 @@ static void utf8_boundaries(void) {
             memset(text, 'x', prefix);
             memcpy(text + prefix, cases[i].bytes, cases[i].size);
             size_t complete = 0;
-            assert(ah_local_utf8(text, prefix + cases[i].size, &complete) == cases[i].valid);
+            assert(ah_utf8_prefix(text, prefix + cases[i].size, &complete) == cases[i].valid);
             assert(complete == prefix + cases[i].complete);
         }
 }

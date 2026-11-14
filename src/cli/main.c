@@ -1,4 +1,5 @@
 #include "cli.h"
+#include "extensions.h"
 #include "ah/responses.h"
 #include "ah/tools.h"
 #include "ah/agents.h"
@@ -20,6 +21,12 @@ static void usage(void) {
          "  --workspace PATH     Register bounded local file tools\n"
          "  --enable-exec        Explicitly allow process execution (not sandboxed)\n"
          "  --workflows          Add find text search (apply_changes is always available)\n"
+         "  --skills             Enable lazy skill discovery and loading (default off)\n"
+         "  --mcp                Enable lazy MCP discovery/calls with approval (default off)\n"
+         "  --plugins            Discover installed plugin bundles (default off)\n"
+         "                       Plugin skills/MCP also require --skills/--mcp\n"
+         "  --codex-home PATH    Extension source; does not enable extensions\n"
+         "  --extension-context-bytes N  Loaded skill limit (default 131072; min 1024)\n"
          "  --model NAME         Model for new session (required by new)\n"
          "  --instructions TEXT  Developer instructions for new session\n"
          "  --session ID         Target session\n"
@@ -39,7 +46,7 @@ static void usage(void) {
          "  --wake               Send a task that can wake an idle child\n"
          "  --model-tool-bytes N  Per-result model view (default 16384; 0 disables cap)\n"
          "  --events             Print structured execution events\n"
-         "  --allow-http-loopback  Allow local HTTP fixture only\n"
+         "  --allow-http-loopback  Allow local HTTP Responses/MCP fixtures only\n"
          "RPC: bounded JSON lines; method/id/session fields. See docs/protocol.md.\n"
          "Secrets are never accepted on the command line. OAuth belongs to the host.");
 }
@@ -61,7 +68,14 @@ int main(int argc, char **argv) {
     const char *target = NULL;
     bool wake = false;
     size_t model_tool_bytes = 16384;
+    ah_extensions_config extensions;
+    ah_extensions_config_init(&extensions);
     for (int i = 2; i < argc; ++i) {
+        cli_option_status extension_option = cli_extension_option(&extensions, argc, argv, &i);
+        if (extension_option == CLI_OPTION_INVALID)
+            return 2;
+        if (extension_option == CLI_OPTION_HANDLED)
+            continue;
         const char *arg = argv[i];
         if (!strcmp(arg, "--wake")) {
             wake = true;
@@ -223,6 +237,12 @@ int main(int argc, char **argv) {
     config.observer = cli_observe;
     config.observer_context = &cli;
     code = ah_open(&config, &cli.engine, &error);
+    if (code == AH_OK &&
+        (extensions.enable_skills || extensions.enable_mcp || extensions.enable_plugins)) {
+        extensions.workspace = workspace;
+        extensions.allow_http_loopback = allow_http;
+        code = ah_extensions_enable(cli.engine, &extensions, &error);
+    }
     ah_local_tools *tools = NULL;
     if (code == AH_OK && workspace) {
         ah_local_tools_config tc = {.workspace = workspace,

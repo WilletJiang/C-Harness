@@ -200,7 +200,7 @@ ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
     close(fd);
     size_t complete;
     if (code == AH_OK &&
-        (memchr(data, '\0', used) || !ah_local_utf8(data, used, &complete) || complete != used))
+        (memchr(data, '\0', used) || !ah_utf8_prefix(data, used, &complete) || complete != used))
         code = AH_INVALID;
     if (code != AH_OK) {
         free(data);

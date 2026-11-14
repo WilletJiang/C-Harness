@@ -67,50 +67,6 @@ ah_code ah_local_error(const ah_tool_call *call, ah_tool_result *result, ah_erro
     return ah_fail(error, code, "%s", message);
 }
 
-/* Returns a valid prefix for output truncation, but rejects malformed UTF-8. */
-bool ah_local_utf8(const char *text, size_t length, size_t *complete) {
-    size_t i = 0;
-    *complete = 0;
-    while (i < length) {
-        /* Most source text is ASCII. memcpy permits unaligned input without
-         * aliasing assumptions; the byte-high-bit mask works on either endian. */
-        while (length - i >= sizeof(uint64_t)) {
-            uint64_t word;
-            memcpy(&word, text + i, sizeof(word));
-            if (word & UINT64_C(0x8080808080808080))
-                break;
-            i += sizeof(word);
-            *complete = i;
-        }
-        if (i == length)
-            break;
-        unsigned char c = (unsigned char)text[i];
-        if (c < 0x80) {
-            ++i;
-            *complete = i;
-            continue;
-        }
-        unsigned n = c >= 0xc2 && c <= 0xdf   ? 2
-                     : c >= 0xe0 && c <= 0xef ? 3
-                     : c >= 0xf0 && c <= 0xf4 ? 4
-                                              : 0;
-        if (!n)
-            return false;
-        if (length - i < n)
-            return true;
-        for (unsigned j = 1; j < n; ++j)
-            if (((unsigned char)text[i + j] & 0xc0) != 0x80)
-                return false;
-        unsigned char second = (unsigned char)text[i + 1];
-        if ((c == 0xe0 && second < 0xa0) || (c == 0xed && second >= 0xa0) ||
-            (c == 0xf0 && second < 0x90) || (c == 0xf4 && second >= 0x90))
-            return false;
-        i += n;
-        *complete = i;
-    }
-    return true;
-}
-
 /* Walk each directory using the pinned workspace descriptor. Never follow links. */
 int ah_local_parent_fd(ah_local_tools *tools, yyjson_val *path, char leaf[4097]) {
     return ah_local_parent_path(tools, yyjson_get_str(path), yyjson_get_len(path), leaf);

@@ -9,7 +9,6 @@ import subprocess
 import time
 import uuid
 
-from .client import encode
 from .workload import Workload
 
 
@@ -33,7 +32,7 @@ def main():
                           text=True, bufsize=1) as process:
         for step in range(2):
             body = dict(work.request(), stream=True)
-            wire = encode(body).decode() + "\n"
+            wire = json.dumps(body, ensure_ascii=False, separators=(",", ":")) + "\n"
             started = time.perf_counter()
             process.stdin.write(wire)
             process.stdin.flush()

@@ -38,7 +38,7 @@ static ah_code collect(int fd, const char *prefix, unsigned depth, const ah_tool
             break;
         }
         size_t complete, n = strlen(entry->d_name);
-        if (!ah_local_utf8(entry->d_name, n, &complete) || complete != n) {
+        if (!ah_utf8_prefix(entry->d_name, n, &complete) || complete != n) {
             paths->skipped++;
             continue;
         }

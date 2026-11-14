@@ -188,8 +188,8 @@ static void mailbox_rollbacks(void) {
 
 static void old_schema_upgrades(void) {
     const char *versions[] = {"PRAGMA user_version=1", "PRAGMA user_version=2",
-                              "PRAGMA user_version=3"};
-    for (unsigned version = 0; version < 3; version++) {
+                              "PRAGMA user_version=3", "PRAGMA user_version=4"};
+    for (unsigned version = 0; version < 4; version++) {
         char directory[] = "/tmp/ah-agent-migration-XXXXXX", path[128];
         assert(mkdtemp(directory));
         snprintf(path, sizeof(path), "%s/state.db", directory);
@@ -201,15 +201,18 @@ static void old_schema_upgrades(void) {
               &error);
         /* Remove every new table, not just the version marker, to exercise
          * actual creation when opening each supported pre-agent schema. */
-        sql(fixture.engine,
-            "DROP TABLE agent_usage; DROP TABLE agent_waits; DROP TABLE agent_messages; "
-            "DROP TABLE agent_trees; DROP TABLE agent_nodes");
+        if (version < 3)
+            sql(fixture.engine,
+                "DROP TABLE agent_usage; DROP TABLE agent_waits; DROP TABLE agent_messages; "
+                "DROP TABLE agent_trees; DROP TABLE agent_nodes");
+        sql(fixture.engine, "DROP TABLE extension_context");
         if (version == 0)
             sql(fixture.engine, "DROP TABLE result_refs");
         sql(fixture.engine, versions[version]);
         af_reopen(&fixture);
-        assert(scalar(fixture.engine, "PRAGMA user_version") == 4);
+        assert(scalar(fixture.engine, "PRAGMA user_version") == 5);
         assert(scalar(fixture.engine, "SELECT COUNT(*) FROM agent_nodes") == 0);
+        assert(scalar(fixture.engine, "SELECT COUNT(*) FROM extension_context") == 0);
         af_state(&fixture, fixture.root, "idle");
         af_ok(ah_submit(fixture.engine, fixture.root, "migration", "MIGRATION_ROOT", &error),
               &error);

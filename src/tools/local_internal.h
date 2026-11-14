@@ -43,7 +43,6 @@ ah_code ah_local_error(const ah_tool_call *call, ah_tool_result *result, ah_erro
                        ah_code code, const char *message);
 ah_code ah_local_finish(const ah_tool_call *call, ah_tool_result *result, yyjson_mut_doc *doc,
                         ah_error *error);
-bool ah_local_utf8(const char *text, size_t length, size_t *complete);
 ah_code ah_local_exec(void *context, const ah_tool_call *call, ah_tool_result *result,
                       ah_error *error);
 int ah_local_parent_fd(ah_local_tools *tools, yyjson_val *path, char leaf[4097]);

@@ -156,6 +156,13 @@ within the open transaction. Fresh subagents inherit host instructions and tools
 with task-specific context supplied explicitly by the sender. See [subagents](subagents.md)
 for delivery, cancellation and recovery. Rebuild C clients for version 0.5.
 
+Schema version 5 adds per-session loaded skill snapshots. Upserts are bounded and
+transactional; a crash before the corresponding read receipt can safely repeat
+the same load. Ordinary context compaction retains these explicit reference slots.
+Extension flags are process configuration, not persisted grants; reopening without
+`enable_skills` omits the slots. Fresh child agents do not copy them. See
+[extensions](extensions.md) for opt-in discovery and transport boundaries.
+
 ## Schema subset
 
 Tool schemas support single-string `type` (object/array/string/integer/number/

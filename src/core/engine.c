@@ -1,5 +1,6 @@
 #include "core.h"
 #include "../agents/agents_internal.h"
+#include "../extensions/extensions_internal.h"
 #include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -94,7 +95,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         else {
             version = sqlite3_column_int(s, 0);
             e->utf8_store = sqlite3_column_int(s, 1) != 0;
-            if (version > 4)
+            if (version > 5)
                 rc = ah_fail(err, AH_PROTOCOL, "database schema is newer than this runtime");
         }
     }
@@ -151,6 +152,14 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     if (rc == AH_OK)
         rc = agents_schema(e, err);
     if (rc == AH_OK)
+        rc = core_sql(e,
+                      "CREATE TABLE IF NOT EXISTS extension_context("
+                      "seq INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),"
+                      "identity TEXT NOT NULL,revision TEXT NOT NULL,message TEXT NOT NULL,"
+                      "bytes INTEGER NOT NULL CHECK(bytes>=0),"
+                      "UNIQUE(session_id,identity));",
+                      err);
+    if (rc == AH_OK)
         rc = core_prepare(e,
                           "UPDATE agent_nodes SET resume_pending=1 WHERE session_id IN "
                           "(SELECT id FROM sessions WHERE state=?)",
@@ -160,7 +169,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         rc = core_done(e, s, err);
     }
     if (rc == AH_OK)
-        rc = core_sql(e, "PRAGMA user_version=4; COMMIT", err);
+        rc = core_sql(e, "PRAGMA user_version=5; COMMIT", err);
     if (rc != AH_OK)
         core_rollback(e);
     if (rc == AH_OK)
@@ -178,6 +187,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
 void ah_close(ah_engine *e) {
     if (!e)
         return;
+    ext_close(e->extensions);
     core_mailbox_free(e);
     if (e->db)
         sqlite3_close(e->db);

@@ -21,6 +21,7 @@ struct ah_engine {
     ah_config config;
     ah_agents_config agents;
     bool agents_enabled;
+    struct ah_extensions *extensions;
     void (*yield)(void *);
     void *yield_context;
     sqlite3 *db;
