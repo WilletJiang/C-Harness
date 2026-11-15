@@ -1,5 +1,27 @@
 #include "content_internal.h"
 
+ah_code ah_session_state(ah_engine *e, const char *sid, ah_state *state, ah_error *error) {
+    ah_code code = core_guard(e, error);
+    if (code != AH_OK)
+        return code;
+    if (!sid || !state)
+        return ah_fail(error, AH_INVALID, "session ID and state output required");
+    sqlite3_stmt *row = NULL;
+    code = core_prepare(e, "SELECT state FROM sessions WHERE id=?", &row, error);
+    if (code == AH_OK) {
+        sqlite3_bind_text(row, 1, sid, -1, SQLITE_TRANSIENT);
+        int step = sqlite3_step(row);
+        if (step == SQLITE_ROW) {
+            *state = (ah_state)sqlite3_column_int(row, 0);
+            ah_error_clear(error);
+        } else
+            code = ah_fail(error, step == SQLITE_DONE ? AH_NOT_FOUND : AH_IO,
+                           "cannot read session state");
+    }
+    sqlite3_finalize(row);
+    return code;
+}
+
 ah_code ah_session_create(ah_engine *e, const char *model, const char *instructions,
                           char id[AH_ID_CAP], ah_error *err) {
     ah_code rc = core_guard(e, err);

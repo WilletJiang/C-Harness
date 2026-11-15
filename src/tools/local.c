@@ -196,6 +196,11 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "a new file. An expectation is required for coordinated writes.",
          ah_write_schema, AH_EFFECT_WRITE, tools->approve_writes, ah_local_write_file, tools,
          false},
+        {"view_image",
+         "View a workspace-relative PNG, JPEG, GIF or WebP image as native visual content. "
+         "Use this to inspect images, including crops produced by other tools. Default detail "
+         "is auto; original requires provider support. Refuses symlinks and oversized files.",
+         ah_image_schema, AH_EFFECT_READ, false, ah_local_view_image, tools, true},
         {"exec",
          "Execute argv in the workspace with broad local process authority. This is NOT a sandbox.",
          ah_exec_schema, AH_EFFECT_EXTERNAL, true, ah_local_exec, tools, false}};

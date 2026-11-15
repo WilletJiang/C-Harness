@@ -34,6 +34,8 @@ typedef struct {
 
 ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
                         struct stat *original, char **text, size_t *length, ah_scan_budget *budget);
+ah_code ah_local_bytes(int parent, const char *leaf, const ah_tool_call *, struct stat *,
+                       char **data, size_t *length, size_t limit, ah_scan_budget *);
 ah_code ah_local_revision(int fd, const ah_tool_call *call, char revision[65]);
 ah_code ah_local_replace(int parent, const char *leaf, const char *content, size_t length,
                          const struct stat *original, bool expect_absent, const ah_tool_call *call,
@@ -87,4 +89,6 @@ ah_code ah_local_read_file(void *context, const ah_tool_call *call, ah_tool_resu
 ah_code ah_local_write_file(void *context, const ah_tool_call *call, ah_tool_result *result,
                             ah_error *error);
 extern const char ah_read_schema[], ah_write_schema[], ah_exec_schema[];
+extern const char ah_image_schema[];
+ah_code ah_local_view_image(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
 #endif

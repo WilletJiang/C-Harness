@@ -5,6 +5,8 @@ consume subscription/API quotas. Tests create temporary state and clean it up.
 
 | Suite | Coverage |
 | --- | --- |
+| sdk / sdk_http | Managed host lifetimes, default-off capabilities, Ask across reopen, typed state, token rotation, sync/async real HTTP and native image tool results |
+| view_image | Signature detection, workspace confinement, stable reads, cancellation, special files and encoded output budgets |
 | core | Native tool loop, duplicate commands/call IDs, approval/input resume, fork/checkpoint, cancellation/steering, process-crash recovery, receipt-write failure |
 | alloc | Per-document allocation budgets, sticky builder failure, serialization/realloc failure, no partial JSON |
 | stream | Every fragmentation width, UTF-8/CRLF/BOM, duplicate/oversized/deep JSON, terminal barriers |
@@ -113,3 +115,12 @@ For RPC shutdown timing under ThreadSanitizer, set
 RPC test's two-second shutdown assertion. The agent, parallel-reader and HTTP
 concurrency suites also passed with the default exit sleep. Address/undefined
 behavior builds use `AH_SANITIZE`.
+
+The 0.9 SDK/image change passed 47 Release and ASan/UBSan suites, six targeted
+TSan suites, installed C/C++ consumers, a nested CMake consumer with Python
+disabled, a library-only build, and an independent Swift Package consumer.
+A real subscription smoke test used the managed SDK with gpt-6.1-sol: the model
+called `view_image` and correctly read three colors and the digits 826 from a
+local PNG. It used two model requests, 1,866 input tokens and 43 output tokens;
+this is a functional check, not a performance benchmark. Temporary fixtures and
+private builds are removed after validation.

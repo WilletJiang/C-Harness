@@ -1,7 +1,23 @@
 cmake_minimum_required(VERSION 3.20)
-project(ah VERSION 0.8.0 LANGUAGES C)
+project(ah VERSION 0.9.0 LANGUAGES C)
 
-include(CTest)
+set(AH_TOP_LEVEL OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+  set(AH_TOP_LEVEL ON)
+  include(CTest)
+endif()
+set(AH_TESTS_ENABLED OFF)
+if(AH_TOP_LEVEL AND BUILD_TESTING)
+  set(AH_TESTS_ENABLED ON)
+endif()
+option(AH_BUILD_CLI "Build the headless CLI/RPC executable" ${AH_TOP_LEVEL})
+option(AH_BUILD_EXAMPLES "Build SDK examples" ${AH_TOP_LEVEL})
+if(AH_TESTS_ENABLED AND (NOT AH_BUILD_CLI OR NOT AH_BUILD_EXAMPLES))
+  message(FATAL_ERROR "Contract tests exercise CLI/examples; set BUILD_TESTING=OFF for a library-only build")
+endif()
+if(AH_TESTS_ENABLED)
+  enable_testing()
+endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 option(AH_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
@@ -16,7 +32,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 find_package(CURL REQUIRED)
 find_package(SQLite3 3.37 REQUIRED)
 find_package(Threads REQUIRED)
-if(BUILD_TESTING)
+if(AH_TESTS_ENABLED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
 endif()
 if(AH_SANITIZE)
@@ -38,7 +54,7 @@ target_include_directories(ah_toml PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOUR
 set_target_properties(ah_toml PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(ah STATIC
-  src/common.c src/hash.c
+  src/common.c src/hash.c src/sdk.c
   src/core/content.c src/core/content_codec.c src/core/content_store.c src/core/content_expand.c src/core/tool_content.c src/core/retention.c
   src/core/context_policy.c src/core/context_archive.c src/core/context_recall.c
   src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/completion.c src/core/mailbox.c src/core/observations.c
@@ -56,7 +72,7 @@ add_library(ah STATIC
   src/providers/stream.c src/providers/stream_items.c
   src/tools/source.c src/tools/walk.c src/tools/find.c src/tools/changes.c src/tools/edit.c
   src/tools/check.c src/tools/check_registry.c src/tools/diagnostics.c
-  src/tools/exec.c src/tools/file.c src/tools/file_read.c src/tools/local.c src/tools/schema.c)
+  src/tools/exec.c src/tools/file.c src/tools/file_read.c src/tools/image.c src/tools/local.c src/tools/schema.c)
 add_library(ah::ah ALIAS ah)
 ah_compile_target(ah)
 target_include_directories(ah PUBLIC
@@ -70,28 +86,36 @@ elseif(UNIX)
   target_link_libraries(ah PRIVATE m)
 endif()
 
-add_executable(ah_cli
-  src/cli/main.c src/cli/output.c src/cli/rpc.c src/cli/credential.c src/cli/signals.c
-  src/cli/options.c src/cli/extensions.c src/cli/content.c src/cli/policies.c)
-set_target_properties(ah_cli PROPERTIES OUTPUT_NAME ah)
-ah_compile_target(ah_cli)
-target_include_directories(ah_cli PRIVATE src)
-target_link_libraries(ah_cli PRIVATE ah ah_json Threads::Threads)
-add_executable(ah_embed examples/embed.c)
-target_link_libraries(ah_embed PRIVATE ah)
+if(AH_BUILD_CLI)
+  add_executable(ah_cli
+    src/cli/main.c src/cli/output.c src/cli/rpc.c src/cli/credential.c src/cli/signals.c
+    src/cli/options.c src/cli/extensions.c src/cli/content.c src/cli/policies.c)
+  set_target_properties(ah_cli PROPERTIES OUTPUT_NAME ah)
+  ah_compile_target(ah_cli)
+  target_include_directories(ah_cli PRIVATE src)
+  target_link_libraries(ah_cli PRIVATE ah ah_json Threads::Threads)
+endif()
+if(AH_BUILD_EXAMPLES)
+  add_executable(ah_embed examples/embed.c)
+  target_link_libraries(ah_embed PRIVATE ah)
+  add_executable(ah_host examples/host.c)
+  target_link_libraries(ah_host PRIVATE ah)
+endif()
 
-if(AH_LIVE_EVAL OR BUILD_TESTING)
+if(AH_LIVE_EVAL OR AH_TESTS_ENABLED)
   add_subdirectory(evals)
 endif()
-if(BUILD_TESTING OR AH_FUZZ)
+if(AH_TESTS_ENABLED OR AH_FUZZ)
   add_subdirectory(tests)
 endif()
 if(AH_BENCHMARK)
   add_subdirectory(benchmarks)
 endif()
 
-install(TARGETS ah ah_json ah_toml ah_cli EXPORT ahTargets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS ah ah_json ah_toml EXPORT ahTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+if(AH_BUILD_CLI)
+  install(TARGETS ah_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT ahTargets NAMESPACE ah:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ah)
 configure_package_config_file(cmake/ahConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/ahConfig.cmake

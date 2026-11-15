@@ -1,5 +1,5 @@
-/* A complete offline embedding example. Replace only the provider for live use. */
-#include <ah/ah.h>
+/* A complete offline SDK example. host.c uses the managed live provider. */
+#include <ah/sdk.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +16,7 @@ static ah_code complete(void *context, const char *request, ah_delta_sink delta,
         "{\"status\":\"completed\",\"output\":[{\"type\":\"message\","
         "\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\","
         "\"text\":\"Hello from the standalone C runtime.\"}]}]}";
-    *response = malloc(strlen(json) + 1);
+    *response = (char *)malloc(strlen(json) + 1);
     if (!*response)
         return AH_IO;
     memcpy(*response, json, strlen(json) + 1);
@@ -25,14 +25,15 @@ static ah_code complete(void *context, const char *request, ah_delta_sink delta,
     return AH_OK;
 }
 int main(void) {
-    ah_config config;
-    ah_config_init(&config);
-    config.database_path = ":memory:";
-    config.provider.complete = complete;
-    ah_engine *engine = NULL;
-    ah_error error = {0};
+    ah_sdk_config config;
+    ah_sdk_config_init(&config);
+    config.engine.database_path = ":memory:";
+    config.engine.provider.complete = complete;
+    ah_sdk *sdk = NULL;
+    ah_error error = {AH_OK, ""};
     char id[AH_ID_CAP];
-    ah_code code = ah_open(&config, &engine, &error);
+    ah_code code = ah_sdk_open(&config, &sdk, &error);
+    ah_engine *engine = ah_sdk_engine(sdk);
     if (code == AH_OK)
         code = ah_session_create(engine, "offline-example", "Be concise.", id, &error);
     if (code == AH_OK)
@@ -48,6 +49,6 @@ int main(void) {
     }
     if (code != AH_OK)
         fprintf(stderr, "%s\n", error.message);
-    ah_close(engine);
+    ah_sdk_close(sdk);
     return code == AH_OK ? 0 : 1;
 }

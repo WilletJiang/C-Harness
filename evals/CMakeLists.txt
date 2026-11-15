@@ -8,7 +8,7 @@ if(AH_LIVE_EVAL)
   endforeach()
 endif()
 
-if(BUILD_TESTING)
+if(AH_TESTS_ENABLED)
   add_test(NAME eval_compare COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.test_compare)
   add_test(NAME eval_cases COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.smoke.test_cases)
   add_test(NAME eval_endurance COMMAND ${Python3_EXECUTABLE} -B -m unittest evals.endurance.test_endurance evals.endurance.test_visual)

@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define AH_VERSION "0.8.0"
+#define AH_VERSION "0.9.0"
 #define AH_ID_CAP 37
 #define AH_ERROR_CAP 512
 
@@ -161,6 +161,9 @@ ah_code ah_fork(ah_engine *engine, const char *session_id, char new_id[AH_ID_CAP
 ah_code ah_compact(ah_engine *engine, const char *session_id, const char *summary,
                    unsigned keep_recent_turns, ah_error *error);
 ah_code ah_session_json(ah_engine *engine, const char *session_id, char **json, ah_error *error);
+/* Owner-thread snapshot for hosts that do not need the full JSON metadata.
+ * A completed model turn is separate from task acceptance; see ah/task.h. */
+ah_code ah_session_state(ah_engine *, const char *session_id, ah_state *, ah_error *);
 ah_code ah_sessions_json(ah_engine *engine, char **json, ah_error *error);
 ah_code ah_events(ah_engine *engine, const char *session_id, uint64_t after_seq,
                   ah_observer observer, void *context, ah_error *error);

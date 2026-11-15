@@ -36,6 +36,9 @@ The CLI exposes `--context-bytes N` to raise its default 1 MiB request limit,
 up to 64 MiB. RPC input frames remain limited to 1 MiB; larger local files can
 be imported by path and selected by reference.
 
+The local tool host registers `view_image` for workspace images. It returns these
+native content parts directly; see [SDK image limits and behavior](sdk.md#local-images).
+
 ## Native tool results
 
 The public `ah_tool_result.format` field explicitly selects the result shape.

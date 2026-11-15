@@ -190,7 +190,7 @@ static void old_schema_upgrades(void) {
     const char *versions[] = {"PRAGMA user_version=1", "PRAGMA user_version=2",
                               "PRAGMA user_version=3", "PRAGMA user_version=4",
                               "PRAGMA user_version=5", "PRAGMA user_version=6"};
-    for (unsigned version = 0; version < 5; version++) {
+    for (unsigned version = 0; version < sizeof(versions) / sizeof(*versions); version++) {
         char directory[] = "/tmp/ah-agent-migration-XXXXXX", path[128];
         assert(mkdtemp(directory));
         snprintf(path, sizeof(path), "%s/state.db", directory);
