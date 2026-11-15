@@ -78,6 +78,7 @@ async def run_codex(
     barrier=None,
     base_url="https://api.openai.com/v1",
     access_token=None,
+    images=(),
 ):
     directory = pathlib.Path(directory)
     workspace = directory / "workspace"
@@ -176,7 +177,8 @@ async def run_codex(
                 "threadId": app.thread_id,
                 "model": model,
                 "effort": effort,
-                "input": [{"type": "text", "text": prompt}],
+                "input": [{"type": "text", "text": prompt}]
+                + [{"type": "localImage", "path": str(path)} for path in images],
                 "serviceTierForTurn": "default",
             },
         )

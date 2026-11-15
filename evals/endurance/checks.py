@@ -187,6 +187,7 @@ class CliChecks(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=8,
+            cwd=pathlib.Path(importlib.import_module("workboard").__file__).resolve().parent.parent,
         )
         self.assertEqual(p.returncode, 0, p.stderr[-300:])
         lines = p.stdout.splitlines()

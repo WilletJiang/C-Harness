@@ -12,6 +12,7 @@ The current entrypoints are documented in [evals](../../evals/README.md).
 | [Terra endurance](endurance-evaluation.md) | Three concurrent paired long tasks before the cache fix |
 | [Cache routing](cache-evaluation.md) | JSON key versus stable HTTP session identity |
 | [Sol endurance](sol-xhigh-evaluation.md) | Long tasks with cache routing and streamed-item fixes |
+| [Image-based Sol endurance](vision-sol-xhigh.md) | Three concurrent image-grounded runs per runner; quality and censored token accounting |
 | [WebSocket continuation](websocket-evaluation.md) | Pooled HTTP versus full/incremental WS, subscription recovery and all attempt usage |
 | [Workflow profile](execution-evaluation.md) | Old/new native tools on unchanged smoke tasks; quality, wall time, usage and phase measurements |
 | [Native find](find-performance.md) | Exact-output native search optimization, callback timings and tool-interface consolidation |

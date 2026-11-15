@@ -178,3 +178,15 @@ cached/reasoning tokens remain subsets. No P95 or broad speed claim is inferred
 from a few trials. Compare acceptance first and preserve failed attempts when
 repeating a study. Offline orchestration tests use injected runners; driver tests
 use loopback fixtures only.
+
+## Image-based long tasks
+
+`python3 -B -m host.auth exec -- python3 -B -m evals.endurance.run --driver build/live_driver --output /private/fresh-visual --model gpt-6.1-sol --effort xhigh --visual --duration 1100 --repetitions 3`
+adds three native image inputs to the Workboard release task. All six runs start
+behind a barrier; no cutoff or follow-up is disclosed to the models. A dependency
+graph, parameter table and execution timeline are available only as PNGs. The
+frozen grader separates API correctness, image transcription, replayed integration,
+modified input behavior, documentation and generated tests. The host image fixture
+generator uses Pillow and the macOS Menlo font; generated solutions require only
+Python's standard library. Images and generated workspaces are evaluation artifacts,
+not runtime dependencies. Both runners receive the same PNG files in the same order.

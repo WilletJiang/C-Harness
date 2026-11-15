@@ -36,6 +36,21 @@ else:
 
 
 class EnduranceChecks(unittest.TestCase):
+    def test_cli_grader_uses_submitted_package_directory(self):
+        import sys, types
+        from .checks import CliChecks
+        with tempfile.TemporaryDirectory() as temporary:
+            package = pathlib.Path(temporary) / "workboard"
+            package.mkdir()
+            (package / "__init__.py").write_text("")
+            (package / "__main__.py").write_text(
+                "import sys,json\nfor line in sys.stdin: print(json.dumps({'ok':True,'result':[]}))\n")
+            module = types.ModuleType("workboard")
+            module.__file__ = str(package / "__init__.py")
+            with patch.dict(sys.modules, {"workboard": module}):
+                rows = CliChecks().invoke(temporary, [{"op": "list"}])
+            self.assertEqual(rows, [{"ok": True, "result": []}])
+
     def test_persistence_audit_handles_list_and_map_layouts(self):
         from .quality import QualityChecks
 

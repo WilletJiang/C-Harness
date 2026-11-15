@@ -8,7 +8,7 @@ import threading
 from .codex import run_codex
 
 
-async def verify(codex, model, effort):
+async def verify(codex, model, effort, images=()):
     captured = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -17,9 +17,16 @@ async def verify(codex, model, effort):
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            captured.append(
-                {k: body.get(k) for k in ("model", "reasoning", "store", "stream")}
+            fields = {k: body.get(k) for k in ("model", "reasoning", "store", "stream")}
+            fields["image_parts"] = sum(
+                part.get("type") == "input_image" for item in body.get("input", [])
+                for part in item.get("content", []) if isinstance(part, dict)
             )
+            fields["image_details"] = [part.get("detail", "auto")
+                                       for item in body.get("input", [])
+                                       for part in item.get("content", [])
+                                       if isinstance(part, dict) and part.get("type") == "input_image"]
+            captured.append(fields)
             item = {
                 "id": "msg_probe",
                 "type": "message",
@@ -83,6 +90,7 @@ async def verify(codex, model, effort):
                 20,
                 base_url=f"http://127.0.0.1:{server.server_port}/v1",
                 access_token="offline-wire-probe",
+                images=images,
             )
             if result["state"] != "completed" or len(captured) != 1:
                 raise RuntimeError("Codex wire probe did not complete")
@@ -92,6 +100,7 @@ async def verify(codex, model, effort):
                 or (request.get("reasoning") or {}).get("effort") != effort
                 or request["store"] is not False
                 or request["stream"] is not True
+                or request["image_parts"] != len(images)
             ):
                 raise RuntimeError(
                     "Codex wire request differs from requested model/reasoning/transport"

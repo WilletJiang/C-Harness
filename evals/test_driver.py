@@ -1,5 +1,6 @@
 """Root and child request decoration against a numeric loopback fixture."""
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -56,11 +57,16 @@ def main(driver):
             workspace = root / "workspace"
             workspace.mkdir()
             (workspace / "file.txt").write_text("fixture")
+            image = workspace / "fixture.png"
+            image.write_bytes(base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
+                "x8AAwMCAO+aXioAAAAASUVORK5CYII="))
             env = {k: v for k, v in os.environ.items() if not k.startswith("AH_EVAL_")}
             env.update(AH_ACCESS_TOKEN="loopback-fixture",
                        AH_EVAL_ENDPOINT=f"http://127.0.0.1:{server.server_port}/responses",
                        AH_EVAL_ALLOW_LOOPBACK="1", AH_EVAL_AGENTS="2", AH_EVAL_AUTO_CONTEXT="1",
-                       AH_EVAL_PARALLEL_TOOLS="3", AH_EVAL_CACHE_KEY="omit", AH_EVAL_TRACE_REQUESTS="1")
+                       AH_EVAL_PARALLEL_TOOLS="3", AH_EVAL_CACHE_KEY="omit", AH_EVAL_TRACE_REQUESTS="1",
+                       AH_EVAL_IMAGES=json.dumps([str(image)]))
             result = subprocess.run([driver, str(workspace), str(root / "state.db"),
                                      "fixture-model", "unused", "xhigh", "10"],
                                     input="ROOT_MARKER: Delegate the read to a child and finish.",
@@ -69,6 +75,13 @@ def main(driver):
             assert 4 <= len(received) <= 5, len(received)  # A child completion may wake the parent.
             for body, route in received:
                 assert body["model"] == "fixture-model"
+                child = any(item.get("role") == "user" and "CHILD_MARKER" in str(item.get("content"))
+                            for item in body["input"])
+                images = [part for item in body["input"] for part in item.get("content", [])
+                          if isinstance(part, dict) and part.get("type") == "input_image"]
+                assert len(images) == (0 if child else 1)
+                if images:
+                    assert images[0]["image_url"].startswith("data:image/png;base64,")
                 assert body["reasoning"] == {"effort": "xhigh"}
                 assert "prompt_cache_key" not in body and route is None
                 assert "recall" in json.dumps(body["tools"])
