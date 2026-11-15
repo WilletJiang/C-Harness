@@ -11,9 +11,13 @@ extern "C" {
  * cannot call owner-only engine APIs; checkpoint and yield are NULL. Borrowed
  * call data and context remain alive until completion. All durable intent,
  * receipt and observer work remains on the engine owner. max_parallel_tools
- * bounds background workers across the engine (0 means 1). Each session preserves tool
- * order. ah_run cancels/drains every worker before returning, even on failure;
- * a callback that ignores cancellation can delay shutdown indefinitely. */
+ * bounds active tool callbacks across the engine, including inline callbacks
+ * while workers run (0 means 1). Consecutive independent READs may overlap
+ * within one session; writes,
+ * approval, input and agent coordination are barriers. Completed results are
+ * saved immediately and published to the model in operation order. ah_run
+ * cancels/drains every worker before returning, even on failure; a callback that
+ * ignores cancellation can delay shutdown indefinitely. */
 ah_code ah_register_background_tool(ah_engine *, const ah_tool *, ah_error *);
 
 /* Thread-safe cancellation of one active operation, using its durable ID from

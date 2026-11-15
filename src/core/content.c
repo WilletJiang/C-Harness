@@ -1,6 +1,7 @@
 #include "content_internal.h"
 #include <ctype.h>
 #include <curl/curl.h>
+#include <stdio.h>
 
 void core_content_free(core_content *content) {
     free(content->json);
@@ -128,10 +129,10 @@ static ah_code media_part(ah_engine *e, const char *sid, yyjson_val *part, yyjso
     }
     return rc;
 }
-ah_code core_content_prepare(ah_engine *e, const char *sid, const char *json, core_content *content,
-                             ah_error *err) {
+ah_code core_content_parts_prepare(ah_engine *e, const char *sid, const char *json, size_t limit,
+                                   core_content *content, ah_error *err) {
     memset(content, 0, sizeof(*content));
-    if (!json || !*json || strlen(json) > e->config.max_context_bytes)
+    if (!json || !*json || strlen(json) > limit)
         return ah_fail(err, AH_INVALID, "bounded nonempty content array required");
     yyjson_doc *parsed = yyjson_read(json, strlen(json), 0);
     yyjson_val *array = yyjson_doc_get_root(parsed);
@@ -148,10 +149,8 @@ ah_code core_content_prepare(ah_engine *e, const char *sid, const char *json, co
         yyjson_doc_free(parsed);
         return ah_fail(err, AH_IO, "out of memory");
     }
-    yyjson_mut_val *root = yyjson_mut_obj(d), *parts = yyjson_mut_arr(d);
-    yyjson_mut_doc_set_root(d, root);
-    yyjson_mut_obj_add_str(d, root, "role", "user");
-    yyjson_mut_obj_add_val(d, root, "content", parts);
+    yyjson_mut_val *parts = yyjson_mut_arr(d);
+    yyjson_mut_doc_set_root(d, parts);
     size_t i, n;
     yyjson_val *part;
     yyjson_arr_foreach(array, i, n, part) {
@@ -185,6 +184,23 @@ ah_code core_content_prepare(ah_engine *e, const char *sid, const char *json, co
     if (rc != AH_OK)
         core_content_free(content);
     return rc;
+}
+ah_code core_content_prepare(ah_engine *e, const char *sid, const char *json, core_content *content,
+                             ah_error *err) {
+    ah_code rc =
+        core_content_parts_prepare(e, sid, json, e->config.max_context_bytes, content, err);
+    if (rc != AH_OK)
+        return rc;
+    size_t size = strlen(content->json) + sizeof("{\"role\":\"user\",\"content\":}");
+    char *item = malloc(size);
+    if (!item) {
+        core_content_free(content);
+        return ah_fail(err, AH_IO, "out of memory");
+    }
+    snprintf(item, size, "{\"role\":\"user\",\"content\":%s}", content->json);
+    free(content->json);
+    content->json = item;
+    return AH_OK;
 }
 ah_code ah_submit_content(ah_engine *e, const char *sid, const char *command, const char *json,
                           ah_error *err) {

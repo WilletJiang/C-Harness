@@ -188,7 +188,8 @@ static void mailbox_rollbacks(void) {
 
 static void old_schema_upgrades(void) {
     const char *versions[] = {"PRAGMA user_version=1", "PRAGMA user_version=2",
-                              "PRAGMA user_version=3", "PRAGMA user_version=4", "PRAGMA user_version=5"};
+                              "PRAGMA user_version=3", "PRAGMA user_version=4",
+                              "PRAGMA user_version=5", "PRAGMA user_version=6"};
     for (unsigned version = 0; version < 5; version++) {
         char directory[] = "/tmp/ah-agent-migration-XXXXXX", path[128];
         assert(mkdtemp(directory));
@@ -210,7 +211,7 @@ static void old_schema_upgrades(void) {
             sql(fixture.engine, "DROP TABLE result_refs");
         sql(fixture.engine, versions[version]);
         af_reopen(&fixture);
-        assert(scalar(fixture.engine, "PRAGMA user_version") == 6);
+        assert(scalar(fixture.engine, "PRAGMA user_version") == 7);
         assert(scalar(fixture.engine, "SELECT COUNT(*) FROM agent_nodes") == 0);
         assert(scalar(fixture.engine, "SELECT COUNT(*) FROM extension_context") == 0);
         af_state(&fixture, fixture.root, "idle");

@@ -2,27 +2,31 @@
 
 ## Ownership and admission
 
-One owner thread serializes engine APIs, SQLite writes and scheduling. Providers
-and ordinary tool callbacks run synchronously on that thread. Consecutive read
-tools explicitly registered as `parallel_safe` may run on worker threads, up to
-`max_parallel_tools` (default 4, maximum 16; 0 or 1 selects serial execution).
-Their callbacks and shared context must support concurrent use. Workers do not
-write SQLite or notify observers; the owner records receipts in operation order
-after joining them. Writes, external effects, approvals and input waits remain
-serial boundaries within each session. Callbacks must not re-enter owner-thread
-engine APIs.
+One owner thread serializes engine APIs, SQLite writes and scheduling. Ordinary
+callbacks keep an inline fast path. Consecutive independent READ callbacks marked
+`parallel_safe`, or registered with `ah_register_background_tool` (`ah/jobs.h`),
+share one bounded worker executor. Their contexts must support concurrent use.
+`max_parallel_tools` is one engine-wide cap (default 4, maximum 16; 0 means 1),
+including an inline callback while it yields to other sessions. Writes, external
+effects, approvals, input waits and agent coordination close the READ window within
+each session. Callbacks must not re-enter owner-thread engine APIs.
 
-`ah_register_background_tool` (`ah/jobs.h`) opts an existing callback into bounded
-background execution. Native `exec`, `mcp` and `mcp_call` use it. The agent scheduler
-continues other agents while a job waits; ordinary sessions wait on a completion
-condition. Each job uses the existing durable operation ID and executing intent,
-not a second ledger. The owner validates and publishes its receipt once, in session
-order. `max_parallel_tools` also bounds background jobs across the engine (0 means
-one); existing READ batches retain their separate bound. Background callbacks must
-support concurrent use and honor cancellation/deadlines; checkpoint and yield are
-null. Every run drains workers before returning. A callback that ignores cancellation
-can delay shutdown indefinitely. Interrupted effects retain the normal unknown-outcome
-recovery rule; cancellation never proves an effect was undone.
+Native `exec`, `mcp` and `mcp_call` use background registration. The scheduler can
+advance other sessions while workers wait; a single session waits on the same
+completion condition. Single-session and agent runs share session advancement,
+model admission and request preparation. Agent identity, mail and asynchronous
+provider handles stay in the agent scheduler; ordinary runs require no agent tree.
+User steering enters at the settled tool boundary in both paths.
+
+Workers never write SQLite or notify observers. Every job uses the existing durable
+operation ID and executing intent, without another ledger. The owner captures
+completed results even when an earlier READ is still running, and publishes
+model-visible receipts in original call order. Metrics identify their operation;
+completion timing can arrive out of order. Background callbacks must honor
+cancellation/deadlines; checkpoint and yield are null. Every run drains workers
+before returning. A callback that ignores cancellation can delay shutdown
+indefinitely. Interrupted effects retain the unknown-outcome recovery rule;
+cancellation never proves an effect was undone.
 
 `ah_cancel` sets an atomic flag; `ah_steer` copies bounded input into a protected
 mailbox; `ah_cancel_job` cancels one active operation under the job mutex. These
@@ -46,8 +50,13 @@ authorizes execution. Failed/incomplete/disconnected output cannot dispatch tool
 The runtime retains complete supported native output items (message, reasoning,
 function_call), including opaque continuation data. It appends function outputs
 with their original call IDs. Unsupported executable types and malformed required
-fields fail closed. Tool schemas use the subset documented below. Tool results
+fields fail closed. Tool schemas use the subset documented below. JSON tool results
 are encoded as `{is_error,result}` inside the provider's function output string.
+Callbacks can explicitly return `AH_TOOL_RESULT_CONTENT` for native text, image and
+file parts. These become a function output array, with `is_error` carried in a text
+part; ordinary JSON is never guessed to be multimodal. Local binary content uses
+immutable artifacts, persisted atomically with the captured result. See
+[content](content.md) for supported parts and retrieval.
 
 `max_model_tool_bytes` limits each encoded result envelope to 16 KiB by default;
 zero disables this additional cap. Larger receipts become bounded previews with
@@ -55,6 +64,8 @@ an operation reference. The original captured result remains in durable operatio
 and event records, subject to `max_output_bytes`. The `read_result` tool retrieves
 UTF-8 pages of that stored JSON using `operation_id`, optional `offset` and optional
 `limit`. References are scoped to the session and inherited by its forks.
+For native arrays this view budget covers text and artifact references; expanded
+binary content also counts against the whole-request context byte limit.
 Projection happens when the receipt is committed, so subsequent requests replay
 the same model-visible item instead of rewriting earlier results. This does not
 recover bytes a tool discarded before returning its receipt.
@@ -183,6 +194,11 @@ identities, immutable artifact references and durable workspace ownership. New
 new headers. Existing text commands retain their idempotency identity. Context
 maintenance and storage deletion are distinct operations; see [context](context.md),
 [content](content.md) and [workspace coordination](workspaces.md).
+
+Schema version 7 records each tool result's explicit format, including early
+captures awaiting ordered publication. Existing JSON receipts keep format zero and
+their original history. Rebuild embedding clients for the extended 0.8
+`ah_tool_result` struct. No stored credentials or extension enable flags change.
 
 ## Schema subset
 

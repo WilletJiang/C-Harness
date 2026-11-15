@@ -83,24 +83,60 @@ static ah_code publish_received(ah_engine *e, core_session *session, core_operat
                                 ah_error *err) {
     if (!op->result)
         return ah_fail(err, AH_IO, "stored tool receipt unavailable");
+    bool owned = sqlite3_get_autocommit(e->db) != 0;
     uint64_t after = 0;
-    ah_code rc = core_begin(e, &after, err);
+    ah_code rc = owned ? core_begin(e, &after, err) : AH_OK;
     if (rc == AH_OK)
         rc = core_receipt(
             e, session->id, op, op->result, op->is_error,
             !strcmp(op->status, "received_late") ? "tool.late_result" : "tool.completed", err);
-    if (rc == AH_OK)
-        rc = core_commit(e, after, err);
-    else
-        core_rollback(e);
+    if (owned) {
+        if (rc == AH_OK)
+            rc = core_commit(e, after, err);
+        else
+            core_rollback(e);
+    }
     if (rc != AH_OK)
         session->state = AH_OUTCOME_UNKNOWN;
     return rc;
 }
+ah_code core_publish_ready(ah_engine *e, core_session *session, ah_error *err) {
+    for (;;) {
+        core_operation op;
+        ah_code rc = core_next_operation(e, session->id, &op, err);
+        if (rc == AH_NOT_FOUND)
+            return AH_OK;
+        if (rc != AH_OK)
+            return rc;
+        bool received = !strcmp(op.status, "received") || !strcmp(op.status, "received_late") ||
+                        !strcmp(op.status, "resolved");
+        bool unknown = !strcmp(op.status, "unknown");
+        if (received)
+            rc = publish_received(e, session, &op, err);
+        else if (unknown) {
+            bool owned = sqlite3_get_autocommit(e->db) != 0;
+            uint64_t after = 0;
+            rc = owned ? core_begin(e, &after, err) : AH_OK;
+            if (rc == AH_OK)
+                rc = core_state(e, session->id, AH_OUTCOME_UNKNOWN, err);
+            if (owned) {
+                if (rc == AH_OK)
+                    rc = core_commit(e, after, err);
+                else
+                    core_rollback(e);
+            }
+            session->state = AH_OUTCOME_UNKNOWN;
+            if (rc == AH_OK)
+                rc = ah_fail(err, AH_UNCERTAIN, "resolve uncertain tool outcome before continuing");
+        }
+        core_operation_free(&op);
+        if (rc != AH_OK || !received)
+            return rc;
+    }
+}
+
 ah_code core_execute_operation(ah_engine *e, core_session *session, core_operation *op,
                                ah_error *err) {
-    if (core_jobs_running(e, session->id))
-        return core_jobs_finish(e, session, err);
     if (!strcmp(op->status, "approval")) {
         session->state = AH_WAITING_APPROVAL;
         return AH_OK;
@@ -168,7 +204,7 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
         }
         return rc;
     }
-    if (registered && registered->background && !core_jobs_available(e))
+    if (!core_jobs_available(e))
         return AH_OK;
     bool coordinated = false;
     ah_code authorized =
@@ -180,24 +216,43 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                             err);
     if (authorized != AH_OK)
         return authorized;
+    ah_code rc = core_tool_intents(e, session, op, 1, err);
+    if (rc != AH_OK)
+        return rc;
+    return core_dispatch_tool(e, session, op, registered && registered->background, coordinated,
+                              err);
+}
+
+ah_code core_tool_intents(ah_engine *e, core_session *session, core_operation *operations,
+                          unsigned count, ah_error *err) {
     uint64_t after = 0;
     ah_code rc = core_begin(e, &after, err);
-    if (rc == AH_OK)
+    for (unsigned i = 0; i < count && rc == AH_OK; i++) {
+        core_operation *op = &operations[i];
         rc = count_call(e, session->id, err);
-    if (rc == AH_OK)
-        rc = core_set_operation(e, session->id, op->id, "executing", err);
-    if (rc == AH_OK)
-        rc = core_event(e, session->id, op->id, "tool.started", op->arguments, err);
+        if (rc == AH_OK)
+            rc = core_set_operation(e, session->id, op->id, "executing", err);
+        if (rc == AH_OK)
+            rc = core_event(e, session->id, op->id, "tool.started", op->arguments, err);
+    }
     if (rc == AH_OK) {
         rc = core_commit(e, after, err);
         if (rc != AH_OK)
             session->state = AH_OUTCOME_UNKNOWN;
     } else
         core_rollback(e);
-    if (rc != AH_OK)
-        return rc;
-    session->tool_calls++;
-    if (core_cancelled(e)) {
+    if (rc == AH_OK)
+        session->tool_calls += count;
+    return rc;
+}
+
+ah_code core_dispatch_tool(ah_engine *e, core_session *session, core_operation *op, bool worker,
+                           bool coordinated, ah_error *err) {
+    core_tool *registered = core_find_tool(e, op->name);
+    const char *builtin = core_builtin_schema(op->name);
+    ah_code rc;
+
+    if (!worker && core_cancelled(e)) {
         rc = finish_error(e, session, op, "cancelled before execution", false, err);
         if (rc != AH_OK)
             session->state = AH_OUTCOME_UNKNOWN;
@@ -224,17 +279,19 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                          .yield = e->yield,
                          .yield_context = e->yield_context,
                          .require_revision = coordinated};
-    if (registered && registered->background) {
+    if (worker) {
         e->deadline = run_deadline;
         return core_jobs_start(e, session, op, registered, &call, err);
     }
     ah_tool_result result = {0};
     ah_error execution = {0};
     uint64_t started = ah_now_us();
+    e->inline_tools++;
     ah_code executed =
         builtin ? (!strcmp(op->name, "recall") ? core_context_recall(e, &call, &result, &execution)
                                                : core_read_result(e, &call, &result, &execution))
                 : registered->tool.execute(registered->tool.context, &call, &result, &execution);
+    e->inline_tools--;
     core_metric(e, session->id, op->id, "tool", started, ah_now_us(),
                 result.json ? strlen(result.json) : 0, 1, executed);
     ah_code stopped = !core_cancelled(e)                                          ? AH_OK
@@ -244,55 +301,4 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
     rc = core_complete_operation(e, session, op, &result, executed, &execution, stopped, err);
     free(result.json);
     return rc;
-}
-
-ah_code core_complete_operation(ah_engine *e, core_session *session, core_operation *op,
-                                ah_tool_result *result, ah_code executed, const ah_error *execution,
-                                ah_code stopped, ah_error *err) {
-    bool valid_result = result->json && strlen(result->json) <= e->config.max_output_bytes &&
-                        ah_json_valid(result->json);
-    bool unknown = result->outcome_unknown ||
-                   (op->effect != AH_EFFECT_READ && (executed != AH_OK || !valid_result));
-    if (!valid_result && !unknown) {
-        free(result->json);
-        result->json = core_object_string(
-            "error", execution->message[0] ? execution->message
-                                           : "tool returned no valid bounded JSON result");
-        result->is_error = true;
-    }
-    if (!result->json && !unknown) {
-        session->state = AH_OUTCOME_UNKNOWN;
-        return ah_fail(err, AH_IO, "out of memory recording tool failure");
-    }
-    uint64_t after = 0;
-    ah_code rc = core_begin(e, &after, err);
-    if (rc == AH_OK && unknown) {
-        rc = core_set_operation(e, session->id, op->id, "unknown", err);
-        if (rc == AH_OK)
-            rc = core_event(
-                e, session->id, op->id, "tool.outcome_unknown",
-                valid_result
-                    ? result->json
-                    : "{\"reason\":\"tool failed without a trustworthy completion receipt\"}",
-                err);
-        if (rc == AH_OK)
-            rc = core_state(e, session->id, AH_OUTCOME_UNKNOWN, err);
-        session->state = AH_OUTCOME_UNKNOWN;
-    } else if (rc == AH_OK)
-        rc = core_receipt(e, session->id, op, result->json, result->is_error || executed != AH_OK,
-                          stopped != AH_OK ? "tool.late_result" : "tool.completed", err);
-    if (rc == AH_OK)
-        rc = core_commit(e, after, err);
-    else
-        core_rollback(e);
-    if (rc != AH_OK) {
-        session->state = AH_OUTCOME_UNKNOWN;
-        return rc;
-    }
-    if (unknown)
-        return ah_fail(err, AH_UNCERTAIN, "tool outcome is unknown; explicit resolution required");
-    if (stopped != AH_OK)
-        return ah_fail(err, stopped,
-                       "tool completed after cancellation or deadline; receipt recorded");
-    return AH_OK;
 }

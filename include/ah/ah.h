@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define AH_VERSION "0.7.0"
+#define AH_VERSION "0.8.0"
 #define AH_ID_CAP 37
 #define AH_ERROR_CAP 512
 
@@ -91,10 +91,15 @@ typedef struct {
      * explicit absent expectation; immutable through background dispatch. */
     bool require_revision;
 } ah_tool_call;
+typedef enum { AH_TOOL_RESULT_JSON = 0, AH_TOOL_RESULT_CONTENT = 1 } ah_tool_result_format;
 typedef struct {
     char *json; /* malloc-owned valid JSON; runtime frees it. */
     bool is_error;
     bool outcome_unknown; /* May have committed a side effect. */
+    /* JSON preserves the legacy result envelope. CONTENT explicitly selects an
+     * input_text/input_image/input_file array (see ah/content.h). Never inferred.
+     * Inline media is materialized by the owner with the durable receipt. */
+    ah_tool_result_format format;
 } ah_tool_result;
 typedef ah_code (*ah_execute_fn)(void *context, const ah_tool_call *call, ah_tool_result *result,
                                  ah_error *error);

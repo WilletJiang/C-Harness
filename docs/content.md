@@ -1,9 +1,9 @@
-# Typed input, artifacts, and explicit retention
+# Typed input, tool results, artifacts, and retention
 
 `ah/content.h` adds bounded Responses content arrays alongside the existing
 `ah_submit` text API. No upload, URL fetch, model call, or deletion happens merely
 because an artifact is imported or listed. A model request expands only artifacts
-named in active user input parts.
+named in active user input or native tool output parts.
 
 ```c
 ah_submit_content(engine, session, "image-1",
@@ -35,6 +35,59 @@ fit `max_context_bytes`; importing a large file does not enlarge that budget.
 The CLI exposes `--context-bytes N` to raise its default 1 MiB request limit,
 up to 64 MiB. RPC input frames remain limited to 1 MiB; larger local files can
 be imported by path and selected by reference.
+
+## Native tool results
+
+The public `ah_tool_result.format` field explicitly selects the result shape.
+Zero-initialized callbacks use `AH_TOOL_RESULT_JSON`: `json` retains the legacy
+arbitrary JSON payload and the model receives the existing `is_error`/`result`
+string envelope. A JSON object with a `content` key, or an array that resembles
+native parts, never changes this behavior by itself.
+
+Set `AH_TOOL_RESULT_CONTENT` to return the same native part array accepted by
+`ah_submit_content`. The callback still returns a malloc-owned JSON string;
+the runtime frees it. For example, a callback can return:
+
+```c
+result->json = strdup(
+    "[{\"type\":\"input_text\",\"text\":\"Latest chart\"},"
+    "{\"type\":\"input_image\",\"image_url\":\"https://example.com/chart.png\"}]");
+result->format = AH_TOOL_RESULT_CONTENT;
+return result->json ? AH_OK : AH_IO;
+```
+
+The model receives an array in `function_call_output.output`, with an initial
+`input_text` part recording `is_error`, followed by the native content. This uses
+[Responses native function outputs](https://developers.openai.com/api/docs/guides/function-calling).
+Images and files are actual provider input parts, not JSON descriptions of media.
+Audio, video, unsupported MIME types, ambiguous media sources and malformed
+content are rejected. A malformed READ result becomes a settled JSON error;
+a malformed effect result requires explicit outcome resolution.
+
+Worker callbacks only return content. The owner validates it and stores inline
+binary data as immutable artifacts in the same transaction as the durable result.
+Completed operations can be captured out of order; model-visible receipts remain
+in call order. Captured native results and their format survive restart without
+re-executing the completed operation. A failed capture transaction leaves no
+partial artifacts or session references.
+
+`max_output_bytes` bounds the callback's complete serialized result, including
+inline base64. `max_model_tool_bytes` bounds the stored model view's text and
+artifact references; base64 expansion is governed by `max_context_bytes` for the
+complete model request. A result can therefore retain more text than fits in a
+single request. The receipt shortens text at UTF-8 boundaries, retains images and
+files, and identifies `read_result` for retrieval. If the media references alone
+cannot fit the model view, the receipt explicitly reports `media_deferred` and
+returns a retrieval reference instead. Oversized expanded requests fail with
+`AH_LIMIT`; binary data is never silently truncated.
+
+`read_result` without `offset` or `limit` returns a saved native array as native
+content, including after a fork. Supplying either pagination field requests the
+existing UTF-8 JSON text page API, which exposes canonical artifact references
+and `next_offset`. Thus callers can page long text and later retrieve the native
+media. Retrieval respects the current output and request budgets; raising a
+budget does not rewrite already published receipts. Session result-reference and
+artifact-reference checks apply to every retrieval and expansion.
 
 ## Immutable local artifacts
 

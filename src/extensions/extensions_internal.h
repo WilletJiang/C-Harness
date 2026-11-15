@@ -31,6 +31,7 @@ ah_code ext_read_text(const char *, size_t, char **, size_t *, ah_error *);
 ah_code ext_read_text_at(const char *, const char *, size_t, char **, size_t *, ah_error *);
 ah_code ext_mcp(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
 ah_code ext_mcp_call(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
+ah_code ext_mcp_result(ah_tool_result *, size_t, ah_error *);
 ah_code ext_server_get(ah_extensions *, const char *, ext_server **, ah_error *);
 bool ext_tool_allowed(ext_server *, const char *);
 bool ext_match(const char *, const char *);

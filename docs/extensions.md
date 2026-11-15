@@ -62,8 +62,27 @@ Only these small entrypoint schemas enter the tool namespace; installing more
 extensions does not append their catalogs, schemas or instructions to every request.
 Identical complete discovery/MCP read results reuse a reference while the original
 receipt remains in active context. Compaction invalidates that reuse automatically.
-Large tool results keep their exact durable receipt and expose a bounded model view
+Large tool results keep their durable receipt and expose a bounded model view
 with `read_result` paging. This includes remote schemas and resource contents.
+
+Actual MCP `tools/call` results containing media are adapted to native tool
+outputs. MCP `image` parts become `input_image`; embedded resource blobs become
+`input_image` for supported image MIME types or `input_file` for supported files.
+HTTP(S) resource links become native remote image/file inputs. Text parts remain
+text, while resource URIs, annotations, `_meta`, `structuredContent`, and
+`isError` are preserved as text metadata. Binary data is omitted from that
+metadata and materialized once by the owner's artifact transaction. Text-only
+MCP responses retain their existing JSON receipt shape. This conversion is
+restricted to MCP tool responses and does not inspect arbitrary callback JSON.
+
+The supported local MIME types are PNG, JPEG, GIF, WebP, PDF, UTF-8 plain text,
+and JSON. Invalid media bytes, unsupported embedded MIME types, or excess parts
+fail validation; remote URLs are syntax checked and fetched by the provider.
+Native output uses the same output, model-view, and expanded-request limits as
+other [typed tool results](content.md#native-tool-results). Large text can be
+paged without replacing the accompanying images or files with base64 strings.
+Audio/video remain outside the native result format. Enabling MCP stays lazy;
+this adapter does not add requests, tool discovery, or server startup at enable time.
 
 Default budgets are 2,048 catalog entries, 8 MiB of catalog metadata, 64 KiB per
 skill, 128 KiB of serialized loaded-skill context per session, and 1 MiB per MCP

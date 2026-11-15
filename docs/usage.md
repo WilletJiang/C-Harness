@@ -56,6 +56,12 @@ An absent token permits offline session inspection; inference returns `auth`.
   --prompt 'Read source.txt and summarize it.' --events
 ```
 
+`ah --help` shows session inputs, the context budget, tool concurrency, and explicit
+capability opt-ins. `ah --help-all` also lists advanced tuning and command-specific
+options. Existing flags remain accepted in both cases; the help choice does not
+change runtime configuration. Skills, MCP, plugins, subagents and process execution
+remain disabled until explicitly enabled.
+
 File writes pause for approval in the CLI. Inspect the returned pending operation,
 then use `approve` or `deny` with its exact ID and run the session again. Process
 execution is disabled unless `--enable-exec` is supplied, and remains approval-gated.
@@ -63,11 +69,15 @@ execution is disabled unless `--enable-exec` is supplied, and remains approval-g
 ## Long tasks and typed input
 
 Add `--auto-context` to a run or RPC owner to archive older complete model/tool
-exchanges at settled boundaries. Exact user inputs, human replies, loaded skills,
-and recent exchanges remain available. `--context-trigger`, `--context-target`,
-`--context-reserve`, and `--keep-exchanges` customize this opt-in policy; supplying
-one also enables it. These settings apply to the current process. Inspect them
-with `context` using the same flags, or with the RPC `context` method.
+exchanges at settled boundaries. Usually only `--context-bytes N` needs tuning:
+the archive trigger is three quarters of that limit, the target is half, and the
+reserve is one eighth, capped at 64 KiB. The latest three complete exchanges,
+exact user inputs, human replies and loaded skills remain available.
+`--context-bytes` alone changes the request limit without enabling archiving.
+Advanced flags `--context-trigger`, `--context-target`, `--context-reserve`, and
+`--keep-exchanges` override those defaults and also enable the policy. These
+settings apply to the current process. Inspect them with `context` using the same
+flags, or with the RPC `context` method.
 
 `--compact-tokens N` is a separate explicit provider capability setting and uses
 tokens. Structural byte limits do not estimate tokens. When protected inputs and

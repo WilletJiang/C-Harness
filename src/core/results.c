@@ -152,18 +152,31 @@ ah_code core_read_result(void *context, const ah_tool_call *call, ah_tool_result
     double offset = offset_arg ? yyjson_get_num(offset_arg) : 0;
     size_t limit = limit_arg ? (size_t)yyjson_get_num(limit_arg) : 4096;
     sqlite3_stmt *s = NULL;
-    ah_code rc = core_prepare(
-        e,
-        "SELECT CASE WHEN ?3 THEN o.seq ELSE o.result END FROM result_refs r JOIN operations o "
-        "ON o.id=r.operation_id WHERE r.session_id=?1 AND r.operation_id=?2 "
-        "AND o.result IS NOT NULL",
-        &s, error);
+    ah_code rc = core_prepare(e,
+                              "SELECT CASE WHEN ?3 THEN o.seq ELSE o.result END,o.result_format,"
+                              "CASE WHEN o.result_format=1 THEN o.result END,o.is_error "
+                              "FROM result_refs r JOIN operations o "
+                              "ON o.id=r.operation_id WHERE r.session_id=?1 AND r.operation_id=?2 "
+                              "AND o.result IS NOT NULL",
+                              &s, error);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, call->session_id, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(s, 2, id, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(s, 3, e->utf8_store);
         int step = sqlite3_step(s);
-        if (step == SQLITE_ROW)
+        if (step == SQLITE_ROW && sqlite3_column_int(s, 1) == AH_TOOL_RESULT_CONTENT &&
+            !offset_arg && !limit_arg) {
+            const char *content = (const char *)sqlite3_column_text(s, 2);
+            if (!content || strlen(content) > call->output_limit)
+                rc = ah_fail(error, AH_LIMIT,
+                             "native result exceeds output budget; request a text page");
+            else if (!(result->json = ah_strdup(content)))
+                rc = ah_fail(error, AH_IO, "cannot copy native saved result");
+            else {
+                result->format = AH_TOOL_RESULT_CONTENT;
+                result->is_error = sqlite3_column_int(s, 3) != 0;
+            }
+        } else if (step == SQLITE_ROW)
             rc = read_page(e, call, id, s, offset, limit, result, error);
         else
             rc = ah_fail(error, step == SQLITE_DONE ? AH_NOT_FOUND : AH_IO,

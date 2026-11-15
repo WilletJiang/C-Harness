@@ -34,6 +34,7 @@ struct ah_engine {
     int lock_fd;
     core_tool *tools;
     size_t tool_count;
+    unsigned inline_tools;
     _Atomic(struct core_jobs *) jobs;
     atomic_bool cancelled;
     bool running;
@@ -57,6 +58,7 @@ typedef struct {
     bool is_error;
     ah_effect effect;
     bool approval;
+    ah_tool_result_format result_format;
 } core_operation;
 
 void core_mailbox_active(ah_engine *, const char *);
@@ -88,6 +90,8 @@ ah_code core_context_native(ah_engine *, const char *, sqlite3_int64, ah_error *
 ah_code core_next_operation(ah_engine *, const char *, core_operation *, ah_error *);
 ah_code core_get_operation(ah_engine *, const char *, const char *, core_operation *, ah_error *);
 void core_operation_free(core_operation *);
+ah_code core_normalize_result(ah_engine *, const char *, core_operation *, ah_tool_result *,
+                              ah_error *);
 ah_code core_save_result(ah_engine *, const char *, const core_operation *, const char *, bool,
                          const char *, const char *, ah_error *);
 ah_code core_receipt(ah_engine *, const char *, const core_operation *, const char *, bool,
@@ -103,6 +107,8 @@ ah_code core_accept_response(ah_engine *, core_session *, const char *, ah_error
 ah_code core_execute_operation(ah_engine *, core_session *, core_operation *, ah_error *);
 ah_code core_complete_operation(ah_engine *, core_session *, core_operation *, ah_tool_result *,
                                 ah_code, const ah_error *, ah_code, ah_error *);
+ah_code core_jobs_init(ah_engine *, ah_error *);
+unsigned core_jobs_capacity(ah_engine *);
 bool core_jobs_available(ah_engine *);
 bool core_jobs_running(ah_engine *, const char *);
 ah_code core_jobs_start(ah_engine *, core_session *, core_operation *, core_tool *,
@@ -111,13 +117,18 @@ ah_code core_jobs_finish(ah_engine *, core_session *, ah_error *);
 void core_jobs_wait(ah_engine *, unsigned);
 void core_jobs_cancel(ah_engine *, const char *);
 void core_jobs_close(ah_engine *);
-ah_code core_execute_parallel(ah_engine *, core_session *, const core_operation *, bool *,
-                              ah_error *);
+ah_code core_tools_step(ah_engine *, core_session *, bool *, ah_error *);
+ah_code core_tool_intents(ah_engine *, core_session *, core_operation *, unsigned, ah_error *);
+ah_code core_dispatch_tool(ah_engine *, core_session *, core_operation *, bool, bool, ah_error *);
+ah_code core_publish_ready(ah_engine *, core_session *, ah_error *);
+ah_code core_capture_operation(ah_engine *, core_session *, core_operation *, ah_tool_result *,
+                               ah_code, const ah_error *, ah_code, ah_error *);
 ah_code core_guard(ah_engine *, ah_error *);
 ah_code core_workspace_schema(ah_engine *, ah_error *);
 ah_code core_workspace_authorize(ah_engine *, const char *, const core_operation *,
                                  const core_tool *, bool *, ah_error *);
 ah_code core_workspace_delegate(ah_engine *, const char *, const char *, yyjson_val *, ah_error *);
+char *core_content_result_view(ah_engine *, const core_operation *, const char *, bool, ah_error *);
 char *core_result_view(ah_engine *, const char *, const char *, bool);
 char *core_observation_view(ah_engine *, const char *, const core_operation *, const char *, bool,
                             char[65], ah_error *);
@@ -137,6 +148,8 @@ ah_code core_task_verify(ah_engine *, const char *, const ah_task_verifier *, co
 ah_code core_run_transition(ah_engine *, const char *, ah_state, const char *, const char *,
                             ah_error *);
 ah_code core_model_intent(ah_engine *, core_session *, ah_error *);
+ah_code core_session_step(ah_engine *, core_session *, bool *, ah_error *);
+ah_code core_model_prepare(ah_engine *, core_session *, char **, ah_error *);
 ah_code core_model_finish(ah_engine *, core_session *, const char *, ah_code, ah_error *);
 ah_code core_run_failure(ah_engine *, core_session *, ah_code, ah_error *, bool *);
 void core_emit_delta(ah_engine *, const char *, const char *, size_t);

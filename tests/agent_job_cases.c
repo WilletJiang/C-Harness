@@ -8,6 +8,7 @@ typedef struct {
     agent_fixture fixture;
     atomic_bool started, finished;
     unsigned calls;
+    bool native;
 } interrupt_fixture;
 
 static ah_code waiting_effect(void *context, const ah_tool_call *call, ah_tool_result *result,
@@ -19,7 +20,10 @@ static ah_code waiting_effect(void *context, const ah_tool_call *call, ah_tool_r
     struct timespec pause = {.tv_nsec = 1000000};
     while (!call->cancelled(call->cancel_context))
         nanosleep(&pause, NULL);
-    result->json = strdup("{\"interrupted\":true}");
+    result->json = strdup(state->native ? "[{\"type\":\"input_image\",\"image_url\":"
+                                          "\"data:image/png;base64,AAECAwQ=\"}]"
+                                        : "{\"interrupted\":true}");
+    result->format = state->native ? AH_TOOL_RESULT_CONTENT : AH_TOOL_RESULT_JSON;
     result->outcome_unknown = true;
     atomic_store(&state->finished, true);
     return AH_OK;
@@ -54,8 +58,8 @@ static char *interrupt_reply(agent_fixture *fixture, agent_request *request) {
     return af_text("ROOT_DONE");
 }
 
-void agent_job_cases(void) {
-    interrupt_fixture state = {.fixture = {.reply = interrupt_reply}};
+static void interrupt_case(bool native) {
+    interrupt_fixture state = {.fixture = {.reply = interrupt_reply}, .native = native};
     atomic_init(&state.started, false);
     atomic_init(&state.finished, false);
     agent_fixture *fixture = &state.fixture;
@@ -89,6 +93,23 @@ void agent_job_cases(void) {
     sqlite3_bind_text(stmt, 1, operation.id, -1, SQLITE_TRANSIENT);
     assert(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == 1);
     sqlite3_finalize(stmt);
+    if (native) {
+        af_ok(
+            core_prepare(fixture->engine,
+                         "SELECT json FROM events WHERE operation_id=? AND type='tool.late_result'",
+                         &stmt, &error),
+            &error);
+        sqlite3_bind_text(stmt, 1, operation.id, -1, SQLITE_TRANSIENT);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        const char *json = (const char *)sqlite3_column_text(stmt, 0);
+        assert(strstr(json, "discarded") && !strstr(json, "base64"));
+        sqlite3_finalize(stmt);
+    }
     core_operation_free(&operation);
     af_close(fixture);
+}
+
+void agent_job_cases(void) {
+    interrupt_case(false);
+    interrupt_case(true);
 }

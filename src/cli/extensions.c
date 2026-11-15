@@ -1,7 +1,4 @@
 #include "extensions.h"
-#include <errno.h>
-#include <inttypes.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,13 +20,9 @@ cli_option_status cli_extension_option(ah_extensions_config *config, int argc, c
         if (!strcmp(option, "--codex-home")) {
             config->codex_home = value;
         } else {
-            char *end = NULL;
-            errno = 0;
-            uintmax_t bytes = strtoumax(value, &end, 10);
-            if (errno || *value < '0' || *value > '9' || *end || bytes < 1024 || bytes > SIZE_MAX) {
-                fprintf(stderr, "Invalid %s\n", option);
+            uintmax_t bytes;
+            if (!cli_option_number(option, value, 1024, SIZE_MAX, &bytes))
                 return CLI_OPTION_INVALID;
-            }
             config->max_context_bytes = (size_t)bytes;
         }
     } else {

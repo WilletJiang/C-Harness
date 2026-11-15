@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ wire = []
 model_requests = []
 effects = []
 SCHEMA_MARKER = "ONLY_SELECTED_SCHEMA_193"
+IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII="
 
 
 class Service(http.server.BaseHTTPRequestHandler):
@@ -64,6 +66,14 @@ class Service(http.server.BaseHTTPRequestHandler):
                 self.connection.close()
                 return
             result = {"content": [{"type": "text", "text": value}], "isError": False}
+            if value in ("media", "media_error"):
+                result = {"content": [{"type": "text", "text": "inspect 地球"},
+                                      {"type": "image", "data": IMAGE, "mimeType": "image/png",
+                                       "annotations": {"audience": ["assistant"]}},
+                                      {"type": "resource", "resource": {"uri": "file:///report.txt",
+                                       "mimeType": "text/plain", "blob": "YQ=="}}],
+                          "isError": value == "media_error", "structuredContent": {"rows": 1},
+                          "_meta": {"fixture": "media metadata"}}
         else:
             raise AssertionError(method)
         self.respond({"jsonrpc": "2.0", "id": request["id"], "result": result})
@@ -71,8 +81,9 @@ class Service(http.server.BaseHTTPRequestHandler):
     def model(self, request):
         model_requests.append(request)
         assert "private-config-sentinel" not in json.dumps(request)
-        receipts = [json.loads(item["output"]) for item in request["input"]
-                    if item.get("type") == "function_call_output"]
+        receipts = [(dict(json.loads(item["output"][0]["text"]), parts=item["output"])
+                     if isinstance(item["output"], list) else json.loads(item["output"]))
+                    for item in request["input"] if item.get("type") == "function_call_output"]
         step = len(receipts)
         mode = request["model"]
         server = receipts[0]["result"]["items"][0]["id"] if receipts else None
@@ -94,7 +105,19 @@ class Service(http.server.BaseHTTPRequestHandler):
                                       "arguments": {"value": mode}}
         else:
             assert step == 5
-            assert receipts[-1]["is_error"] is (mode == "blocked")
+            assert receipts[-1]["is_error"] is (mode in ("blocked", "media_error"))
+            if mode in ("media", "media_error"):
+                parts = receipts[-1]["parts"]
+                assert [part["type"] for part in parts] == ["input_text", "input_text", "input_text",
+                                                           "input_image", "input_file"]
+                assert parts[2]["text"] == "inspect 地球"
+                assert parts[3]["image_url"] == "data:image/png;base64," + IMAGE
+                assert parts[4]["file_data"] == "data:text/plain;base64,YQ=="
+                metadata = json.loads(parts[1]["text"])
+                assert metadata["_meta"] == {"fixture": "media metadata"}
+                assert metadata["structuredContent"] == {"rows": 1}
+                assert "data" not in metadata["content"][1]
+                assert "blob" not in metadata["content"][2]["resource"]
             tool = None
         output = ([{"type": "function_call", "name": tool, "namespace": "local",
                     "call_id": f"call-{step}", "arguments": json.dumps(args)}] if tool else
@@ -130,7 +153,7 @@ try:
             records = [json.loads(line) for line in result.stdout.splitlines()]
             return records[-1] if records else None
 
-        for mode in ("normal", "blocked", "uncertain"):
+        for mode in ("normal", "media", "media_error", "blocked", "uncertain"):
             before = len(wire)
             sid = run("new", "--model", mode)["id"]
             assert len(wire) == before, "Enable/new must not connect to any MCP server"
@@ -154,6 +177,10 @@ try:
                     "--value", '{"reconciled":true}')
                 assert run("run", "--session", sid)["state"] == "completed"
                 assert effects.count("uncertain") == 1
+        with sqlite3.connect(root / "state.db") as db:
+            assert db.execute("SELECT count(*) FROM artifacts").fetchone()[0] == 2
+            assert db.execute("SELECT count(*) FROM operations WHERE result_format=1").fetchone()[0] == 2
+            assert db.execute("SELECT count(*) FROM events WHERE instr(json,?)>0", (IMAGE,)).fetchone()[0] == 0
         assert all("private-config-sentinel" not in json.dumps(x) for x in model_requests)
 finally:
     server.shutdown()

@@ -15,7 +15,7 @@ extern "C" {
  * Files accept file_url, file_id, file_data, or artifact_id. Local/raw data
  * requires filename. Unknown fields, duplicate keys and ambiguous sources fail.
  * Inline binary data is stored once; journal/commands contain immutable references.
- * Only explicitly submitted artifacts are expanded in model requests. */
+ * Only artifacts in selected native input or tool output parts are expanded. */
 ah_code ah_submit_content(ah_engine *, const char *session_id, const char *command_id,
                           const char *content_json, ah_error *);
 

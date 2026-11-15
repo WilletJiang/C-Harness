@@ -96,7 +96,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         else {
             version = sqlite3_column_int(s, 0);
             e->utf8_store = sqlite3_column_int(s, 1) != 0;
-            if (version > 6)
+            if (version > 7)
                 rc = ah_fail(err, AH_PROTOCOL, "database schema is newer than this runtime");
         }
     }
@@ -122,7 +122,8 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             "NOT NULL UNIQUE,session_id TEXT NOT NULL REFERENCES sessions(id),call_id TEXT NOT "
             "NULL,name TEXT NOT NULL,arguments TEXT NOT NULL,schema TEXT,effect INTEGER NOT "
             "NULL,approval INTEGER NOT NULL,status TEXT NOT NULL,result TEXT,is_error "
-            "INTEGER,decision INTEGER NOT NULL DEFAULT -1,UNIQUE(session_id,call_id));"
+            "INTEGER,decision INTEGER NOT NULL DEFAULT -1,result_format INTEGER NOT NULL "
+            "DEFAULT 0,UNIQUE(session_id,call_id));"
             "CREATE TABLE IF NOT EXISTS call_ids(session_id TEXT NOT NULL REFERENCES "
             "sessions(id),call_id TEXT NOT NULL,PRIMARY KEY(session_id,call_id));"
             "INSERT OR IGNORE INTO call_ids(session_id,call_id) SELECT session_id,call_id FROM "
@@ -150,6 +151,23 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             err);
     if (rc == AH_OK && version < 2)
         rc = core_migrate_result_refs(e, err);
+    if (rc == AH_OK && version < 7) {
+        rc = core_prepare(e,
+                          "SELECT 1 FROM pragma_table_info('operations') "
+                          "WHERE name='result_format'",
+                          &s, err);
+        if (rc == AH_OK) {
+            int step = sqlite3_step(s);
+            sqlite3_finalize(s);
+            if (step == SQLITE_DONE)
+                rc = core_sql(e,
+                              "ALTER TABLE operations ADD COLUMN result_format INTEGER "
+                              "NOT NULL DEFAULT 0",
+                              err);
+            else if (step != SQLITE_ROW)
+                rc = ah_fail(err, AH_IO, "cannot inspect tool result schema");
+        }
+    }
     if (rc == AH_OK)
         rc = agents_schema(e, err);
     if (rc == AH_OK)
@@ -176,7 +194,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         rc = core_done(e, s, err);
     }
     if (rc == AH_OK)
-        rc = core_sql(e, "PRAGMA user_version=6; COMMIT", err);
+        rc = core_sql(e, "PRAGMA user_version=7; COMMIT", err);
     if (rc != AH_OK)
         core_rollback(e);
     if (rc == AH_OK)

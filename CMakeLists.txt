@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ah VERSION 0.7.0 LANGUAGES C)
+project(ah VERSION 0.8.0 LANGUAGES C)
 
 include(CTest)
 include(GNUInstallDirs)
@@ -39,11 +39,11 @@ set_target_properties(ah_toml PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(ah STATIC
   src/common.c src/hash.c
-  src/core/content.c src/core/content_codec.c src/core/content_store.c src/core/content_expand.c src/core/retention.c
+  src/core/content.c src/core/content_codec.c src/core/content_store.c src/core/content_expand.c src/core/tool_content.c src/core/retention.c
   src/core/context_policy.c src/core/context_archive.c src/core/context_recall.c
-  src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/mailbox.c src/core/observations.c
-  src/core/operations.c src/core/jobs.c src/core/parallel.c src/core/recovery.c src/core/response.c src/core/request.c
-  src/core/results.c src/core/runtime.c src/core/inference.c src/core/session.c src/core/store.c src/core/telemetry.c
+  src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/completion.c src/core/mailbox.c src/core/observations.c
+  src/core/operations.c src/core/jobs.c src/core/tool_step.c src/core/recovery.c src/core/response.c src/core/request.c
+  src/core/results.c src/core/runtime.c src/core/step.c src/core/inference.c src/core/session.c src/core/store.c src/core/telemetry.c
   src/core/task_budget.c src/core/task_store.c src/core/task_verify.c src/core/task.c
   src/agents/scheduler.c src/agents/model.c src/agents/store.c src/agents/mail.c
   src/agents/notify.c src/agents/budget.c src/agents/stop.c src/agents/spawn.c
@@ -51,7 +51,7 @@ add_library(ah STATIC
   src/extensions/extensions.c src/extensions/context.c src/extensions/references.c src/extensions/servers.c
   src/extensions/catalog.c src/extensions/catalog_io.c src/extensions/catalog_servers.c
   src/extensions/codex.c src/extensions/skills.c src/extensions/plugins.c
-  src/extensions/mcp.c src/extensions/mcp_config.c src/extensions/mcp_stdio.c src/extensions/mcp_http.c
+  src/extensions/mcp.c src/extensions/mcp_content.c src/extensions/mcp_config.c src/extensions/mcp_stdio.c src/extensions/mcp_http.c
   src/providers/responses.c src/providers/responses_http.c src/providers/responses_async.c src/providers/responses_metrics.c
   src/providers/stream.c src/providers/stream_items.c
   src/tools/source.c src/tools/walk.c src/tools/find.c src/tools/changes.c src/tools/edit.c
@@ -72,7 +72,7 @@ endif()
 
 add_executable(ah_cli
   src/cli/main.c src/cli/output.c src/cli/rpc.c src/cli/credential.c src/cli/signals.c
-  src/cli/extensions.c src/cli/content.c src/cli/policies.c)
+  src/cli/options.c src/cli/extensions.c src/cli/content.c src/cli/policies.c)
 set_target_properties(ah_cli PROPERTIES OUTPUT_NAME ah)
 ah_compile_target(ah_cli)
 target_include_directories(ah_cli PRIVATE src)

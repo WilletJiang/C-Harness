@@ -156,11 +156,6 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
     sqlite3_finalize(current);
     if (code != AH_OK)
         return code;
-    if (core_jobs_running(e, session->id)) {
-        if (session->state != AH_RUNNING)
-            core_jobs_cancel(e, session->id);
-        return core_jobs_finish(e, session, error);
-    }
     if (job->handle) {
         bool done = false;
         ah_code code = agents_model_finish(job, &done, error);
@@ -169,40 +164,27 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
         return code;
     }
     code = job->recover ? recover_job(job, error) : AH_OK;
-    if (code == AH_OK && !strcmp(session->id, scheduler->root) &&
-        (session->state == AH_READY || session->state == AH_RUNNING ||
-         session->state == AH_COMPLETED))
-        code = core_drain_steering(e, session, session->state == AH_COMPLETED, error);
+    if (code == AH_OK && !strcmp(session->id, scheduler->root) && session->state == AH_COMPLETED)
+        code = core_drain_steering(e, session, true, error);
     bool changed = false;
     if (code == AH_OK)
         code = agents_drain(e, session, &changed, error);
     if (code != AH_OK)
         return code;
-    if (session->state == AH_READY) {
-        code = core_run_transition(e, session->id, AH_RUNNING, "run.started", "{}", error);
-        if (code != AH_OK)
-            return code;
-        session->state = AH_RUNNING;
+    if (session->state == AH_READY)
         job->cancelled = false;
-    }
+    bool needs_model = false;
+    code = core_session_step(e, session, &needs_model, error);
+    if (code != AH_OK)
+        return code;
     if (session->state != AH_RUNNING && session->state != AH_WAITING_AGENTS)
         return agents_job_notify(job, error);
-    core_operation operation;
-    code = core_next_operation(e, session->id, &operation, error);
-    if (code == AH_OK) {
-        bool handled = false;
-        code = core_execute_parallel(e, session, &operation, &handled, error);
-        if (code == AH_OK && !handled)
-            code = core_execute_operation(e, session, &operation, error);
-        core_operation_free(&operation);
-        return code;
-    }
-    if (code != AH_NOT_FOUND)
-        return code;
-    if (session->state == AH_WAITING_AGENTS)
-        return ah_fail(error, AH_PROTOCOL, "agent wait has no pending operation");
-    if (scheduler->active >= e->agents.max_active)
+    if (!needs_model || scheduler->active >= e->agents.max_active)
         return AH_OK;
+    /* Tool completion may have opened the message boundary in this step. */
+    code = agents_drain(e, session, &changed, error);
+    if (code != AH_OK)
+        return code;
     code = agents_model_start(job, error);
     if (code == AH_OK)
         scheduler->active++;

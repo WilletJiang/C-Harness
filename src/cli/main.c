@@ -6,66 +6,14 @@
 #include "ah/responses.h"
 #include "ah/tools.h"
 #include "ah/agents.h"
-#include <errno.h>
-#include <fcntl.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
-static void usage(void) {
-    puts("ah " AH_VERSION " — durable C agent runtime\n"
-         "Usage: ah COMMAND [options]\n"
-         "Commands: new run resume approve deny reply resolve inspect list events fork compact "
-         "agents send stop rpc submit-content artifact-import artifacts forget vacuum context "
-         "workspace\n"
-         "  --db PATH            Session database (default ./harness.db)\n"
-         "  --workspace PATH     Register bounded local file tools\n"
-         "  --coordinate-writes  Pin workspace and require explicit write grants via RPC\n"
-         "  --enable-exec        Explicitly allow process execution (not sandboxed)\n"
-         "  --workflows          Add find text search (apply_changes is always available)\n"
-         "  --skills             Enable lazy skill discovery and loading (default off)\n"
-         "  --mcp                Enable lazy MCP discovery/calls with approval (default off)\n"
-         "  --plugins            Discover installed plugin bundles (default off)\n"
-         "                       Plugin skills/MCP also require --skills/--mcp\n"
-         "  --codex-home PATH    Extension source; does not enable extensions\n"
-         "  --extension-context-bytes N  Loaded skill limit (default 131072; min 1024)\n"
-         "  --model NAME         Model for new session (required by new)\n"
-         "  --instructions TEXT  Developer instructions for new session\n"
-         "  --session ID         Target session\n"
-         "  --prompt TEXT        Submit user text before run\n"
-         "  --content JSON       Typed content for new/run/submit-content; excludes --prompt\n"
-         "  --artifact-path PATH --mime MIME  Import an immutable local file\n"
-         "  --forget-tree        Explicitly delete a complete agent tree from its root\n"
-         "  --command-id ID      Stable idempotency key for prompt (required)\n"
-         "  --operation ID       Approval/input/unknown-operation identity\n"
-         "  --value JSON         Input or reconciliation result\n"
-         "  --summary TEXT       Explicit context checkpoint summary\n"
-         "  --keep-turns N       Recent complete turns retained by compact (default 4)\n"
-         "  --endpoint URL       Full Responses endpoint (default OpenAI public endpoint)\n"
-         "  --token-file PATH    Private token/SIWC JSON file; otherwise AH_ACCESS_TOKEN\n"
-         "  --parallel-tools N   Concurrent opt-in read tools (default 4; 0/1 serial; max 16)\n"
-         "  --agents N           Enable fresh-context subagents, N concurrent model requests\n"
-         "  --agent-limit N      Maximum children per tree (default 32)\n"
-         "  --agent-depth N      Maximum child depth (default 8)\n"
-         "  --target ID          Recipient for send/stop\n"
-         "  --wake               Send a task that can wake an idle child\n"
-         "  --model-tool-bytes N  Per-result model view (default 16384; 0 disables cap)\n"
-         "  --context-bytes N    Request byte limit (default 1 MiB; 4096..64 MiB)\n"
-         "  --auto-context       Archive older complete exchanges at settled boundaries\n"
-         "  --context-trigger N --context-target N --context-reserve N  Byte thresholds\n"
-         "  --keep-exchanges N   Recent exact exchanges (default 3; 0..64)\n"
-         "  --compact-tokens N   Explicit provider native-compaction capability and threshold\n"
-         "  --events             Print structured execution events\n"
-         "  --allow-http-loopback  Allow local HTTP Responses/MCP fixtures only\n"
-         "RPC: bounded JSON lines; method/id/session fields. See docs/protocol.md.\n"
-         "Secrets are never accepted on the command line. OAuth belongs to the host.");
-}
 int main(int argc, char **argv) {
-    if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help")) {
-        usage();
+    if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help") ||
+        !strcmp(argv[1], "--help-all")) {
+        cli_usage(argc >= 2 && !strcmp(argv[1], "--help-all"));
         return 0;
     }
     if (!strcmp(argv[1], "--version")) {
@@ -148,14 +96,10 @@ int main(int argc, char **argv) {
             target = v;
         else if (!strcmp(arg, "--agents") || !strcmp(arg, "--agent-limit") ||
                  !strcmp(arg, "--agent-depth")) {
-            char *end = NULL;
-            errno = 0;
-            unsigned long number = strtoul(v, &end, 10);
+            uintmax_t number;
             bool limit = !strcmp(arg, "--agent-limit");
-            if (errno || !*v || *end || !number || number > (limit ? 1024UL : 32UL)) {
-                fprintf(stderr, "Invalid %s\n", arg);
+            if (!cli_option_number(arg, v, 1, limit ? 1024 : 32, &number))
                 return 2;
-            }
             if (limit)
                 agent_limit = (unsigned)number;
             else if (!strcmp(arg, "--agents"))
@@ -165,12 +109,11 @@ int main(int argc, char **argv) {
         } else if (!strcmp(arg, "--token-file"))
             token_file = v;
         else if (!strcmp(arg, "--parallel-tools") || !strcmp(arg, "--model-tool-bytes")) {
-            char *end = NULL;
-            errno = 0;
-            unsigned long number = strtoul(v, &end, 10);
+            uintmax_t number;
             bool concurrency = !strcmp(arg, "--parallel-tools");
-            if (errno || !*v || *v == '-' || *end ||
-                (concurrency ? number > 16 : number != 0 && number < 1024)) {
+            if (!cli_option_number(arg, v, 0, concurrency ? 16 : SIZE_MAX, &number))
+                return 2;
+            if (!concurrency && number && number < 1024) {
                 fprintf(stderr, "Invalid %s\n", arg);
                 return 2;
             }
@@ -179,13 +122,9 @@ int main(int argc, char **argv) {
             else
                 model_tool_bytes = (size_t)number;
         } else if (!strcmp(arg, "--keep-turns")) {
-            char *end = NULL;
-            errno = 0;
-            unsigned long number = strtoul(v, &end, 10);
-            if (errno || !*v || *end || number > 10000) {
-                fputs("Invalid keep-turns\n", stderr);
+            uintmax_t number;
+            if (!cli_option_number(arg, v, 0, 10000, &number))
                 return 2;
-            }
             keep = (unsigned)number;
         } else {
             fputs("Unknown option\n", stderr);

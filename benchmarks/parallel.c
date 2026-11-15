@@ -1,6 +1,7 @@
 /* Local tool scheduling benchmark. The provider is a mock; no network/inference. */
 #include <ah/ah.h>
 #include <ah/tools.h>
+#include <ah/jobs.h>
 #include <yyjson.h>
 #include <errno.h>
 #include <stdio.h>
@@ -153,8 +154,8 @@ static int compare(const void *a, const void *b) {
     double x = *(const double *)a, y = *(const double *)b;
     return (x > y) - (x < y);
 }
-static void report(const char *store, bool files, unsigned parallel, const double *samples,
-                   unsigned count) {
+static void report(const char *store, bool files, bool background, unsigned parallel,
+                   const double *samples, unsigned count) {
     double sorted[MAX_RUNS];
     memcpy(sorted, samples, count * sizeof(*samples));
     qsort(sorted, count, sizeof(*sorted), compare);
@@ -164,7 +165,10 @@ static void report(const char *store, bool files, unsigned parallel, const doubl
            "\"max_model_tool_bytes\":0,\"network\":false,\"model_inference\":false,"
            "\"correctness_checked\":true,\"ordered_receipts_checked\":%u,"
            "\"p50_ms\":%.3f,\"p95_ms\":%.3f,\"max_ms\":%.3f,\"raw_ms\":[",
-           store, files ? "four_independent_4KiB_files_warm" : "four_synthetic_latency_reads",
+           store,
+           files        ? "four_independent_4KiB_files_warm"
+           : background ? "four_background_latency_reads"
+                        : "four_synthetic_latency_reads",
            parallel, count, WARMUPS, CALLS, files ? FILE_BYTES : 0, files ? 0 : DELAY_MS,
            count * CALLS, sorted[(count + 1) / 2 - 1], sorted[(count * 95 + 99) / 100 - 1],
            sorted[count - 1]);
@@ -173,7 +177,8 @@ static void report(const char *store, bool files, unsigned parallel, const doubl
     puts("]}");
 }
 static int benchmark(const char *workspace, const char *database, const char *store,
-                     char content[][FILE_BYTES + 1], bool files, unsigned parallel) {
+                     char content[][FILE_BYTES + 1], bool files, bool background,
+                     unsigned parallel) {
     fixture f = {.files = files, .content = content, .calls = model_calls(files)};
     if (!f.calls)
         return 1;
@@ -204,7 +209,8 @@ static int benchmark(const char *workspace, const char *database, const char *st
                         .effect = AH_EFFECT_READ,
                         .execute = delayed_read,
                         .parallel_safe = true};
-        rc = ah_register_tool(engine, &tool, &error);
+        rc = background ? ah_register_background_tool(engine, &tool, &error)
+                        : ah_register_tool(engine, &tool, &error);
     }
     unsigned count = files ? MAX_RUNS : 40;
     double samples[MAX_RUNS];
@@ -232,7 +238,7 @@ static int benchmark(const char *workspace, const char *database, const char *st
         fprintf(stderr, "%s: %s\n", ah_code_name(rc), error.message);
         return 1;
     }
-    report(store, files, parallel, samples, count);
+    report(store, files, background, parallel, samples, count);
     return 0;
 }
 int main(int argc, char **argv) {
@@ -263,11 +269,11 @@ int main(int argc, char **argv) {
         }
     }
     for (unsigned store = 0; store <= (unsigned)file_store && !rc; store++)
-        for (unsigned workload = 0; workload < 2 && !rc; workload++)
+        for (unsigned workload = 0; workload < 3 && !rc; workload++)
             for (unsigned parallel = 1; parallel <= 4 && !rc; parallel += 3) {
                 rc = benchmark(
                     root, store ? database : ":memory:", store ? "sqlite-delete-full" : "memory",
-                    content, workload == 0, parallel);
+                    content, workload == 0, workload == 2, parallel);
                 unlink(database);
                 unlink(lock);
                 unlink(journal);

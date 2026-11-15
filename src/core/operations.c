@@ -6,10 +6,12 @@ static ah_code read_operation(ah_engine *e, const char *sid, const char *id, cor
     sqlite3_stmt *s = NULL;
     const char *sql =
         id ? "SELECT "
-             "id,call_id,name,arguments,status,effect,approval,result,decision,is_error,schema "
+             "id,call_id,name,arguments,status,effect,approval,result,decision,is_error,"
+             "schema,result_format "
              "FROM operations WHERE session_id=? AND id=?"
            : "SELECT "
-             "id,call_id,name,arguments,status,effect,approval,result,decision,is_error,schema "
+             "id,call_id,name,arguments,status,effect,approval,result,decision,is_error,"
+             "schema,result_format "
              "FROM operations WHERE session_id=? AND status!='done' ORDER BY seq LIMIT 1";
     ah_code rc = core_prepare(e, sql, &s, err);
     if (rc != AH_OK)
@@ -37,6 +39,7 @@ static ah_code read_operation(ah_engine *e, const char *sid, const char *id, cor
         op->schema = ah_strdup((const char *)sqlite3_column_text(s, 10));
     op->decision = sqlite3_column_int(s, 8);
     op->is_error = sqlite3_column_int(s, 9) != 0;
+    op->result_format = (ah_tool_result_format)sqlite3_column_int(s, 11);
     sqlite3_finalize(s);
     if (!op->id || !op->call_id || !op->name || !op->arguments || !op->status ||
         (has_result && !op->result) || (has_schema && !op->schema)) {
@@ -81,15 +84,16 @@ ah_code core_save_result(ah_engine *e, const char *sid, const core_operation *op
                          ah_error *err) {
     sqlite3_stmt *s = NULL;
     ah_code rc = core_prepare(e,
-                              "UPDATE operations SET status=?,result=?,is_error=? "
+                              "UPDATE operations SET status=?,result=?,is_error=?,result_format=? "
                               "WHERE id=? AND session_id=?",
                               &s, err);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, status, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(s, 2, result, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(s, 3, is_error);
-        sqlite3_bind_text(s, 4, op->id, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(s, 5, sid, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(s, 4, op->result_format);
+        sqlite3_bind_text(s, 5, op->id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 6, sid, -1, SQLITE_TRANSIENT);
         rc = core_done(e, s, err);
     }
     if (rc == AH_OK && event)
@@ -111,14 +115,28 @@ ah_code core_receipt(ah_engine *e, const char *sid, const core_operation *op, co
     yyjson_mut_doc_set_root(d, o);
     yyjson_mut_obj_add_str(d, o, "type", "function_call_output");
     yyjson_mut_obj_add_strcpy(d, o, "call_id", op->call_id);
-    char digest[65];
-    char *encoded = core_observation_view(e, sid, op, result, is_error, digest, err);
+    char digest[65] = {0};
+    bool native = op->result_format == AH_TOOL_RESULT_CONTENT;
+    char *encoded = native ? core_content_result_view(e, op, result, is_error, err)
+                           : core_observation_view(e, sid, op, result, is_error, digest, err);
     if (!encoded) {
         ah_mut_doc_free(d);
         core_session_free(&session);
         return ah_fail(err, AH_IO, "out of memory");
     }
-    yyjson_mut_obj_add_strcpy(d, o, "output", encoded);
+    if (native) {
+        yyjson_doc *parts = yyjson_read(encoded, strlen(encoded), 0);
+        yyjson_mut_val *output = parts ? yyjson_val_mut_copy(d, yyjson_doc_get_root(parts)) : NULL;
+        bool added = output && yyjson_mut_obj_add_val(d, o, "output", output);
+        yyjson_doc_free(parts);
+        if (!added) {
+            free(encoded);
+            ah_mut_doc_free(d);
+            core_session_free(&session);
+            return ah_fail(err, AH_IO, "cannot encode native receipt output");
+        }
+    } else
+        yyjson_mut_obj_add_strcpy(d, o, "output", encoded);
     free(encoded);
     char *json = ah_mut_write(d);
     ah_mut_doc_free(d);
@@ -208,7 +226,8 @@ static ah_code provide_result(ah_engine *e, const char *sid, const char *id, con
     if (rc != AH_OK)
         return ah_fail(err, rc, "operation unavailable");
     if (!strcmp(op.status, "done") || (resolve && !strcmp(op.status, "resolved"))) {
-        bool same = op.result && !strcmp(op.result, json) && op.is_error == is_error;
+        bool same = op.result && !strcmp(op.result, json) && op.is_error == is_error &&
+                    op.result_format == AH_TOOL_RESULT_JSON;
         core_operation_free(&op);
         return same ? AH_OK : ah_fail(err, AH_INVALID, "result conflicts with recorded receipt");
     }
@@ -216,6 +235,7 @@ static ah_code provide_result(ah_engine *e, const char *sid, const char *id, con
         core_operation_free(&op);
         return ah_fail(err, AH_INVALID, "operation is not waiting for this result");
     }
+    op.result_format = AH_TOOL_RESULT_JSON;
     atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
     uint64_t after = 0;
     rc = core_begin(e, &after, err);

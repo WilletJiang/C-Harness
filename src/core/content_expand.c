@@ -60,7 +60,12 @@ ah_code core_content_expand(ah_engine *e, const char *sid, yyjson_mut_doc *d, yy
                             size_t *bytes, ah_error *err) {
     const char *role = yyjson_mut_get_str(yyjson_mut_obj_get(item, "role"));
     yyjson_mut_val *parts = yyjson_mut_obj_get(item, "content");
-    if (!role || strcmp(role, "user") || !yyjson_mut_is_arr(parts))
+    const char *type = yyjson_mut_get_str(yyjson_mut_obj_get(item, "type"));
+    if (type && !strcmp(type, "function_call_output"))
+        parts = yyjson_mut_obj_get(item, "output");
+    else if (!role || strcmp(role, "user"))
+        return AH_OK;
+    if (!yyjson_mut_is_arr(parts))
         return AH_OK;
     size_t i, n;
     yyjson_mut_val *part;

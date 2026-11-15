@@ -158,10 +158,12 @@ static ah_code build_request(ah_engine *e, const core_session *session, char **j
         !add_definition(d, functions, "wait",
                         "Pause until the host explicitly supplies a JSON continuation.",
                         wait_schema) ||
-        !add_definition(d, functions, "read_result",
-                        "Read a saved tool result as UTF-8 JSON text. Use next_offset to continue; "
-                        "offset defaults to 0 and limit to 4096 bytes.",
-                        result_schema))
+        !add_definition(
+            d, functions, "read_result",
+            "Read a saved result. Omit offset and limit to retrieve native media; otherwise "
+            "read UTF-8 JSON text pages using next_offset. Text defaults: offset 0, "
+            "limit 4096 bytes.",
+            result_schema))
         rc = ah_fail(err, AH_IO, "cannot encode built-in definitions");
     if (rc == AH_OK && recall &&
         !add_definition(d, functions, "recall",
