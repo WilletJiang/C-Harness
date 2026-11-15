@@ -127,8 +127,8 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
                           : AH_INVALID;
     bool stable = fingerprinted && checked == AH_OK && core_task_valid_revision(current) &&
                   !strcmp(before, current);
-    bool valid = result.json && strlen(result.json) <= e->config.max_output_bytes &&
-                 ah_json_valid(result.json);
+    bool valid = !result.continuation_json && result.format == AH_TOOL_RESULT_JSON && result.json &&
+                 strlen(result.json) <= e->config.max_output_bytes && ah_json_valid(result.json);
     yyjson_doc *parsed = valid ? yyjson_read(result.json, strlen(result.json), 0) : NULL;
     bool unknown =
         context.failed || result.outcome_unknown || (invoked && (code != AH_OK || !valid));
@@ -172,6 +172,7 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
     ah_mut_doc_free(doc);
     yyjson_doc_free(parsed);
     free(result.json);
+    free(result.continuation_json);
     bool accepted = !strcmp(status, "pass");
     core_metric(e, sid, id, "verification", started, ah_now_us(), receipt ? strlen(receipt) : 0, 1,
                 code);

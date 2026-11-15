@@ -13,6 +13,7 @@ cmake --install "$work/build"
 mkdir "$work/client"
 cp "$work/source/examples/embed.c" "$work/client/main.c"
 cp "$work/source/examples/embed.c" "$work/client/main.cpp"
+cp "$work/source/examples/durable.c" "$work/client/durable.c"
 cat > "$work/client/CMakeLists.txt" <<'CMAKE'
 cmake_minimum_required(VERSION 3.20)
 project(external_client C CXX)
@@ -21,12 +22,15 @@ add_executable(client main.c)
 target_link_libraries(client PRIVATE ah::ah)
 add_executable(client_cpp main.cpp)
 target_link_libraries(client_cpp PRIVATE ah::ah)
+add_executable(durable_client durable.c)
+target_link_libraries(durable_client PRIVATE ah::ah)
 CMAKE
 cmake -S "$work/client" -B "$work/client-build" -DCMAKE_PREFIX_PATH="$work/install"
 cmake --build "$work/client-build"
 "$work/client-build/client"
 
 "$work/client-build/client_cpp"
+"$work/client-build/durable_client"
 
 # Embedding as a subproject must not build a CLI or require Python, even when
 # the application's own BUILD_TESTING is enabled.

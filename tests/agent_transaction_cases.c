@@ -211,7 +211,7 @@ static void old_schema_upgrades(void) {
             sql(fixture.engine, "DROP TABLE result_refs");
         sql(fixture.engine, versions[version]);
         af_reopen(&fixture);
-        assert(scalar(fixture.engine, "PRAGMA user_version") == 7);
+        assert(scalar(fixture.engine, "PRAGMA user_version") == 8);
         assert(scalar(fixture.engine, "SELECT COUNT(*) FROM agent_nodes") == 0);
         assert(scalar(fixture.engine, "SELECT COUNT(*) FROM extension_context") == 0);
         af_state(&fixture, fixture.root, "idle");

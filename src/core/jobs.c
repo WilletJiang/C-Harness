@@ -5,7 +5,7 @@
 typedef struct core_job {
     ah_engine *engine;
     core_tool *tool;
-    char *session, *operation, *arguments;
+    char *session, *operation, *arguments, *checkpoint, *wake;
     ah_tool_call call;
     ah_tool_result result;
     ah_error error;
@@ -13,6 +13,7 @@ typedef struct core_job {
     pthread_t thread;
     atomic_bool cancelled;
     bool finished;
+    bool scoped_cancel;
     ah_code stopped;
     uint64_t began, ended;
     struct core_job *next;
@@ -118,7 +119,10 @@ static void free_job(core_job *job) {
     free(job->session);
     free(job->operation);
     free(job->arguments);
+    free(job->checkpoint);
+    free(job->wake);
     free(job->result.json);
+    free(job->result.continuation_json);
     free(job);
 }
 
@@ -129,14 +133,19 @@ ah_code core_jobs_start(ah_engine *e, core_session *session, core_operation *ope
         job->session = ah_strdup(session->id);
         job->operation = ah_strdup(operation->id);
         job->arguments = ah_strdup(operation->arguments);
+        job->checkpoint = call->checkpoint_json ? ah_strdup(call->checkpoint_json) : NULL;
+        job->wake = call->wake_json ? ah_strdup(call->wake_json) : NULL;
     }
-    if (job && job->session && job->operation && job->arguments) {
+    if (job && job->session && job->operation && job->arguments &&
+        (!call->checkpoint_json || job->checkpoint) && (!call->wake_json || job->wake)) {
         job->engine = e;
         job->tool = tool;
         job->call = *call;
         job->call.session_id = job->session;
         job->call.operation_id = job->operation;
         job->call.arguments_json = job->arguments;
+        job->call.checkpoint_json = job->checkpoint;
+        job->call.wake_json = job->wake;
         job->call.cancelled = cancelled;
         job->call.cancel_context = job;
         job->call.checkpoint = NULL;
@@ -171,7 +180,7 @@ ah_code core_jobs_start(ah_engine *e, core_session *session, core_operation *ope
                          : code;
 }
 
-ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
+static ah_code cancel_job(ah_engine *e, const char *operation, bool scoped, ah_error *error) {
     if (!e || !operation)
         return ah_fail(error, AH_INVALID, "engine and operation required");
     if (!e->jobs)
@@ -181,6 +190,8 @@ ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
     while (job && strcmp(job->operation, operation))
         job = job->next;
     if (job) {
+        if (!scoped || !atomic_load_explicit(&job->cancelled, memory_order_relaxed))
+            job->scoped_cancel = scoped;
         atomic_store_explicit(&job->cancelled, true, memory_order_relaxed);
         pthread_cond_broadcast(&e->jobs->changed);
     }
@@ -189,6 +200,14 @@ ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
         return ah_fail(error, AH_NOT_FOUND, "tool job is not active");
     ah_error_clear(error);
     return AH_OK;
+}
+
+ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
+    return cancel_job(e, operation, false, error);
+}
+
+ah_code core_jobs_cancel_owned(ah_engine *e, const char *operation, ah_error *error) {
+    return cancel_job(e, operation, true, error);
 }
 
 void core_jobs_cancel(ah_engine *e, const char *sid) {
@@ -233,9 +252,15 @@ void core_jobs_wait(ah_engine *e, unsigned milliseconds) {
 }
 
 static ah_code capture_job(ah_engine *e, core_session *session, core_job *job, ah_error *error) {
+    /* Cancellation can arrive after the callback returned but before the owner
+     * captures it. A late continuation must not resurrect cancelled work. */
+    if (atomic_load_explicit(&job->cancelled, memory_order_relaxed) ||
+        atomic_load_explicit(&e->cancelled, memory_order_relaxed))
+        job->stopped = AH_CANCELLED;
     core_operation operation;
     ah_code code = core_get_operation(e, session->id, job->operation, &operation, error);
-    if (code == AH_OK && !strcmp(operation.status, "executing"))
+    if (code == AH_OK && !strcmp(operation.status, "executing") &&
+        operation.generation == job->call.generation)
         code = core_capture_operation(e, session, &operation, &job->result, job->executed,
                                       &job->error, job->stopped, error);
     else if (code == AH_OK) {
@@ -249,7 +274,11 @@ static ah_code capture_job(ah_engine *e, core_session *session, core_job *job, a
                               valid ? job->result.json : "{\"discarded\":true}", error);
     }
     core_operation_free(&operation);
-    if (code == AH_OK && job->stopped != AH_OK)
+    bool scoped = job->scoped_cancel && job->stopped == AH_CANCELLED &&
+                  !atomic_load_explicit(&e->cancelled, memory_order_relaxed);
+    if (code == AH_CANCELLED && scoped)
+        code = AH_OK;
+    if (code == AH_OK && job->stopped != AH_OK && !scoped)
         code = ah_fail(error, job->stopped,
                        "tool completed after cancellation or deadline; receipt recorded");
     return code;
@@ -284,9 +313,15 @@ ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
     }
     uint64_t after = 0;
     ah_code code = core_begin(e, &after, error), stopped = AH_OK;
+    bool uncertain = false;
     for (core_job *job = finished; job && code == AH_OK; job = job->next) {
         code = capture_job(e, session, job, error);
-        if (code == AH_CANCELLED || code == AH_LIMIT) {
+        if (code == AH_UNCERTAIN) {
+            /* One hidden child's unknown effect must not discard trustworthy
+             * receipts from siblings already removed from the worker list. */
+            uncertain = true;
+            code = AH_OK;
+        } else if (code == AH_CANCELLED || code == AH_LIMIT) {
             stopped = code;
             code = AH_OK;
         }
@@ -306,6 +341,8 @@ ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
     }
     if (code != AH_OK && code != AH_UNCERTAIN)
         session->state = AH_OUTCOME_UNKNOWN;
+    if (code == AH_OK && uncertain)
+        code = ah_fail(error, AH_UNCERTAIN, "child tool outcome requires explicit resolution");
     if (code == AH_OK && stopped != AH_OK)
         code = ah_fail(error, stopped,
                        "tool completed after cancellation or deadline; receipt recorded");

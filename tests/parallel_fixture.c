@@ -205,15 +205,15 @@ static ah_code execute(void *context, const ah_tool_call *call, ah_tool_result *
 static void register_tools(fixture *f) {
     ah_error error = {0};
     ah_tool tools[] = {
-        {"read", "Concurrent read", schema, AH_EFFECT_READ, false, execute, f, true},
-        {"serial", "Unmarked read", schema, AH_EFFECT_READ, false, execute, f, false},
-        {"write", "Write barrier", schema, AH_EFFECT_WRITE, false, execute, f, false},
-        {"approved", "Approval barrier", schema, AH_EFFECT_READ, true, execute, f, true},
+        {"read", "Concurrent read", schema, AH_EFFECT_READ, false, execute, f, true, NULL},
+        {"serial", "Unmarked read", schema, AH_EFFECT_READ, false, execute, f, false, NULL},
+        {"write", "Write barrier", schema, AH_EFFECT_WRITE, false, execute, f, false, NULL},
+        {"approved", "Approval barrier", schema, AH_EFFECT_READ, true, execute, f, true, NULL},
     };
     for (size_t i = 0; i < sizeof(tools) / sizeof(tools[0]); i++)
         ok(ah_register_tool(f->engine, &tools[i], &error), &error);
-    ah_tool background = {"background", "Background read", schema, AH_EFFECT_READ,
-                          false,        execute,           f,      false};
+    ah_tool background = {
+        "background", "Background read", schema, AH_EFFECT_READ, false, execute, f, false, NULL};
     ok(ah_register_background_tool(f->engine, &background, &error), &error);
 }
 

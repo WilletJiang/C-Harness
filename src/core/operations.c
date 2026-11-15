@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 
 static ah_code read_operation(ah_engine *e, const char *sid, const char *id, core_operation *op,
                               ah_error *err) {
@@ -7,12 +8,26 @@ static ah_code read_operation(ah_engine *e, const char *sid, const char *id, cor
     const char *sql =
         id ? "SELECT "
              "id,call_id,name,arguments,status,effect,approval,result,decision,is_error,"
-             "schema,result_format "
+             "schema,result_format,COALESCE((SELECT generation FROM operation_work w "
+             "WHERE w.operation_id=operations.id),0),EXISTS(SELECT 1 FROM work_calls c "
+             "WHERE c.operation_id=operations.id),EXISTS(SELECT 1 FROM operation_work w "
+             "WHERE w.operation_id=operations.id) "
              "FROM operations WHERE session_id=? AND id=?"
            : "SELECT "
              "id,call_id,name,arguments,status,effect,approval,result,decision,is_error,"
-             "schema,result_format "
-             "FROM operations WHERE session_id=? AND status!='done' ORDER BY seq LIMIT 1";
+             "schema,result_format,COALESCE((SELECT generation FROM operation_work w "
+             "WHERE w.operation_id=operations.id),0),EXISTS(SELECT 1 FROM work_calls c "
+             "WHERE c.operation_id=operations.id),EXISTS(SELECT 1 FROM operation_work w "
+             "WHERE w.operation_id=operations.id) "
+             "FROM operations WHERE session_id=? AND status!='done' AND NOT EXISTS "
+             "(SELECT 1 FROM work_calls c WHERE c.operation_id=operations.id AND "
+             "c.parent_id IS NOT NULL) ORDER BY seq LIMIT 1";
+    if (!e->has_work)
+        sql = id ? "SELECT id,call_id,name,arguments,status,effect,approval,result,decision,"
+                   "is_error,schema,result_format FROM operations WHERE session_id=? AND id=?"
+                 : "SELECT id,call_id,name,arguments,status,effect,approval,result,decision,"
+                   "is_error,schema,result_format FROM operations WHERE session_id=? "
+                   "AND status!='done' ORDER BY seq LIMIT 1";
     ah_code rc = core_prepare(e, sql, &s, err);
     if (rc != AH_OK)
         return rc;
@@ -40,6 +55,11 @@ static ah_code read_operation(ah_engine *e, const char *sid, const char *id, cor
     op->decision = sqlite3_column_int(s, 8);
     op->is_error = sqlite3_column_int(s, 9) != 0;
     op->result_format = (ah_tool_result_format)sqlite3_column_int(s, 11);
+    if (e->has_work) {
+        op->generation = (uint64_t)sqlite3_column_int64(s, 12);
+        op->hidden = sqlite3_column_int(s, 13) != 0;
+        op->durable = sqlite3_column_int(s, 14) != 0;
+    }
     sqlite3_finalize(s);
     if (!op->id || !op->call_id || !op->name || !op->arguments || !op->status ||
         (has_result && !op->result) || (has_schema && !op->schema)) {
@@ -102,6 +122,12 @@ ah_code core_save_result(ah_engine *e, const char *sid, const core_operation *op
 }
 ah_code core_receipt(ah_engine *e, const char *sid, const core_operation *op, const char *result,
                      bool is_error, const char *type, ah_error *err) {
+    if (op->hidden) {
+        ah_code code = core_save_result(e, sid, op, result, is_error, "done", NULL, err);
+        if (code == AH_OK)
+            code = core_event(e, sid, op->id, type, result, err);
+        return code;
+    }
     core_session session;
     ah_code rc = core_load(e, sid, &session, err);
     if (rc != AH_OK)

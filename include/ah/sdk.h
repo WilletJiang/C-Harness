@@ -8,6 +8,8 @@
 #include "responses.h"
 #include "tools.h"
 #include "workspace.h"
+#include "work.h"
+#include "observe.h"
 
 #ifdef __cplusplus
 extern "C" {

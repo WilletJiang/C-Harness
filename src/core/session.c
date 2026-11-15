@@ -1,4 +1,5 @@
 #include "content_internal.h"
+#include "work.h"
 
 ah_code ah_session_state(ah_engine *e, const char *sid, ah_state *state, ah_error *error) {
     ah_code code = core_guard(e, error);
@@ -62,6 +63,10 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     if (!sid || !command || !*command || strlen(command) > 256 || !identity || !content ||
         !content->json)
         return ah_fail(err, AH_INVALID, "bounded command and input required");
+    bool host = false;
+    rc = core_work_host_session(e, sid, &host, err);
+    if (rc != AH_OK || host)
+        return rc != AH_OK ? rc : ah_fail(err, AH_INVALID, "host work cannot accept model input");
     sqlite3_stmt *s = NULL;
     rc = core_prepare(e, "SELECT text,kind FROM commands WHERE session_id=? AND id=?", &s, err);
     if (rc != AH_OK)

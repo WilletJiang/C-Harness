@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ah VERSION 0.9.0 LANGUAGES C)
+project(ah VERSION 0.10.0 LANGUAGES C)
 
 set(AH_TOP_LEVEL OFF)
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -58,6 +58,8 @@ add_library(ah STATIC
   src/core/content.c src/core/content_codec.c src/core/content_store.c src/core/content_expand.c src/core/tool_content.c src/core/retention.c
   src/core/context_policy.c src/core/context_archive.c src/core/context_recall.c
   src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/completion.c src/core/mailbox.c src/core/observations.c
+  src/core/observe.c src/core/work_store.c src/core/work_signal.c src/core/work_dispatch.c
+  src/core/work_calls.c src/core/work_join.c src/core/work_host.c src/core/work_cancel.c
   src/core/operations.c src/core/jobs.c src/core/tool_step.c src/core/recovery.c src/core/response.c src/core/request.c
   src/core/results.c src/core/runtime.c src/core/step.c src/core/inference.c src/core/session.c src/core/store.c src/core/telemetry.c
   src/core/task_budget.c src/core/task_store.c src/core/task_verify.c src/core/task.c
@@ -100,6 +102,8 @@ if(AH_BUILD_EXAMPLES)
   target_link_libraries(ah_embed PRIVATE ah)
   add_executable(ah_host examples/host.c)
   target_link_libraries(ah_host PRIVATE ah)
+  add_executable(ah_durable examples/durable.c)
+  target_link_libraries(ah_durable PRIVATE ah)
 endif()
 
 if(AH_LIVE_EVAL OR AH_TESTS_ENABLED)

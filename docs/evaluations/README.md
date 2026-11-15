@@ -16,6 +16,7 @@ The current entrypoints are documented in [evals](../../evals/README.md).
 | [WebSocket continuation](websocket-evaluation.md) | Pooled HTTP versus full/incremental WS, subscription recovery and all attempt usage |
 | [Workflow profile](execution-evaluation.md) | Old/new native tools on unchanged smoke tasks; quality, wall time, usage and phase measurements |
 | [Native find](find-performance.md) | Exact-output native search optimization, callback timings and tool-interface consolidation |
+| [Durable runtime](durable-runtime.md) | Ordinary execution overhead and parked-worker resources with per-signal and batched host ingress |
 
 The frozen prompt and specification survived the package reorganization unchanged.
 The grader assertions are also unchanged; package imports and their source-file

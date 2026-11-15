@@ -388,7 +388,7 @@ static void migrate_legacy(void) {
                         NULL, NULL, NULL) == SQLITE_OK);
     assert(sqlite3_close(db) == SQLITE_OK);
     e = open_engine(&f, path, AH_EFFECT_READ, false);
-    assert(count(e, "PRAGMA user_version") == 7);
+    assert(count(e, "PRAGMA user_version") == 8);
     assert(count(e, "SELECT count(*) FROM operations WHERE result_format=0") == 1);
     char *after = stored_receipt(e);
     assert(!strcmp(before, after));

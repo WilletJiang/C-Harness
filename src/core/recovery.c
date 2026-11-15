@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 
 static ah_code recover_operations(ah_engine *e, const char *sid, ah_state *state, ah_error *error) {
     sqlite3_stmt *stmt = NULL;
@@ -17,6 +18,24 @@ static ah_code recover_operations(ah_engine *e, const char *sid, ah_state *state
         if (code != AH_OK)
             break;
         bool executing = !strcmp(op.status, "executing");
+        bool parent = false;
+        if (op.durable)
+            code = core_work_has_children(e, op.id, &parent, error);
+        bool handled = false, unknown = false;
+        if (code == AH_OK && executing)
+            code = core_work_recover(e, sid, op.id, &handled, &unknown, error);
+        if (code != AH_OK) {
+            core_operation_free(&op);
+            break;
+        }
+        if (handled) {
+            blocked = true;
+            if (unknown) {
+                *state = AH_OUTCOME_UNKNOWN;
+            }
+            core_operation_free(&op);
+            continue;
+        }
         if (!strcmp(op.status, "unknown") || (executing && op.effect != AH_EFFECT_READ)) {
             blocked = true;
             *state = AH_OUTCOME_UNKNOWN;
@@ -28,12 +47,19 @@ static ah_code recover_operations(ah_engine *e, const char *sid, ah_state *state
             }
         } else if (executing) {
             const char *result = "{\"error\":\"read interrupted by process exit\"}";
-            code = blocked ? core_save_result(e, sid, &op, result, true, "received",
-                                              "tool.received", error)
-                           : core_receipt(e, sid, &op, result, true, "tool.interrupted", error);
+            code = blocked || parent
+                       ? core_save_result(e, sid, &op, result, true, "received", "tool.received",
+                                          error)
+                       : core_receipt(e, sid, &op, result, true, "tool.interrupted", error);
+            blocked |= parent;
         } else if (!strcmp(op.status, "received") || !strcmp(op.status, "received_late") ||
                    !strcmp(op.status, "resolved")) {
-            if (!blocked)
+            /* A terminal parent receipt may still own interrupted children.
+             * Recover every descendant before the common publisher drains or
+             * reconciles them; publishing here would orphan hidden children. */
+            if (parent)
+                blocked = true;
+            else if (!blocked)
                 code = core_receipt(e, sid, &op, op.result, op.is_error,
                                     !strcmp(op.status, "received_late") ? "tool.late_result"
                                                                         : "tool.completed",

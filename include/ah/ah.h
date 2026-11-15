@@ -9,11 +9,12 @@
 extern "C" {
 #endif
 
-#define AH_VERSION "0.9.0"
+#define AH_VERSION "0.10.0"
 #define AH_ID_CAP 37
 #define AH_ERROR_CAP 512
 
 typedef struct ah_engine ah_engine;
+typedef struct ah_work_config ah_work_config;
 typedef enum {
     AH_OK = 0,
     AH_INVALID,
@@ -41,7 +42,8 @@ typedef enum {
     AH_STOPPED,
     AH_FAILED,
     AH_OUTCOME_UNKNOWN,
-    AH_WAITING_AGENTS
+    AH_WAITING_AGENTS,
+    AH_WAITING_WORK
 } ah_state;
 
 typedef struct {
@@ -90,6 +92,11 @@ typedef struct {
     /* Owner-authorized coordinated writes must supply an observed revision or
      * explicit absent expectation; immutable through background dispatch. */
     bool require_revision;
+    /* Durable tools only: borrowed state and wake reason for this invocation.
+     * generation fences late completions; operation_id remains stable. */
+    const char *checkpoint_json;
+    const char *wake_json;
+    uint64_t generation;
 } ah_tool_call;
 typedef enum { AH_TOOL_RESULT_JSON = 0, AH_TOOL_RESULT_CONTENT = 1 } ah_tool_result_format;
 typedef struct {
@@ -100,6 +107,9 @@ typedef struct {
      * input_text/input_image/input_file array (see ah/content.h). Never inferred.
      * Inline media is materialized by the owner with the durable receipt. */
     ah_tool_result_format format;
+    /* Optional malloc-owned continuation (ah/work.h). Mutually exclusive with
+     * json. The owner atomically saves checkpoint, nested calls and wait. */
+    char *continuation_json;
 } ah_tool_result;
 typedef ah_code (*ah_execute_fn)(void *context, const ah_tool_call *call, ah_tool_result *result,
                                  ah_error *error);
@@ -110,8 +120,9 @@ typedef struct {
     ah_effect effect;
     bool requires_approval;
     ah_execute_fn execute;
-    void *context;      /* Host-owned, must outlive engine. */
-    bool parallel_safe; /* Opt-in: READ callback/context may run concurrently. */
+    void *context;              /* Host-owned, must outlive engine. */
+    bool parallel_safe;         /* Opt-in: READ callback/context may run concurrently. */
+    const ah_work_config *work; /* Optional durable contract; copied on registration. */
 } ah_tool;
 
 typedef struct {

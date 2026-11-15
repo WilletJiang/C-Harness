@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 #include "ah/task.h"
 
 ah_code core_task_recover(ah_engine *e, ah_error *error) {
@@ -113,6 +114,11 @@ ah_code ah_task_create(ah_engine *e, const char *sid, const ah_task_config *conf
     ah_code code = core_guard(e, error);
     if (code != AH_OK)
         return code;
+    bool host = false;
+    code = core_work_host_session(e, sid, &host, error);
+    if (code != AH_OK || host)
+        return code != AH_OK ? code
+                             : ah_fail(error, AH_INVALID, "host work cannot attach a model task");
     if (!sid || !config || !config->contract_json ||
         strlen(config->contract_json) > e->config.max_context_bytes || !config->verifier_revision ||
         strlen(config->verifier_revision) != 64 || !config->max_model_calls ||

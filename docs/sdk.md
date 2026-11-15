@@ -5,6 +5,10 @@ engine, built-in Responses transport and optional local tools, including
 `view_image`. Existing session, agent, task and event APIs operate on the same
 engine. There is no TUI dependency, extra session store or separate scheduler.
 
+For resumable tools, durable signals, keyed child calls, and host work that never
+invokes a model, see [durable execution](durable.md) and the offline
+[C example](../examples/durable.c).
+
 ## Build and link
 
 For an existing CMake project, add this repository as a subdirectory and link

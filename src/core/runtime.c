@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 #include "../agents/agents_internal.h"
 
 typedef struct {
@@ -10,8 +11,35 @@ static void on_delta(void *context, const char *text, size_t length) {
     core_emit_delta(sink->engine, sink->session, text, length);
 }
 ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
-    if (e && e->agents_enabled)
+    ah_code code = core_guard(e, err);
+    bool host = false;
+    if (code == AH_OK)
+        code = core_work_host_session(e, sid, &host, err);
+    if (code != AH_OK)
+        return code;
+    if (!host && e->agents_enabled)
         return agents_run(e, sid, err);
+    return core_run(e, sid, host, err);
+}
+ah_code ah_work_run(ah_engine *e, const char *sid, ah_error *err) {
+    ah_code code = core_guard(e, err);
+    bool host = false;
+    if (code == AH_OK)
+        code = core_work_host_session(e, sid, &host, err);
+    if (code != AH_OK)
+        return code;
+    return host ? core_run(e, sid, true, err)
+                : ah_fail(err, AH_INVALID, "session is not host work");
+}
+ah_code ah_work_next_wake(ah_engine *e, const char *sid, uint64_t *at, ah_error *err) {
+    ah_code code = core_guard(e, err);
+    if (code != AH_OK)
+        return code;
+    if (!sid || !at)
+        return ah_fail(err, AH_INVALID, "session and time output required");
+    return core_work_next_wake(e, sid, at, err);
+}
+ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -24,14 +52,14 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
         core_session_free(&session);
         return AH_OK;
     }
-    if (session.state != AH_READY) {
+    if (session.state != AH_READY && session.state != AH_WAITING_WORK) {
         ah_state state = session.state;
         core_session_free(&session);
         return ah_fail(err, state == AH_OUTCOME_UNKNOWN ? AH_UNCERTAIN : AH_INVALID,
                        "session must be ready; submit or resume explicitly");
     }
     e->running = true;
-    core_mailbox_active(e, sid);
+    core_mailbox_active(e, host ? NULL : sid);
     uint64_t now = ah_now_ms();
     e->deadline = now + e->config.run_timeout_ms;
     if (e->deadline < now)
@@ -39,7 +67,8 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
     rc = core_task_allow(e, sid, true, 0, NULL, err);
     if (rc == AH_OK)
         rc = core_task_deadline(e, sid, &e->deadline, err);
-    while (rc == AH_OK && (session.state == AH_READY || session.state == AH_RUNNING)) {
+    while (rc == AH_OK && (session.state == AH_READY || session.state == AH_RUNNING ||
+                           session.state == AH_WAITING_WORK)) {
         bool needs_model = false;
         rc = core_session_step(e, &session, &needs_model, err);
         if (rc != AH_OK)
@@ -47,7 +76,14 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
         if (!needs_model) {
             if (core_jobs_running(e, sid))
                 core_jobs_wait(e, 20);
+            else if (session.state == AH_WAITING_WORK)
+                break;
             continue;
+        }
+        if (host) {
+            rc = core_run_transition(e, sid, AH_COMPLETED, "work.completed", "{}", err);
+            session.state = AH_COMPLETED;
+            break;
         }
         char *request = NULL;
         rc = core_model_prepare(e, &session, &request, err);

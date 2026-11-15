@@ -178,7 +178,8 @@ static void open_fixture(fixture *f, size_t budget) {
     config.max_model_tool_bytes = budget;
     ah_error error = {0};
     ok(ah_open(&config, &f->engine, &error), &error);
-    ah_tool tool = {"produce", "Produce result", schema, AH_EFFECT_READ, false, execute, f, false};
+    ah_tool tool = {"produce", "Produce result", schema, AH_EFFECT_READ, false, execute, f, false,
+                    NULL};
     ok(ah_register_tool(f->engine, &tool, &error), &error);
 }
 

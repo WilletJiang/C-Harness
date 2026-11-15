@@ -302,8 +302,8 @@ static void check_authority(void) {
                                  .requires_approval = true};
         if (partial) {
             ah_tool conflict = {
-                "read_file", "fixture", "{\"type\":\"object\"}", AH_EFFECT_READ, false, verify,
-                &f,          false};
+                "read_file", "fixture", "{\"type\":\"object\"}", AH_EFFECT_READ, false, verify, &f,
+                false,       NULL};
             assert(ah_register_tool(e, &conflict, &error) == AH_OK);
             assert(ah_local_tools_register(tools, e, &error) == AH_INVALID);
             assert(ah_local_tools_add_check(tools, &check, &error) == AH_INVALID);

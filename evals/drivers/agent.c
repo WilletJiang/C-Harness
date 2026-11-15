@@ -265,7 +265,8 @@ int main(int argc, char **argv) {
                        false,
                        sandbox_exec,
                        &eval,
-                       false};
+                       false,
+                       NULL};
     if (code == AH_OK)
         code = agents ? ah_register_background_tool(engine, &process, &error)
                       : ah_register_tool(engine, &process, &error);

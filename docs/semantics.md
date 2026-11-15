@@ -200,6 +200,14 @@ captures awaiting ordered publication. Existing JSON receipts keep format zero a
 their original history. Rebuild embedding clients for the extended 0.8
 `ah_tool_result` struct. No stored credentials or extension enable flags change.
 
+Schema version 8 adds resumable operation metadata, bounded signal inboxes,
+keyed child calls and host-only session markers. Existing operation status and
+result remain authoritative. Ordinary interrupted tools retain their prior
+recovery policy; replay requires a snapshotted durable contract and a compatible
+registered definition. Rebuild native clients for the extended 0.10 tool, call
+and result structures. Older runtimes reject this schema. See [durable work](durable.md)
+for signal lifetime, checkpoint migration, child ownership and read-only observers.
+
 ## Schema subset
 
 Tool schemas support single-string `type` (object/array/string/integer/number/

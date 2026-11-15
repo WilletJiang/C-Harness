@@ -306,7 +306,7 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
         }
         sqlite3_int64 before = sqlite3_total_changes64(e->db);
         unsigned active_before = scheduler.active;
-        bool waiting = false;
+        bool waiting = false, durable_waiting = false;
         for (size_t i = 0; i < scheduler.count && code == AH_OK; ++i) {
             e->deadline = scheduler.deadline;
             if (core_cancelled(e)) {
@@ -332,13 +332,14 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
                 }
             }
             waiting |= job->session.state == AH_WAITING_AGENTS;
+            durable_waiting |= job->session.state == AH_WAITING_WORK;
         }
         if (code != AH_OK)
             break;
         bool changed =
             before != sqlite3_total_changes64(e->db) || active_before != scheduler.active;
         bool tools_active = core_jobs_running(e, NULL);
-        if (!scheduler.active && !tools_active && !changed && !waiting)
+        if (!scheduler.active && !tools_active && !changed && (!waiting || durable_waiting))
             break;
         e->deadline = scheduler.deadline;
         unsigned delay = changed ? 0 : 20;

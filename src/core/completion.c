@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 
 static ah_code complete(ah_engine *e, core_session *session, core_operation *op,
                         ah_tool_result *result, ah_code executed, const ah_error *execution,
@@ -9,6 +10,35 @@ static ah_code complete(ah_engine *e, core_session *session, core_operation *op,
     uint64_t after = 0;
     ah_code code = owned ? core_begin(e, &after, error) : AH_OK;
     ah_error normalization = {0};
+    if (code == AH_OK && stopped == AH_OK && result->continuation_json && !result->json &&
+        executed == AH_OK && !result->is_error && !result->outcome_unknown) {
+        code = core_sql(e, "SAVEPOINT continuation", error);
+        if (code == AH_OK)
+            code = core_work_apply(e, session->id, op->id, op->generation,
+                                   result->continuation_json, &normalization);
+        if (code == AH_OK)
+            code = core_sql(e, "RELEASE continuation", error);
+        if (code == AH_OK) {
+            if (owned)
+                code = core_commit(e, after, error);
+            if (code == AH_OK && stopped != AH_OK)
+                code = ah_fail(error, stopped, "durable checkpoint saved after interruption");
+            return code;
+        }
+        ah_code rollback = core_sql(e, "ROLLBACK TO continuation; RELEASE continuation", error);
+        if (rollback != AH_OK || (code != AH_INVALID && code != AH_LIMIT && code != AH_NOT_FOUND)) {
+            if (owned)
+                core_rollback(e);
+            session->state = AH_OUTCOME_UNKNOWN;
+            return rollback == AH_OK ? code : rollback;
+        }
+        execution = &normalization;
+        code = AH_OK;
+    }
+    if (result->continuation_json)
+        valid = false;
+    if (op->hidden)
+        publish = true;
     if (code == AH_OK && valid && !result->outcome_unknown &&
         (op->effect == AH_EFFECT_READ || executed == AH_OK)) {
         bool savepoint = !owned && result->format == AH_TOOL_RESULT_CONTENT;
@@ -33,6 +63,17 @@ static ah_code complete(ah_engine *e, core_session *session, core_operation *op,
     }
     bool unknown =
         result->outcome_unknown || (op->effect != AH_EFFECT_READ && (executed != AH_OK || !valid));
+    if (code == AH_OK && !unknown && op->durable && publish) {
+        ah_code children = core_work_finish_children(e, session->id, op->id, error);
+        if (children == AH_BUSY || children == AH_UNCERTAIN) {
+            publish = false;
+            if (children == AH_UNCERTAIN) {
+                code = core_state(e, session->id, AH_OUTCOME_UNKNOWN, error);
+                session->state = AH_OUTCOME_UNKNOWN;
+            }
+        } else if (children != AH_OK)
+            code = children;
+    }
     if (code == AH_OK && !valid && !unknown) {
         free(result->json);
         result->json = core_object_string(

@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 #include "../agents/agents_internal.h"
 
 static bool optional_string(yyjson_val *object, const char *key, bool nullable) {
@@ -181,6 +182,10 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
             }
             if (rc == AH_INVALID)
                 rc = ah_fail(err, AH_PROTOCOL, "duplicate call_id across session");
+            if (rc == AH_OK && tool && tool->work) {
+                core_operation operation = {.id = id};
+                rc = core_work_seed(e, session->id, &operation, tool, err);
+            }
             if (rc == AH_OK) {
                 char *intent = ah_json_write(item);
                 if (!intent)

@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 
 /* Both run loops advance the same durable session. The caller only decides
  * whether a model request runs synchronously or occupies an async slot. */
@@ -10,7 +11,8 @@ ah_code core_session_step(ah_engine *e, core_session *session, bool *needs_model
             return code;
         session->state = AH_RUNNING;
     }
-    if (session->state != AH_RUNNING && session->state != AH_WAITING_AGENTS) {
+    if (session->state != AH_RUNNING && session->state != AH_WAITING_AGENTS &&
+        session->state != AH_WAITING_WORK) {
         if (core_jobs_running(e, session->id)) {
             core_jobs_cancel(e, session->id);
             return core_jobs_finish(e, session, error);
@@ -25,11 +27,21 @@ ah_code core_session_step(ah_engine *e, core_session *session, bool *needs_model
     bool pending = false;
     ah_code code = core_tools_step(e, session, &pending, error);
     if (code != AH_OK || pending ||
-        (session->state != AH_RUNNING && session->state != AH_WAITING_AGENTS))
+        (session->state != AH_RUNNING && session->state != AH_WAITING_AGENTS &&
+         session->state != AH_WAITING_WORK))
         return code;
     if (session->state == AH_WAITING_AGENTS)
         return ah_fail(error, AH_PROTOCOL, "agent wait has no pending operation");
-    code = core_drain_steering(e, session, false, error);
+    if (session->state == AH_WAITING_WORK) {
+        code = core_run_transition(e, session->id, AH_RUNNING, "work.resumed", "{}", error);
+        if (code != AH_OK)
+            return code;
+        session->state = AH_RUNNING;
+    }
+    bool host = false;
+    code = core_work_host_session(e, session->id, &host, error);
+    if (code == AH_OK && !host)
+        code = core_drain_steering(e, session, false, error);
     if (code == AH_OK)
         *needs_model = true;
     return code;

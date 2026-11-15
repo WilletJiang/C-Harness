@@ -1,8 +1,9 @@
 #include "core.h"
+#include "work.h"
 
 #define MAX_TOOL_WORKERS 16
 
-static bool independent_read(ah_engine *e, const core_operation *op) {
+bool core_independent_read(ah_engine *e, const core_operation *op) {
     core_tool *tool = core_find_tool(e, op->name);
     if (op->effect != AH_EFFECT_READ || op->approval || !tool ||
         (!tool->background && !tool->tool.parallel_safe) || tool->tool.effect != op->effect ||
@@ -15,16 +16,24 @@ static bool independent_read(ah_engine *e, const core_operation *op) {
 
 /* Only consecutive independent reads may pass an unfinished earlier read.
  * Everything else, including approval and agent tools, closes the window. */
-static ah_code collect_reads(ah_engine *e, const char *sid, core_operation *reads, unsigned limit,
-                             unsigned *count, ah_error *error) {
+static ah_code collect_reads(ah_engine *e, const char *sid, const char *first,
+                             core_operation *reads, unsigned limit, unsigned *count,
+                             ah_error *error) {
     sqlite3_stmt *stmt = NULL;
-    ah_code code = core_prepare(e,
-                                "SELECT id FROM operations WHERE session_id=? AND status!='done' "
-                                "ORDER BY seq",
-                                &stmt, error);
+    const char *sql =
+        e->has_work
+            ? "SELECT id FROM operations WHERE session_id=?1 AND status!='done' AND "
+              "COALESCE((SELECT parent_id FROM work_calls WHERE operation_id=id),'')="
+              "COALESCE((SELECT parent_id FROM work_calls WHERE operation_id=?2),'') "
+              "AND seq>=(SELECT seq FROM operations WHERE id=?2) "
+              "ORDER BY seq"
+            : "SELECT id FROM operations WHERE session_id=? AND status!='done' ORDER BY seq";
+    ah_code code = core_prepare(e, sql, &stmt, error);
     if (code != AH_OK)
         return code;
     sqlite3_bind_text(stmt, 1, sid, -1, SQLITE_TRANSIENT);
+    if (e->has_work)
+        sqlite3_bind_text(stmt, 2, first, -1, SQLITE_TRANSIENT);
     while (*count < limit) {
         int step = sqlite3_step(stmt);
         if (step == SQLITE_DONE)
@@ -38,11 +47,25 @@ static ah_code collect_reads(ah_engine *e, const char *sid, core_operation *read
                                   error);
         if (code != AH_OK)
             break;
-        bool eligible = independent_read(e, &operation);
-        bool pending = !strcmp(operation.status, "pending");
+        bool eligible = core_independent_read(e, &operation);
+        bool pending =
+            !strcmp(operation.status, "pending") || !strcmp(operation.status, "work_ready");
+        bool parked = !strcmp(operation.status, "parked");
+        if (eligible && parked) {
+            code = core_work_ready(e, sid, operation.id, &pending, error);
+            bool children = false;
+            if (code == AH_OK && !pending)
+                code = core_work_has_children(e, operation.id, &children, error);
+            if (children)
+                eligible = false;
+            if (code != AH_OK) {
+                core_operation_free(&operation);
+                break;
+            }
+        }
         bool active = !strcmp(operation.status, "executing") ||
                       !strcmp(operation.status, "received") ||
-                      !strcmp(operation.status, "received_late");
+                      !strcmp(operation.status, "received_late") || parked;
         if (eligible && pending)
             reads[(*count)++] = operation;
         else {
@@ -58,6 +81,14 @@ static ah_code collect_reads(ah_engine *e, const char *sid, core_operation *read
 static ah_code launch_reads(ah_engine *e, core_session *session, core_operation *reads,
                             unsigned count, ah_error *error) {
     ah_code code = core_jobs_init(e, error);
+    for (unsigned i = 0; code == AH_OK && i < count; i++) {
+        core_tool *tool = core_find_tool(e, reads[i].name);
+        bool paused = false;
+        if (reads[i].durable || (tool && tool->work))
+            code = core_work_prepare(e, session, &reads[i], tool, &paused, error);
+        if (paused)
+            return code;
+    }
     if (code == AH_OK)
         code = core_tool_intents(e, session, reads, count, error);
     if (code != AH_OK)
@@ -123,8 +154,32 @@ ah_code core_tools_step(ah_engine *e, core_session *session, bool *pending, ah_e
             return code;
     }
     bool running = core_jobs_running(e, session->id);
-    if (independent_read(e, &first) &&
-        (!strcmp(first.status, "pending") || !strcmp(first.status, "executing"))) {
+    bool ready = true;
+    code = core_work_select(e, session->id, &first, &ready, error);
+    if (code != AH_OK) {
+        core_operation_free(&first);
+        return code;
+    }
+    if (!ready) {
+        core_operation_free(&first);
+        if (!running && session->state != AH_WAITING_WORK) {
+            code =
+                core_run_transition(e, session->id, AH_WAITING_WORK, "work.waiting", "{}", error);
+            if (code == AH_OK)
+                session->state = AH_WAITING_WORK;
+        }
+        return code;
+    }
+    if (first.hidden &&
+        (!strcmp(first.status, "received") || !strcmp(first.status, "received_late") ||
+         !strcmp(first.status, "resolved"))) {
+        code = core_execute_operation(e, session, &first, error);
+        core_operation_free(&first);
+        return code;
+    }
+    if (core_independent_read(e, &first) &&
+        (!strcmp(first.status, "pending") || !strcmp(first.status, "executing") ||
+         !strcmp(first.status, "parked") || !strcmp(first.status, "work_ready"))) {
         unsigned limit = core_jobs_capacity(e);
         unsigned remaining = session->tool_calls < e->config.max_tool_calls
                                  ? e->config.max_tool_calls - session->tool_calls
@@ -139,24 +194,39 @@ ah_code core_tools_step(ah_engine *e, core_session *session, bool *pending, ah_e
         core_operation reads[MAX_TOOL_WORKERS] = {0};
         unsigned count = 0;
         if (code == AH_OK && limit)
-            code = collect_reads(e, session->id, reads, limit, &count, error);
+            code = collect_reads(e, session->id, first.id, reads, limit, &count, error);
         bool workers = count && (count > 1 || running || core_jobs_running(e, NULL) ||
                                  core_find_tool(e, reads[0].name)->background);
         if (code == AH_OK && workers)
             code = launch_reads(e, session, reads, count, error);
-        else if (code == AH_OK && !running && !core_jobs_running(e, NULL))
+        else if (code == AH_OK && ready && !running && !core_jobs_running(e, NULL))
             code = core_execute_operation(e, session, &first, error);
         for (unsigned i = 0; i < count; i++)
             core_operation_free(&reads[i]);
-    } else if (!running)
+    } else if (ready && !running) {
         code = core_execute_operation(e, session, &first, error);
+    }
     core_operation_free(&first);
+    /* fail_fast admission can request cancellation while sibling callbacks
+     * are still returning. The rolled-back claim retries after their receipts
+     * are captured; it is not a failed parent invocation. */
+    if (code == AH_BUSY && core_jobs_running(e, session->id))
+        return AH_OK;
     if (code == AH_OK && !core_jobs_running(e, session->id)) {
         code = core_next_operation(e, session->id, &first, error);
         *pending = code != AH_NOT_FOUND;
-        if (code == AH_OK)
+        if (code == AH_OK) {
+            bool next_ready = true;
+            code = core_work_select(e, session->id, &first, &next_ready, error);
+            if (code == AH_OK && !next_ready) {
+                if (session->state != AH_WAITING_WORK)
+                    code = core_run_transition(e, session->id, AH_WAITING_WORK, "work.waiting",
+                                               "{}", error);
+                if (code == AH_OK)
+                    session->state = AH_WAITING_WORK;
+            }
             core_operation_free(&first);
-        else if (code == AH_NOT_FOUND)
+        } else if (code == AH_NOT_FOUND)
             code = AH_OK;
     }
     return code;
