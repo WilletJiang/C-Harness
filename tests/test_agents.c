@@ -372,6 +372,8 @@ static void cancellation_stops_later_dispatch(void) {
     af_close(&f);
 }
 
+void durable_agent_cases(void);
+
 int main(int argc, char **argv) {
     if (argc > 1)
         return agent_recovery_child(argc, argv);
@@ -385,6 +387,7 @@ int main(int argc, char **argv) {
     agent_boundary_cases();
     agent_yield_cases();
     agent_transaction_cases();
+    durable_agent_cases();
     agent_recovery_cases(argv[0]);
     puts("agent scheduling, isolation, messaging, and recovery tests passed");
     return 0;

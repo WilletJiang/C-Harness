@@ -1,0 +1,910 @@
+{
+  "manifest": {
+    "model": "gpt-6.1-sol",
+    "reasoning": "xhigh",
+    "duration_seconds": 1100,
+    "repetitions": 3,
+    "same_service_route": true,
+    "codex_wire_request": {
+      "model": "gpt-6.1-sol",
+      "reasoning": {
+        "effort": "xhigh",
+        "context": "all_turns"
+      },
+      "store": false,
+      "stream": true,
+      "image_parts": 3
+    },
+    "endpoint": "https://api.openai.com/v1/responses",
+    "prompt_sha256": "eff4b5be67669d9b961f721bdda20834f2b08d9b070742b4bca213ae28199040",
+    "input_sha256": {
+      "README.md": "f9af2e301856744dd995cd4b1d1d08f5cd5982685e96c5dad63979133c29513c",
+      "SCENARIO.md": "697612ad4d06816ed96135bb88a13491201c5e518d6c8306d9bb926000cb3de6",
+      "SPEC.md": "e63c2c104b8a4698b6c78e0a741d638b8d163248ab916ab96cff7e73d3911801",
+      "references/01-workflow.png": "bb92e60a9aa3ea8f14aa1976dd7baa6c5d306d2d135ca9d09b3486bbdd3ecb7a",
+      "references/02-parameters.png": "5d71e7b7772c5dff19489baf47b9897bf8982e57c0f703a80a9e42eb34bce2ac",
+      "references/03-timeline.png": "c1aa3d5243fdab291cd4b127f485095b58af3a0599f728e10e8c259cabf5d2f2",
+      "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+      "workboard/__init__.py": "ab33619be01fc2d319f90c906cbb6d8293799992e0786839506f825378d449ee",
+      "workboard/planning.py": "7851cfce9a428683ff874aed61c2ec4ebb192ac9b04e4daff7d9a3ed405f5296",
+      "workboard/query.py": "7b78c3d444cda9ada1f0a221c36e5466c03817c4407261b728fe879b7be6766d"
+    },
+    "image_files": [
+      "references/01-workflow.png",
+      "references/02-parameters.png",
+      "references/03-timeline.png"
+    ],
+    "images_supplied_as_native_input": true,
+    "runtime_commit": "8b0a43c0923646f7827aae7b53e6316515c51457",
+    "driver_sha256": "19a9402eeb05904d08059058d7da2f37442d8899f22d443e5901349846fc6161",
+    "features": {
+      "skills": false,
+      "mcp": false,
+      "plugins": false,
+      "agents": false,
+      "auto_context": false
+    },
+    "spec_sha256": "e63c2c104b8a4698b6c78e0a741d638b8d163248ab916ab96cff7e73d3911801",
+    "grader_sha256": "6fd136151ed53981907af43db56a16ed435304613483d0f3b0a2dd62cef3d55d",
+    "cutoff_disclosed_to_model": false,
+    "followup_prompts": 0,
+    "codex_version": "codex-cli 0.164.0",
+    "grader_files_sha256": {
+      "__init__.py": "346f5b99424a609d21b574a6d29d4e5351f26f144e7b028eb168bc29065a71dd",
+      "checks.py": "17ee4b85e52dd448841fcf26f579a33fc63b5cd1b59807de16399e11a02dccd5",
+      "quality.py": "463f7e82103507d5012b8191b9b3cb6529d75c1bd87599bb7b7dd612c338e18d",
+      "store_checks.py": "f3a9313425efb25feaf207705b8785b0ca1d519667ac5245680ce3e8ec83f213",
+      "task.py": "fb9c1dd26a2c60b2a30059b9394895ae110ab9e50dea808c537d4a06dad7d9b7",
+      "visual.py": "2cfc703b1dd36e829c3ce0a8ba62936bea3b34b579aba42ffb43c23cb202dc39",
+      "visual_checks.py": "c8f792a32e9c212337102737449b68e2b17f21325fd0597ba79411e6a2d48c73"
+    }
+  },
+  "postrun_image_wire_audit": {
+    "model": "gpt-6.1-sol",
+    "reasoning": {
+      "effort": "xhigh",
+      "context": "all_turns"
+    },
+    "store": false,
+    "stream": true,
+    "image_parts": 3,
+    "image_details": [
+      "auto",
+      "auto",
+      "auto"
+    ]
+  },
+  "grader_correction": {
+    "reason": "CLI grader subprocess inherited criteria cwd instead of submitted package cwd; no assertions or submitted code changed.",
+    "original_sha256": {
+      "__init__.py": "346f5b99424a609d21b574a6d29d4e5351f26f144e7b028eb168bc29065a71dd",
+      "checks.py": "17ee4b85e52dd448841fcf26f579a33fc63b5cd1b59807de16399e11a02dccd5",
+      "quality.py": "463f7e82103507d5012b8191b9b3cb6529d75c1bd87599bb7b7dd612c338e18d",
+      "store_checks.py": "f3a9313425efb25feaf207705b8785b0ca1d519667ac5245680ce3e8ec83f213",
+      "task.py": "fb9c1dd26a2c60b2a30059b9394895ae110ab9e50dea808c537d4a06dad7d9b7",
+      "visual.py": "2cfc703b1dd36e829c3ce0a8ba62936bea3b34b579aba42ffb43c23cb202dc39",
+      "visual_checks.py": "c8f792a32e9c212337102737449b68e2b17f21325fd0597ba79411e6a2d48c73"
+    },
+    "corrected_sha256": {
+      "__init__.py": "346f5b99424a609d21b574a6d29d4e5351f26f144e7b028eb168bc29065a71dd",
+      "checks.py": "c471eb2d177aad939e006a0ddf80b400c7206b1d15e8638cb05d216420369226",
+      "quality.py": "463f7e82103507d5012b8191b9b3cb6529d75c1bd87599bb7b7dd612c338e18d",
+      "store_checks.py": "f3a9313425efb25feaf207705b8785b0ca1d519667ac5245680ce3e8ec83f213",
+      "task.py": "fb9c1dd26a2c60b2a30059b9394895ae110ab9e50dea808c537d4a06dad7d9b7",
+      "visual.py": "2cfc703b1dd36e829c3ce0a8ba62936bea3b34b579aba42ffb43c23cb202dc39",
+      "visual_checks.py": "c8f792a32e9c212337102737449b68e2b17f21325fd0597ba79411e6a2d48c73"
+    }
+  },
+  "rows": [
+    {
+      "run": "codex-1",
+      "runner": "codex",
+      "trial": 1,
+      "elapsed_seconds": 1100.038,
+      "state": "interrupted",
+      "censored": true,
+      "natural_completion": false,
+      "full_release_accepted": false,
+      "usage": {
+        "input_tokens": 445411,
+        "output_tokens": 43592,
+        "cached_input_tokens": 419456,
+        "reasoning_output_tokens": 7824,
+        "uncached_input_tokens": 25955,
+        "reported_total_tokens": 489003
+      },
+      "usage_complete": false,
+      "usage_fields_complete": {
+        "input_tokens": true,
+        "output_tokens": true,
+        "cached_input_tokens": true,
+        "reasoning_output_tokens": true
+      },
+      "confirmed_usage_reports": 12,
+      "exact_model_calls": null,
+      "tool_actions_observed": 17,
+      "tool_active_minutes": [
+        0,
+        2,
+        3,
+        7,
+        8,
+        9,
+        10,
+        13,
+        14,
+        16
+      ],
+      "last_tool_started_seconds": 1006.701,
+      "original_base_checks": {
+        "passed": 31,
+        "total": 33,
+        "failed_checks": [
+          {
+            "test": "test_cli_batch_rollback",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          },
+          {
+            "test": "test_cli_roundtrip_errors",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          }
+        ]
+      },
+      "corrected_base_checks": {
+        "passed": 33,
+        "total": 33,
+        "failed_checks": []
+      },
+      "additional_audit": {
+        "posthoc": true,
+        "passed": 17,
+        "total": 17,
+        "unscored_ambiguity": [
+          {
+            "test": "observe_idempotency_changed_dependencies_conflict",
+            "passed": true
+          }
+        ],
+        "ambiguity_note": "Conflict versus NotFound precedence was not specified",
+        "failed_checks": []
+      },
+      "image_and_integration": {
+        "passed": 26,
+        "total": 26,
+        "execution_diagnostics": {
+          "export_verified": true
+        },
+        "variant_diagnostics": {
+          "export_verified": true
+        },
+        "failed_checks": []
+      },
+      "generated_tests": {
+        "pass": false,
+        "test_count": 50,
+        "exit_code": 1,
+        "stderr": "........................................E.........\n======================================================================\nERROR: test_heartbeat_extends_never_shortens_persists_and_copies_result (test_store.StoreTests.test_heartbeat_extends_never_shortens_persists_and_copies_result)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private<workspace>/tests/test_store.py\", line 203, in test_heartbeat_extends_never_shortens_persists_and_copies_result\n    token = self.store.claim('w', -2, 10)['lease_token']\n            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^\nTypeError: 'NoneType' object is not subscriptable\n\n----------------------------------------------------------------------\nRan 50 tests in 0.804s\n\nFAILED (errors=1)\n"
+      },
+      "readme_written": false,
+      "readme_bytes": 63,
+      "protected_inputs_unchanged": true,
+      "images_unchanged": true,
+      "saved_source_sha256": {
+        "demo.py": "0e3b814be3cc41e83430ca88e013826360113f852cf2568f1d76e2de1151bbca",
+        "tests/test_analytics.py": "ca74d5dd699e58290d98c87cec94bbd8b19a9a33f0c23b4b4caa2cf48fa320ed",
+        "tests/test_cli.py": "c049eeb2b2d554ca532aeabeb8160d39df07dba80cec9fb7a0c7879b8288b7f3",
+        "tests/test_scenario.py": "22b2a878fbfe91ca10ce321958e2bf410fa1931268fdb1745e9900280fe9cf73",
+        "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+        "tests/test_store.py": "2fffa3094a929f85fd01196a6cbf331227a185f19102cfd7a4a4d691fdf69ba3",
+        "workboard/__init__.py": "30d1d01af2c0261d64125939ada7be95eb9ab3b2aa2efc4eb0c0562d35f85cd4",
+        "workboard/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+        "workboard/cli.py": "9076e19e4c2a363d29efa775550cabb10a90450f1bd58b1b6015a838eb2cdaea",
+        "workboard/errors.py": "2bbb4ccd17356668359dbcb36e902b10c4d79c2a0165d831d7b0e595407039c8",
+        "workboard/planning.py": "c6373e2ad32c8046da4e204048f43c11f09d2a4a81dd37cc9ef944aa1385ae9e",
+        "workboard/query.py": "5eed4fd00ac6a5b49740997245b54d6e30fcd45c0f77b1a35be2d7b5bef4f3a0",
+        "workboard/store.py": "4e6648f520bb3c0ad25fc400986d73de5a2d2887781bc6cc99b237921701f117",
+        "workboard/validation.py": "bdd4f8602449fe06825c297ae2bcf74d980593a4ea57e75fc31bbed1efc9dc0a",
+        "scenario.json": "b1e20db15b8947287093f0617f8d9acac94c99120daf911b3a8ad49444da7ab0",
+        "README.md": "f9af2e301856744dd995cd4b1d1d08f5cd5982685e96c5dad63979133c29513c"
+      },
+      "served_models": [],
+      "served_reasoning_efforts": [],
+      "reported_model": "gpt-6.1-sol"
+    },
+    {
+      "run": "codex-2",
+      "runner": "codex",
+      "trial": 2,
+      "elapsed_seconds": 1100.024,
+      "state": "interrupted",
+      "censored": true,
+      "natural_completion": false,
+      "full_release_accepted": false,
+      "usage": {
+        "input_tokens": 812266,
+        "output_tokens": 41946,
+        "cached_input_tokens": 763392,
+        "reasoning_output_tokens": 10700,
+        "uncached_input_tokens": 48874,
+        "reported_total_tokens": 854212
+      },
+      "usage_complete": false,
+      "usage_fields_complete": {
+        "input_tokens": true,
+        "output_tokens": true,
+        "cached_input_tokens": true,
+        "reasoning_output_tokens": true
+      },
+      "confirmed_usage_reports": 17,
+      "exact_model_calls": null,
+      "tool_actions_observed": 18,
+      "tool_active_minutes": [
+        0,
+        1,
+        3,
+        4,
+        5,
+        7,
+        9,
+        10,
+        11,
+        13,
+        15,
+        16,
+        18
+      ],
+      "last_tool_started_seconds": 1084.218,
+      "original_base_checks": {
+        "passed": 31,
+        "total": 33,
+        "failed_checks": [
+          {
+            "test": "test_cli_batch_rollback",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          },
+          {
+            "test": "test_cli_roundtrip_errors",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          }
+        ]
+      },
+      "corrected_base_checks": {
+        "passed": 33,
+        "total": 33,
+        "failed_checks": []
+      },
+      "additional_audit": {
+        "posthoc": true,
+        "passed": 17,
+        "total": 17,
+        "unscored_ambiguity": [
+          {
+            "test": "observe_idempotency_changed_dependencies_conflict",
+            "passed": true
+          }
+        ],
+        "ambiguity_note": "Conflict versus NotFound precedence was not specified",
+        "failed_checks": []
+      },
+      "image_and_integration": {
+        "passed": 26,
+        "total": 26,
+        "execution_diagnostics": {
+          "export_verified": true
+        },
+        "variant_diagnostics": {
+          "export_verified": true
+        },
+        "failed_checks": []
+      },
+      "generated_tests": {
+        "pass": true,
+        "test_count": 35,
+        "exit_code": 0,
+        "stderr": "...................................\n----------------------------------------------------------------------\nRan 35 tests in 0.771s\n\nOK\n"
+      },
+      "readme_written": true,
+      "readme_bytes": 11836,
+      "protected_inputs_unchanged": true,
+      "images_unchanged": true,
+      "saved_source_sha256": {
+        "demo.py": "a9d124d193d696dd81e045f7bba9903cf176adbe232ebe1bee38df2e9f28e206",
+        "tests/test_cli.py": "608cb8f3defa613c549fd966871087716ca9d59b4d87861c39adeca00f855cfe",
+        "tests/test_query.py": "9b3a9157e9584c4e1f2b9000c3b456ae0fc1870ff731b7564e4df5a79841a560",
+        "tests/test_scenario.py": "6705f0ef7aabbeea8acbdbc8acb7610d93f23f6bd07cb33b860d977a05463290",
+        "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+        "tests/test_store.py": "2a65720f5d5386a41e93437c42cf1dec175c318fb073d3dbf9ef470b4112c1eb",
+        "workboard/__init__.py": "a666e4d67b1ed6d89b606062b4131cf698587f33e1732526374c82acaf473490",
+        "workboard/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+        "workboard/cli.py": "b39cd2d40f4a432a4ff3cf4aea25f16e2191f625a362c4e6999f5bbc9e4514d6",
+        "workboard/errors.py": "d7e4275958b80c861a039a87b1df17fcdd43e19da0824c032a4aee2f684bb2e3",
+        "workboard/persistence.py": "76efb46670870b9e9e2fbc577e61e230b875ec48c8d3be38df53dba52df935d3",
+        "workboard/planning.py": "35a3258fb2a076a2faa3d6dba1e550f93559469f2e6fa220fb9ec3dd3e6a4164",
+        "workboard/query.py": "fd5e6fb38f1bcd0ca66ee3d8c11f17350ed2c5205248def1f0acd987372a5867",
+        "workboard/store.py": "a641825504f872e60a4105ba37c3ba6378760e2c48d062ce59b7e8e64ef07753",
+        "workboard/validation.py": "159d823fd7c1398affc7db8ef163534d44f6c0b5379e9d8bd1f23c56b742bab5",
+        "scenario.json": "16ddbba8889abc75f764974e6994639c5b9424da56b41556b1b40ea366af1973",
+        "README.md": "f26c1ed030b71cc394cc2cf7eac9702e4a97b6544442bce32f412f1092d107af"
+      },
+      "served_models": [],
+      "served_reasoning_efforts": [],
+      "reported_model": "gpt-6.1-sol"
+    },
+    {
+      "run": "codex-3",
+      "runner": "codex",
+      "trial": 3,
+      "elapsed_seconds": 1100.037,
+      "state": "interrupted",
+      "censored": true,
+      "natural_completion": false,
+      "full_release_accepted": false,
+      "usage": {
+        "input_tokens": 684321,
+        "output_tokens": 42896,
+        "cached_input_tokens": 645888,
+        "reasoning_output_tokens": 8219,
+        "uncached_input_tokens": 38433,
+        "reported_total_tokens": 727217
+      },
+      "usage_complete": false,
+      "usage_fields_complete": {
+        "input_tokens": true,
+        "output_tokens": true,
+        "cached_input_tokens": true,
+        "reasoning_output_tokens": true
+      },
+      "confirmed_usage_reports": 17,
+      "exact_model_calls": null,
+      "tool_actions_observed": 23,
+      "tool_active_minutes": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        6,
+        7,
+        10,
+        11,
+        13,
+        15,
+        16,
+        17
+      ],
+      "last_tool_started_seconds": 1053.116,
+      "original_base_checks": {
+        "passed": 31,
+        "total": 33,
+        "failed_checks": [
+          {
+            "test": "test_cli_batch_rollback",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          },
+          {
+            "test": "test_cli_roundtrip_errors",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          }
+        ]
+      },
+      "corrected_base_checks": {
+        "passed": 33,
+        "total": 33,
+        "failed_checks": []
+      },
+      "additional_audit": {
+        "posthoc": true,
+        "passed": 17,
+        "total": 17,
+        "unscored_ambiguity": [
+          {
+            "test": "observe_idempotency_changed_dependencies_conflict",
+            "passed": true
+          }
+        ],
+        "ambiguity_note": "Conflict versus NotFound precedence was not specified",
+        "failed_checks": []
+      },
+      "image_and_integration": {
+        "passed": 26,
+        "total": 26,
+        "execution_diagnostics": {
+          "export_verified": true
+        },
+        "variant_diagnostics": {
+          "export_verified": true
+        },
+        "failed_checks": []
+      },
+      "generated_tests": {
+        "pass": true,
+        "test_count": 45,
+        "exit_code": 0,
+        "stderr": ".............................................\n----------------------------------------------------------------------\nRan 45 tests in 0.817s\n\nOK\n"
+      },
+      "readme_written": true,
+      "readme_bytes": 13038,
+      "protected_inputs_unchanged": true,
+      "images_unchanged": true,
+      "saved_source_sha256": {
+        "demo.py": "212e8dacbb6eb17949c52e7576b57d6435cd3ff12679b479e11da42bf1227bc1",
+        "tests/__init__.py": "9d95a04376edf62ba87e4456c6f9f501c2134f306f1bf22493cc616ac2d343a2",
+        "tests/test_cli_scenario.py": "058f50b40fc139789bf4dded56f77e9db030ea643528073b4f033ddfdc9e89f2",
+        "tests/test_query_planning.py": "4fd510dbbd0da3db3f5264645d8904746198716b14424f727fc2d48828349bc5",
+        "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+        "tests/test_store.py": "8042e095ac62228a00578ebd391818d7a9ae1fef708444aecc56b45522dbe0d6",
+        "workboard/__init__.py": "15976189be4139d82bcd099f6dc7a52239f9f29487f43860a043ee2a0828639e",
+        "workboard/__main__.py": "317ad4fbda7fed2f3fc2275ff0796fa6f989bb06b1cdb18f561b9d990ad358e8",
+        "workboard/errors.py": "e1611702dc75829c896d388f1531ef75a502248c5b25bf9c682ea81e15460e09",
+        "workboard/persistence.py": "1aab99367a22ab2f9a08e271dc0f304399eed27a655a57fb03f219beb2a0c63a",
+        "workboard/planning.py": "f8566cb058d46e351e9d36b2ceb0813c54cd7514bd01b7e1a098c6eee67e1448",
+        "workboard/query.py": "f8f7afc2c09c6cd261aef489ac92609225763b920c92dcbd3677c0e627671563",
+        "workboard/store.py": "b78caee8b473b9406d08e5f5609df31b84309fa475f367098d2342362cd7d4f7",
+        "workboard/validation.py": "e8788c2156af3d292471537d3972f35630542d0a8658d8fd267c2670a40c8cd0",
+        "scenario.json": "16ddbba8889abc75f764974e6994639c5b9424da56b41556b1b40ea366af1973",
+        "README.md": "87e1cb04dc6c26a40dceed7acae8544ea00fdb21556d54c22d163ac5c468a70a"
+      },
+      "served_models": [],
+      "served_reasoning_efforts": [],
+      "reported_model": "gpt-6.1-sol"
+    },
+    {
+      "run": "harness-1",
+      "runner": "harness",
+      "trial": 1,
+      "elapsed_seconds": 1100.057,
+      "state": "stopped",
+      "censored": true,
+      "natural_completion": false,
+      "full_release_accepted": false,
+      "usage": {
+        "input_tokens": 508870,
+        "cached_input_tokens": 478464,
+        "output_tokens": 38360,
+        "reasoning_output_tokens": 7419,
+        "uncached_input_tokens": 30406,
+        "reported_total_tokens": 547230
+      },
+      "usage_complete": false,
+      "usage_fields_complete": {
+        "input_tokens": false,
+        "output_tokens": false,
+        "cached_input_tokens": false,
+        "reasoning_output_tokens": false
+      },
+      "confirmed_usage_reports": 16,
+      "exact_model_calls": 17,
+      "tool_actions_observed": 33,
+      "tool_active_minutes": [
+        0,
+        2,
+        3,
+        4,
+        5,
+        6,
+        8,
+        10,
+        12,
+        15,
+        16
+      ],
+      "last_tool_started_seconds": 1012.239,
+      "original_base_checks": {
+        "passed": 31,
+        "total": 33,
+        "failed_checks": [
+          {
+            "test": "test_cli_batch_rollback",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          },
+          {
+            "test": "test_cli_roundtrip_errors",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          }
+        ]
+      },
+      "corrected_base_checks": {
+        "passed": 33,
+        "total": 33,
+        "failed_checks": []
+      },
+      "additional_audit": {
+        "posthoc": true,
+        "passed": 17,
+        "total": 17,
+        "unscored_ambiguity": [
+          {
+            "test": "observe_idempotency_changed_dependencies_conflict",
+            "passed": true
+          }
+        ],
+        "ambiguity_note": "Conflict versus NotFound precedence was not specified",
+        "failed_checks": []
+      },
+      "image_and_integration": {
+        "passed": 26,
+        "total": 26,
+        "execution_diagnostics": {
+          "export_verified": true
+        },
+        "variant_diagnostics": {
+          "export_verified": true
+        },
+        "failed_checks": []
+      },
+      "generated_tests": {
+        "pass": true,
+        "test_count": 39,
+        "exit_code": 0,
+        "stderr": ".......................................\n----------------------------------------------------------------------\nRan 39 tests in 0.836s\n\nOK\n"
+      },
+      "readme_written": true,
+      "readme_bytes": 15856,
+      "protected_inputs_unchanged": true,
+      "images_unchanged": true,
+      "saved_source_sha256": {
+        "demo.py": "dc0dd7954a8138046ffbd5844b925b6de4bf903a6494d78a41580e2e093f407a",
+        "tests/test_cli.py": "752698f771e8a6e267d32fa39b79115deebf7ba8345d92602c28678f50e837d6",
+        "tests/test_query.py": "91bf9eb0cfd8bdb94aaaa0b48235f4a614d369ae0845a94233bc7dbaebd8837f",
+        "tests/test_scenario.py": "b02601a13e32490314cd80e99b51db48ba2dc68d0eda5b4fa2417dca3cec34f5",
+        "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+        "tests/test_store.py": "cc261341c9644707a83ea0acfc110db8a32663e5d3628919c81eface69c8bca5",
+        "workboard/__init__.py": "c73a4f6b3ed3d7756b11da9efb1ce416d05029df8d9f2accef0cc0371d95691f",
+        "workboard/__main__.py": "bd045ddd5242d002f692dac452be9afba38deef5cde541a5fc074bfef5987b91",
+        "workboard/cli.py": "979bd54e435dc35613d6d65db2c1a4bc5803bf8fc8ade33ded79b8b69ce915d6",
+        "workboard/errors.py": "04eafc57c58a5f871b75566669205ae2e65f92bbed260f3aa54a503cd3792851",
+        "workboard/persistence.py": "c236bbaccc0fc8b83cf931851f10317a79d63e5bed2c7c32c8c7bdd8abfdba7d",
+        "workboard/planning.py": "bdd14b53b49f0a01b6df3864d03b0093662438b06aec5586b9accc1107caa529",
+        "workboard/query.py": "25931a5934fae5be8ead2a7c7835b5ed0d233053fa2f8d2ed3e48c00a6ece3ba",
+        "workboard/store.py": "39b96620c9a4d158c5297bd356670b9fe6ef67f668f85d900736bd6f82153004",
+        "workboard/validation.py": "b0ba4ae0846428691a649d6d6ba7d3e4c84b8f1173029e6b2332cb697f539650",
+        "scenario.json": "16ddbba8889abc75f764974e6994639c5b9424da56b41556b1b40ea366af1973",
+        "README.md": "dcd8810f039c06b293548c30d28edd05dd937b365f6b8212cc0e4b32244ffe75"
+      },
+      "served_models": [
+        "gpt-6.1-sol"
+      ],
+      "served_reasoning_efforts": [
+        "xhigh"
+      ],
+      "reported_model": null
+    },
+    {
+      "run": "harness-2",
+      "runner": "harness",
+      "trial": 2,
+      "elapsed_seconds": 1100.046,
+      "state": "stopped",
+      "censored": true,
+      "natural_completion": false,
+      "full_release_accepted": false,
+      "usage": {
+        "input_tokens": 899385,
+        "cached_input_tokens": 858624,
+        "output_tokens": 37305,
+        "reasoning_output_tokens": 5882,
+        "uncached_input_tokens": 40761,
+        "reported_total_tokens": 936690
+      },
+      "usage_complete": false,
+      "usage_fields_complete": {
+        "input_tokens": false,
+        "output_tokens": false,
+        "cached_input_tokens": false,
+        "reasoning_output_tokens": false
+      },
+      "confirmed_usage_reports": 29,
+      "exact_model_calls": 30,
+      "tool_actions_observed": 38,
+      "tool_active_minutes": [
+        0,
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+        9,
+        10,
+        11,
+        12,
+        13,
+        16,
+        17
+      ],
+      "last_tool_started_seconds": 1046.427,
+      "original_base_checks": {
+        "passed": 31,
+        "total": 33,
+        "failed_checks": [
+          {
+            "test": "test_cli_batch_rollback",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          },
+          {
+            "test": "test_cli_roundtrip_errors",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          }
+        ]
+      },
+      "corrected_base_checks": {
+        "passed": 33,
+        "total": 33,
+        "failed_checks": []
+      },
+      "additional_audit": {
+        "posthoc": true,
+        "passed": 17,
+        "total": 17,
+        "unscored_ambiguity": [
+          {
+            "test": "observe_idempotency_changed_dependencies_conflict",
+            "passed": true
+          }
+        ],
+        "ambiguity_note": "Conflict versus NotFound precedence was not specified",
+        "failed_checks": []
+      },
+      "image_and_integration": {
+        "passed": 26,
+        "total": 26,
+        "execution_diagnostics": {
+          "export_verified": true
+        },
+        "variant_diagnostics": {
+          "export_verified": true
+        },
+        "failed_checks": []
+      },
+      "generated_tests": {
+        "pass": true,
+        "test_count": 38,
+        "exit_code": 0,
+        "stderr": "......................................\n----------------------------------------------------------------------\nRan 38 tests in 0.478s\n\nOK\n"
+      },
+      "readme_written": true,
+      "readme_bytes": 14647,
+      "protected_inputs_unchanged": true,
+      "images_unchanged": true,
+      "saved_source_sha256": {
+        "demo.py": "5183c729bacd479ced2bcde7d977884af4f1a5631def468ca0cb16ec89103f7f",
+        "tests/test_analytics.py": "4945db5ec243700204c645abc2683975833392028666aa3cf324760bd0c54ca9",
+        "tests/test_cli.py": "8bf84b284c8c5376d918af6cbf4e0b68f441a1f92968a607f438fc33e3bd9ba1",
+        "tests/test_scenario.py": "76534bda339c9e5dd27e6503a4c7688da6aae45f6606a0d8219c45106d70f048",
+        "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+        "tests/test_store.py": "6176877f3345e38d0d0945bbfeac853696cdfafd10a2949e10958e59b150f994",
+        "workboard/__init__.py": "b34581b752c889d84b7dde52f2fea871b36815bc7dc9988beb9f81c59a4e3a37",
+        "workboard/__main__.py": "bd045ddd5242d002f692dac452be9afba38deef5cde541a5fc074bfef5987b91",
+        "workboard/cli.py": "c5a91aa52e710c81d2125ae496fbab997214ca994e9c027490c0c4870eb31118",
+        "workboard/errors.py": "5fe7e1919b119af55cfc0c018c2d2465b798adeeefa486295ec97180af32f59b",
+        "workboard/persistence.py": "0195e0487437fabe48aa5475efeec9278bfdb30ec4a7bb1bacd76c02f74d7f5e",
+        "workboard/planning.py": "cdc350c022aea63951013e24462e77e6c6515f72c2f74d9ce4fd42982528cc76",
+        "workboard/query.py": "d98c75ef71398f04699f741dc9a3f020e8c3da197602a1e9db6a32eceb825829",
+        "workboard/store.py": "87948ce810a970a1cb8c8b982bf43746b4e36920a19c435138d67991e870953c",
+        "workboard/validation.py": "fb1d287e927ee0e58af1e2b03bb268ea036fa9c1de52cdf63897a2c811fe5fd9",
+        "scenario.json": "16ddbba8889abc75f764974e6994639c5b9424da56b41556b1b40ea366af1973",
+        "README.md": "93d341240a8529f96c6a1ac26032fe312a72e1857e6c59084bf0ae6868d8f7e2"
+      },
+      "served_models": [
+        "gpt-6.1-sol"
+      ],
+      "served_reasoning_efforts": [
+        "xhigh"
+      ],
+      "reported_model": null
+    },
+    {
+      "run": "harness-3",
+      "runner": "harness",
+      "trial": 3,
+      "elapsed_seconds": 1100.048,
+      "state": "stopped",
+      "censored": true,
+      "natural_completion": false,
+      "full_release_accepted": false,
+      "usage": {
+        "input_tokens": 969305,
+        "cached_input_tokens": 944640,
+        "output_tokens": 42633,
+        "reasoning_output_tokens": 8358,
+        "uncached_input_tokens": 24665,
+        "reported_total_tokens": 1011938
+      },
+      "usage_complete": false,
+      "usage_fields_complete": {
+        "input_tokens": false,
+        "output_tokens": false,
+        "cached_input_tokens": false,
+        "reasoning_output_tokens": false
+      },
+      "confirmed_usage_reports": 28,
+      "exact_model_calls": 29,
+      "tool_actions_observed": 36,
+      "tool_active_minutes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        12,
+        13,
+        14,
+        16,
+        18
+      ],
+      "last_tool_started_seconds": 1093.416,
+      "original_base_checks": {
+        "passed": 31,
+        "total": 33,
+        "failed_checks": [
+          {
+            "test": "test_cli_batch_rollback",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          },
+          {
+            "test": "test_cli_roundtrip_errors",
+            "passed": false,
+            "error": "1 != 0 : /Applications/Xcode.app/Contents/Developer/usr/bin/python3: No module named workboard\n"
+          }
+        ]
+      },
+      "corrected_base_checks": {
+        "passed": 33,
+        "total": 33,
+        "failed_checks": []
+      },
+      "additional_audit": {
+        "posthoc": true,
+        "passed": 17,
+        "total": 17,
+        "unscored_ambiguity": [
+          {
+            "test": "observe_idempotency_changed_dependencies_conflict",
+            "passed": true
+          }
+        ],
+        "ambiguity_note": "Conflict versus NotFound precedence was not specified",
+        "failed_checks": []
+      },
+      "image_and_integration": {
+        "passed": 26,
+        "total": 26,
+        "execution_diagnostics": {
+          "export_verified": true
+        },
+        "variant_diagnostics": {
+          "export_verified": true
+        },
+        "failed_checks": []
+      },
+      "generated_tests": {
+        "pass": true,
+        "test_count": 46,
+        "exit_code": 0,
+        "stderr": "..............................................\n----------------------------------------------------------------------\nRan 46 tests in 0.872s\n\nOK\n"
+      },
+      "readme_written": true,
+      "readme_bytes": 15602,
+      "protected_inputs_unchanged": true,
+      "images_unchanged": true,
+      "saved_source_sha256": {
+        "demo.py": "2c5407c26137c6d3ef84f240bdebd340bdbeab6e24b189241d86fae65945f04a",
+        "tests/test_cli.py": "0a3c7358508a15caea1a85c7aaaf0fe6e3353caf878d53b8fc8d17dec1d7d7b6",
+        "tests/test_query_planning.py": "274b0bf64741906c9de8889660bfb7d8a3c459724f42b5e47ef8b08c5823e4e2",
+        "tests/test_scenario.py": "10b2ddaf49466851a2c000007fd5c7cab5f75cd2dfaeb1077eb650f580f8716a",
+        "tests/test_smoke.py": "fb6867aa47ff9e5a21dbe28ce2b6f631ae3eeb2f9a7a34d6f32d4190e335648c",
+        "tests/test_store.py": "993840bac50f0dba4e310ba351e2c71f3cee79067f9a93d6edbfc443032e21e9",
+        "workboard/__init__.py": "915dc0647ed987d7275297a3be6f242153122945ef0e25bd2401dd21e963b8af",
+        "workboard/__main__.py": "bd045ddd5242d002f692dac452be9afba38deef5cde541a5fc074bfef5987b91",
+        "workboard/cli.py": "37a33402a5a120ed21c626eca18b53a75805661b504ed907dfe1e05b8a54ea97",
+        "workboard/errors.py": "556d2dab168dfe30bd0349dc4240ec9359b493fb61983671193f2d01bd7b3bb1",
+        "workboard/persistence.py": "87191fab0b88de5175fced415bd68cc3adaeb7a8ad0a69739b01367963bb936f",
+        "workboard/planning.py": "3c282775c6bb682ee24b571f89ddc5a453779d598c0545b3cc2c50587dc13562",
+        "workboard/query.py": "d95b268b4a2c98d87cdc002ed7ee905d0394c781949b054618bef4289c546103",
+        "workboard/store.py": "f99fb5940b15edac59859b9bc315eefe2d5a5f596952b47a86036dc0be4760c6",
+        "workboard/validation.py": "ddee67e1c42bf87d1ff2bb2d7a9cf3d2017ac0ed1ec5d0337fa44d5724910fac",
+        "scenario.json": "16ddbba8889abc75f764974e6994639c5b9424da56b41556b1b40ea366af1973",
+        "README.md": "5d52a662b6204b301d1063a1c29ed4d129427f37cfbe2f8a4ddbe5eb5ac73611"
+      },
+      "served_models": [
+        "gpt-6.1-sol"
+      ],
+      "served_reasoning_efforts": [
+        "xhigh"
+      ],
+      "reported_model": null
+    }
+  ],
+  "summary": {
+    "harness": {
+      "runs": 3,
+      "natural_completions": 0,
+      "all_76_independent_checks_passed": 3,
+      "authored_tests_passed": 3,
+      "readmes_completed": 3,
+      "reported_token_totals": {
+        "input_tokens": 2377560,
+        "output_tokens": 118298,
+        "cached_input_tokens": 2281728,
+        "reasoning_output_tokens": 21659,
+        "uncached_input_tokens": 95832,
+        "reported_total_tokens": 2495858
+      },
+      "observed_cache_hit_rate": 0.959693130772725
+    },
+    "codex": {
+      "runs": 3,
+      "natural_completions": 0,
+      "all_76_independent_checks_passed": 3,
+      "authored_tests_passed": 2,
+      "readmes_completed": 2,
+      "reported_token_totals": {
+        "input_tokens": 1941998,
+        "output_tokens": 128434,
+        "cached_input_tokens": 1828736,
+        "reasoning_output_tokens": 26743,
+        "uncached_input_tokens": 113262,
+        "reported_total_tokens": 2070432
+      },
+      "observed_cache_hit_rate": 0.9416775918409803
+    }
+  },
+  "interpretation": {
+    "time": "All six externally censored at 1100 seconds; natural completion times and speed superiority are unknown.",
+    "usage": "Reported lower bounds only. Interrupted in-flight requests may not report usage; cached input and reasoning output are subsets, not added twice.",
+    "quality": "All submitted implementations pass 76 independent checks after correcting only grader subprocess cwd. Codex-1 authored a broken negative-time test and retained the README stub.",
+    "scope": "One image-augmented Workboard task, three repetitions per runner; not broad superiority or a C-language performance claim."
+  },
+  "preflights_excluded_from_task_totals": [
+    {
+      "runner": "harness",
+      "seconds": 6.507,
+      "state": "completed",
+      "usage": {
+        "input_tokens": 2221,
+        "cached_input_tokens": 0,
+        "output_tokens": 24,
+        "reasoning_output_tokens": 0
+      },
+      "usage_complete": true,
+      "served_models": [
+        "gpt-6.1-sol"
+      ],
+      "served_reasoning_efforts": [
+        "xhigh"
+      ],
+      "reported_model": null
+    },
+    {
+      "runner": "codex",
+      "seconds": 9.082,
+      "state": "completed",
+      "usage": {
+        "input_tokens": 20989,
+        "output_tokens": 87,
+        "cached_input_tokens": 18944,
+        "reasoning_output_tokens": 8
+      },
+      "usage_complete": true,
+      "served_models": [],
+      "served_reasoning_efforts": [],
+      "reported_model": "gpt-6.1-sol"
+    }
+  ]
+}

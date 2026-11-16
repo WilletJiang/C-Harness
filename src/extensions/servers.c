@@ -300,8 +300,5 @@ ah_code ext_mcp_call(void *context, const ah_tool_call *call, ah_tool_result *re
         result->outcome_unknown = sent;
         return ext_error(result, rc, error);
     }
-    yyjson_doc *response = yyjson_read(result->json, strlen(result->json), 0);
-    result->is_error = yyjson_is_true(yyjson_obj_get(yyjson_doc_get_root(response), "isError"));
-    yyjson_doc_free(response);
-    return AH_OK;
+    return ext_mcp_result(result, call->output_limit, error);
 }

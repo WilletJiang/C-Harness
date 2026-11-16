@@ -101,8 +101,9 @@ the earlier `harness_ask` and `harness_wait` names remain supported.
 | --- | --- | --- |
 | `ask` | `question`, optional `options` | Wait for a host `reply` with the user's answer |
 | `wait` | `reason` | Wait for an explicit host `reply` |
-| `read_result` | `operation_id`, optional `offset`, `limit` | Read a UTF-8 page of a captured JSON tool result available to this session |
+| `read_result` | `operation_id`, optional `offset`, `limit` | Retrieve native media when pagination is omitted, or a UTF-8 JSON text page |
 | `read_file` | `path`, optional `offset_line` or `offset_bytes`, `max_lines`, `force` | Read a UTF-8 file page; report its revision; reuse identical active content unless forced |
+| `view_image` | `path`, optional `detail` | View a workspace PNG/JPEG/GIF/WebP as native media; defaults to `auto` |
 | `write_file` | `path`, `content`; optional `base_revision` or `expect_absent` | Replace a workspace file atomically; an expectation is required for coordinated writes |
 | `apply_changes` | `files` containing `path`, `edits`, `base_revision` (required when coordinated); optional `checks` | Unified exact edits, one or multiple hunks/files; optional named checks after successful application |
 | `find` (workflow profile) | `path`, `query`, optional `glob`, `context_lines`, `max_results`, `offset`, `snapshot` | Native literal search with merged source context, revisions and bounded pagination |
@@ -123,7 +124,9 @@ bounded preview and operation reference; `read_result` can page the original
 captured JSON without rerunning the tool. Forks inherit access to these references.
 Original receipts remain durable even after context compaction. A tool's own
 capture limit may already have discarded output before the receipt was stored.
-`read_result` defaults to byte offset 0 and a 4096-byte limit, accepts limits up to
+For saved native content, omitting both pagination fields returns native parts.
+For ordinary JSON, `read_result` defaults to byte offset 0 and a 4096-byte limit.
+Explicit pagination returns UTF-8 JSON text for either format and accepts limits up to
 65536, and may return less to fit the result envelope. Offsets must fall on UTF-8
 boundaries. Its `content` is a slice of the stored JSON text; use `next_offset`
 while `truncated` is true. A page need not be a complete JSON value on its own.
@@ -136,3 +139,5 @@ and tool contexts must outlive their engine; close the engine before those hosts
 
 Delegation adds the `spawn`, `send`, `join`, `stop` and `agents` model tools.
 See [subagent semantics and arguments](subagents.md).
+
+For native host setup and ownership, see the [SDK guide](sdk.md).

@@ -173,7 +173,7 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "checks after all edits succeed. On partial/unknown results inspect receipts; never "
          "replay "
          "the whole group. Use one file and one edit for a single replacement.",
-         ah_apply_schema, AH_EFFECT_EXTERNAL, approval, ah_local_apply, tools, false},
+         ah_apply_schema, AH_EFFECT_EXTERNAL, approval, ah_local_apply, tools, false, NULL},
         {"find",
          "Search a single-line literal in workspace UTF-8 files and return merged source "
          "excerpts with SHA-256 revisions. Use path '.' for root; optional glob matches relative "
@@ -181,7 +181,7 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "Skips symlinks, .git, non-text and files over 1 MiB. Bounded scan: narrow path/glob when "
          "scan_truncated. Paginate with next_offset and snapshot; use read_file for truncated "
          "excerpts.",
-         ah_find_schema, AH_EFFECT_READ, false, ah_local_find, tools, true},
+         ah_find_schema, AH_EFFECT_READ, false, ah_local_find, tools, true, NULL},
         {"read_file",
          "Read UTF-8 file lines (default 200, max 1000) from offset_line (default 1). "
          "Use next_offset_bytes as offset_bytes for exact continuation, including partial lines. "
@@ -189,16 +189,21 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "revision "
          "for files up to 1 MiB. Identical content already visible in context may be referenced; "
          "set force=true to repeat the content. Group independent reads in one response.",
-         ah_read_schema, AH_EFFECT_READ, false, ah_local_read_file, tools, true},
+         ah_read_schema, AH_EFFECT_READ, false, ah_local_read_file, tools, true, NULL},
         {"write_file",
          "Atomically replace a workspace-relative regular file with UTF-8 content; refuses "
          "symlinks. Supply base_revision from read_file/find, or expect_absent=true to create "
          "a new file. An expectation is required for coordinated writes.",
-         ah_write_schema, AH_EFFECT_WRITE, tools->approve_writes, ah_local_write_file, tools,
-         false},
+         ah_write_schema, AH_EFFECT_WRITE, tools->approve_writes, ah_local_write_file, tools, false,
+         NULL},
+        {"view_image",
+         "View a workspace-relative PNG, JPEG, GIF or WebP image as native visual content. "
+         "Use this to inspect images, including crops produced by other tools. Default detail "
+         "is auto; original requires provider support. Refuses symlinks and oversized files.",
+         ah_image_schema, AH_EFFECT_READ, false, ah_local_view_image, tools, true, NULL},
         {"exec",
          "Execute argv in the workspace with broad local process authority. This is NOT a sandbox.",
-         ah_exec_schema, AH_EFFECT_EXTERNAL, true, ah_local_exec, tools, false}};
+         ah_exec_schema, AH_EFFECT_EXTERNAL, true, ah_local_exec, tools, false, NULL}};
     size_t count = sizeof(definitions) / sizeof(*definitions);
     for (size_t i = 0; i < count; ++i) {
         if ((!tools->enable_workflows && !strcmp(definitions[i].name, "find")) ||

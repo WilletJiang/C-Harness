@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 #include "../agents/agents_internal.h"
 #include "../extensions/extensions_internal.h"
 #include <ctype.h>
@@ -96,7 +97,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         else {
             version = sqlite3_column_int(s, 0);
             e->utf8_store = sqlite3_column_int(s, 1) != 0;
-            if (version > 6)
+            if (version > 8)
                 rc = ah_fail(err, AH_PROTOCOL, "database schema is newer than this runtime");
         }
     }
@@ -112,6 +113,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             "CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id "
             "TEXT NOT NULL REFERENCES sessions(id),operation_id TEXT,type TEXT NOT NULL,json TEXT "
             "NOT NULL);"
+            "CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);"
             "CREATE TABLE IF NOT EXISTS items(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id "
             "TEXT NOT NULL REFERENCES sessions(id),turn INTEGER NOT NULL,json TEXT NOT NULL,active "
             "INTEGER NOT NULL);"
@@ -122,7 +124,8 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             "NOT NULL UNIQUE,session_id TEXT NOT NULL REFERENCES sessions(id),call_id TEXT NOT "
             "NULL,name TEXT NOT NULL,arguments TEXT NOT NULL,schema TEXT,effect INTEGER NOT "
             "NULL,approval INTEGER NOT NULL,status TEXT NOT NULL,result TEXT,is_error "
-            "INTEGER,decision INTEGER NOT NULL DEFAULT -1,UNIQUE(session_id,call_id));"
+            "INTEGER,decision INTEGER NOT NULL DEFAULT -1,result_format INTEGER NOT NULL "
+            "DEFAULT 0,UNIQUE(session_id,call_id));"
             "CREATE TABLE IF NOT EXISTS call_ids(session_id TEXT NOT NULL REFERENCES "
             "sessions(id),call_id TEXT NOT NULL,PRIMARY KEY(session_id,call_id));"
             "INSERT OR IGNORE INTO call_ids(session_id,call_id) SELECT session_id,call_id FROM "
@@ -150,12 +153,43 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             err);
     if (rc == AH_OK && version < 2)
         rc = core_migrate_result_refs(e, err);
+    if (rc == AH_OK && version < 7) {
+        rc = core_prepare(e,
+                          "SELECT 1 FROM pragma_table_info('operations') "
+                          "WHERE name='result_format'",
+                          &s, err);
+        if (rc == AH_OK) {
+            int step = sqlite3_step(s);
+            sqlite3_finalize(s);
+            if (step == SQLITE_DONE)
+                rc = core_sql(e,
+                              "ALTER TABLE operations ADD COLUMN result_format INTEGER "
+                              "NOT NULL DEFAULT 0",
+                              err);
+            else if (step != SQLITE_ROW)
+                rc = ah_fail(err, AH_IO, "cannot inspect tool result schema");
+        }
+    }
     if (rc == AH_OK)
         rc = agents_schema(e, err);
     if (rc == AH_OK)
         rc = core_content_schema(e, err);
     if (rc == AH_OK)
         rc = core_workspace_schema(e, err);
+    if (rc == AH_OK)
+        rc = core_work_schema(e, err);
+    if (rc == AH_OK)
+        rc = core_prepare(e,
+                          "SELECT EXISTS(SELECT 1 FROM operation_work) OR "
+                          "EXISTS(SELECT 1 FROM work_calls) OR EXISTS(SELECT 1 FROM work_sessions)",
+                          &s, err);
+    if (rc == AH_OK) {
+        if (sqlite3_step(s) == SQLITE_ROW)
+            e->has_work = sqlite3_column_int(s, 0) != 0;
+        else
+            rc = ah_fail(err, AH_IO, "cannot inspect durable work metadata");
+        sqlite3_finalize(s);
+    }
     if (rc == AH_OK)
         rc = core_sql(e,
                       "CREATE TABLE IF NOT EXISTS extension_context("
@@ -176,7 +210,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         rc = core_done(e, s, err);
     }
     if (rc == AH_OK)
-        rc = core_sql(e, "PRAGMA user_version=6; COMMIT", err);
+        rc = core_sql(e, "PRAGMA user_version=8; COMMIT", err);
     if (rc != AH_OK)
         core_rollback(e);
     if (rc == AH_OK)
@@ -209,6 +243,7 @@ void ah_close(ah_engine *e) {
         free(e->tools[i].name);
         free(e->tools[i].description);
         free(e->tools[i].schema);
+        free(e->tools[i].work);
     }
     free(e->tools);
     free(e);
@@ -221,6 +256,11 @@ ah_code ah_register_tool(ah_engine *e, const ah_tool *tool, ah_error *err) {
         !tool->parameters_json || !tool->execute || tool->effect < AH_EFFECT_READ ||
         tool->effect > AH_EFFECT_EXTERNAL)
         return ah_fail(err, AH_INVALID, "invalid tool definition");
+    if (tool->work &&
+        (!tool->work->version || tool->work->max_restarts > 100 ||
+         (tool->work->replay != AH_REPLAY_NEVER && tool->work->replay != AH_REPLAY_SAFE)))
+        return ah_fail(err, AH_INVALID,
+                       "durable tool requires a version and bounded replay policy");
     for (const unsigned char *p = (const unsigned char *)tool->name; *p; p++)
         if (!isalnum(*p) && *p != '_')
             return ah_fail(err, AH_INVALID, "tool names must be alphanumeric or underscore");
@@ -242,10 +282,14 @@ ah_code ah_register_tool(ah_engine *e, const ah_tool *tool, ah_error *err) {
     copied.name = ah_strdup(tool->name);
     copied.description = ah_strdup(tool->description);
     copied.schema = ah_strdup(tool->parameters_json);
-    if (!copied.name || !copied.description || !copied.schema) {
+    copied.work = tool->work ? malloc(sizeof(*copied.work)) : NULL;
+    if (copied.work)
+        *copied.work = *tool->work;
+    if (!copied.name || !copied.description || !copied.schema || (tool->work && !copied.work)) {
         free(copied.name);
         free(copied.description);
         free(copied.schema);
+        free(copied.work);
         return ah_fail(err, AH_IO, "out of memory");
     }
     core_tool *resized = realloc(e->tools, (e->tool_count + 1) * sizeof(*resized));
@@ -253,6 +297,7 @@ ah_code ah_register_tool(ah_engine *e, const ah_tool *tool, ah_error *err) {
         free(copied.name);
         free(copied.description);
         free(copied.schema);
+        free(copied.work);
         return ah_fail(err, AH_IO, "out of memory");
     }
     e->tools = resized;
@@ -260,6 +305,7 @@ ah_code ah_register_tool(ah_engine *e, const ah_tool *tool, ah_error *err) {
     copied.tool.name = copied.name;
     copied.tool.description = copied.description;
     copied.tool.parameters_json = copied.schema;
+    copied.tool.work = copied.work;
     e->tools[e->tool_count++] = copied;
     return AH_OK;
 }

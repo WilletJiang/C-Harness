@@ -10,13 +10,17 @@ from .common import terminate, drain_stderr
 
 
 async def run_harness(
-    directory, driver, codex, model, effort, prompt, duration, barrier=None, environment=None
+    directory, driver, codex, model, effort, prompt, duration, barrier=None, environment=None,
+    images=(),
 ):
     directory = pathlib.Path(directory)
     workspace = directory / "workspace"
     trace = Trace(directory, os.environ["AH_ACCESS_TOKEN"])
     state = {}
     timed_out = False
+    if images:
+        environment = dict(os.environ if environment is None else environment,
+                           AH_EVAL_IMAGES=json.dumps([str(path) for path in images]))
     if barrier:
         try:
             await asyncio.wait_for(barrier.wait(), 60)

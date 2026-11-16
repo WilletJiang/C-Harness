@@ -9,11 +9,12 @@
 extern "C" {
 #endif
 
-#define AH_VERSION "0.7.0"
+#define AH_VERSION "0.10.0"
 #define AH_ID_CAP 37
 #define AH_ERROR_CAP 512
 
 typedef struct ah_engine ah_engine;
+typedef struct ah_work_config ah_work_config;
 typedef enum {
     AH_OK = 0,
     AH_INVALID,
@@ -41,7 +42,8 @@ typedef enum {
     AH_STOPPED,
     AH_FAILED,
     AH_OUTCOME_UNKNOWN,
-    AH_WAITING_AGENTS
+    AH_WAITING_AGENTS,
+    AH_WAITING_WORK
 } ah_state;
 
 typedef struct {
@@ -90,11 +92,24 @@ typedef struct {
     /* Owner-authorized coordinated writes must supply an observed revision or
      * explicit absent expectation; immutable through background dispatch. */
     bool require_revision;
+    /* Durable tools only: borrowed state and wake reason for this invocation.
+     * generation fences late completions; operation_id remains stable. */
+    const char *checkpoint_json;
+    const char *wake_json;
+    uint64_t generation;
 } ah_tool_call;
+typedef enum { AH_TOOL_RESULT_JSON = 0, AH_TOOL_RESULT_CONTENT = 1 } ah_tool_result_format;
 typedef struct {
     char *json; /* malloc-owned valid JSON; runtime frees it. */
     bool is_error;
     bool outcome_unknown; /* May have committed a side effect. */
+    /* JSON preserves the legacy result envelope. CONTENT explicitly selects an
+     * input_text/input_image/input_file array (see ah/content.h). Never inferred.
+     * Inline media is materialized by the owner with the durable receipt. */
+    ah_tool_result_format format;
+    /* Optional malloc-owned continuation (ah/work.h). Mutually exclusive with
+     * json. The owner atomically saves checkpoint, nested calls and wait. */
+    char *continuation_json;
 } ah_tool_result;
 typedef ah_code (*ah_execute_fn)(void *context, const ah_tool_call *call, ah_tool_result *result,
                                  ah_error *error);
@@ -105,8 +120,9 @@ typedef struct {
     ah_effect effect;
     bool requires_approval;
     ah_execute_fn execute;
-    void *context;      /* Host-owned, must outlive engine. */
-    bool parallel_safe; /* Opt-in: READ callback/context may run concurrently. */
+    void *context;              /* Host-owned, must outlive engine. */
+    bool parallel_safe;         /* Opt-in: READ callback/context may run concurrently. */
+    const ah_work_config *work; /* Optional durable contract; copied on registration. */
 } ah_tool;
 
 typedef struct {
@@ -156,6 +172,9 @@ ah_code ah_fork(ah_engine *engine, const char *session_id, char new_id[AH_ID_CAP
 ah_code ah_compact(ah_engine *engine, const char *session_id, const char *summary,
                    unsigned keep_recent_turns, ah_error *error);
 ah_code ah_session_json(ah_engine *engine, const char *session_id, char **json, ah_error *error);
+/* Owner-thread snapshot for hosts that do not need the full JSON metadata.
+ * A completed model turn is separate from task acceptance; see ah/task.h. */
+ah_code ah_session_state(ah_engine *, const char *session_id, ah_state *, ah_error *);
 ah_code ah_sessions_json(ah_engine *engine, char **json, ah_error *error);
 ah_code ah_events(ah_engine *engine, const char *session_id, uint64_t after_seq,
                   ah_observer observer, void *context, ah_error *error);

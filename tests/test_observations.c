@@ -102,7 +102,8 @@ static void run_mode(bool force, bool change, bool preview) {
                     false,
                     read_tool,
                     &f,
-                    false};
+                    false,
+                    NULL};
     assert(ah_register_tool(e, &tool, &error) == AH_OK);
     char sid[AH_ID_CAP], forked[AH_ID_CAP];
     assert(ah_session_create(e, "mock", "", sid, &error) == AH_OK);

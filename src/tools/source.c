@@ -158,16 +158,18 @@ bool ah_local_same_file(const struct stat *a, const struct stat *b) {
            a->st_mode == b->st_mode;
 }
 
-ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
-                        struct stat *original, char **text, size_t *length,
-                        ah_scan_budget *budget) {
+ah_code ah_local_bytes(int parent, const char *leaf, const ah_tool_call *call,
+                       struct stat *original, char **text, size_t *length, size_t limit,
+                       ah_scan_budget *budget) {
+    *text = NULL;
+    *length = 0;
     int fd = openat(parent, leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0)
         return AH_IO;
     ah_code code = AH_OK;
     if (fstat(fd, original) || !S_ISREG(original->st_mode))
         code = AH_INVALID;
-    else if (original->st_size < 0 || original->st_size > AH_LOCAL_MAX_BYTES)
+    else if (original->st_size < 0 || (uint64_t)original->st_size > limit)
         code = AH_LIMIT;
     size_t expected = code == AH_OK ? (size_t)original->st_size : 0;
     if (code == AH_OK && budget) {
@@ -198,10 +200,6 @@ ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
     if (code == AH_OK && (fstat(fd, &after) || !ah_local_same_file(original, &after)))
         code = AH_INVALID;
     close(fd);
-    size_t complete;
-    if (code == AH_OK &&
-        (memchr(data, '\0', used) || !ah_utf8_prefix(data, used, &complete) || complete != used))
-        code = AH_INVALID;
     if (code != AH_OK) {
         free(data);
         return code;
@@ -210,4 +208,20 @@ ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
     *text = data;
     *length = used;
     return AH_OK;
+}
+
+ah_code ah_local_source(int parent, const char *leaf, const ah_tool_call *call,
+                        struct stat *original, char **text, size_t *length,
+                        ah_scan_budget *budget) {
+    ah_code code =
+        ah_local_bytes(parent, leaf, call, original, text, length, AH_LOCAL_MAX_BYTES, budget);
+    size_t complete = 0;
+    if (code == AH_OK && (memchr(*text, '\0', *length) ||
+                          !ah_utf8_prefix(*text, *length, &complete) || complete != *length)) {
+        free(*text);
+        *text = NULL;
+        *length = 0;
+        return AH_INVALID;
+    }
+    return code;
 }

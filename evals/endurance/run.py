@@ -4,12 +4,14 @@ import argparse, asyncio, hashlib, json, os, pathlib, shutil, subprocess
 from .task import prepare, protected_hashes, PROMPT, SPEC
 from ..runners.common import StartBarrier
 from ..runners.harness import run_harness
-from ..metrics import summarize
+from ..compare import accounting
+from ..compare_grade import invoke, generated_tests, tree_hashes
+from . import visual
 from ..runners.codex import run_codex
 from ..runners.wire import verify as verify_wire
 
 
-async def grade(directory, protected, criteria):
+async def grade(directory, protected, criteria, image_task=False):
     workspace = directory / "workspace"
     env = {
         "PATH": "/usr/bin:/bin",
@@ -50,6 +52,10 @@ async def grade(directory, protected, criteria):
             if p.name != "test_smoke.py"
         ]
     )
+    result["audit"] = await invoke(criteria, "quality", workspace)
+    if image_task:
+        result["visual"] = await invoke(criteria, "visual_checks", workspace)
+    result["generated_tests"] = await generated_tests(workspace)
     return result
 
 
@@ -60,10 +66,16 @@ async def run(args):
     root.mkdir(parents=True, exist_ok=True)
     if not os.environ.get("AH_ACCESS_TOKEN"):
         raise RuntimeError("Authorized subscription token required")
-    wire = await verify_wire(args.codex, args.model, args.effort)
+    template = root / "template"
+    prompt = visual.prepare(template) if args.visual else prepare(template)
+    initial = tree_hashes(template)
+    image_names = ["references/" + name for name in visual.IMAGES] if args.visual else []
+    wire = await verify_wire(args.codex, args.model, args.effort,
+                             images=[template / name for name in image_names])
     criteria = root / "criteria"
     criteria.mkdir()
-    for name in ("__init__.py", "checks.py", "store_checks.py"):
+    for name in ("__init__.py", "checks.py", "store_checks.py", "quality.py", "task.py",
+                 "visual.py", "visual_checks.py"):
         shutil.copy2(pathlib.Path(__file__).with_name(name), criteria / name)
     manifest = {
         "model": args.model,
@@ -73,7 +85,12 @@ async def run(args):
         "same_service_route": True,
         "codex_wire_request": wire,
         "endpoint": "https://api.openai.com/v1/responses",
-        "prompt_sha256": hashlib.sha256(PROMPT.encode()).hexdigest(),
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "input_sha256": initial, "image_files": image_names,
+        "images_supplied_as_native_input": bool(image_names),
+        "runtime_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "driver_sha256": hashlib.sha256(args.driver.read_bytes()).hexdigest(),
+        "features": {"skills":False,"mcp":False,"plugins":False,"agents":False,"auto_context":False},
         "spec_sha256": hashlib.sha256(SPEC.encode()).hexdigest(),
         "grader_sha256": hashlib.sha256(
             b"".join(
@@ -87,6 +104,10 @@ async def run(args):
             [args.codex, "--version"], text=True
         ).strip(),
     }
+    manifest["grader_files_sha256"] = tree_hashes(criteria)
+    for path in criteria.iterdir():
+        path.chmod(0o444)
+    (root / "prompt.txt").write_text(prompt)
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     # Smoke runs are explicitly separate from task/token totals.
     preflights = []
@@ -97,14 +118,14 @@ async def run(args):
         (d / "workspace" / "README.md").write_text(
             "Empty model access probe workspace.\n"
         )
-        prompt = "Read README.md using a tool, then reply with exactly READY. Do not change files."
+        probe_prompt = "Read README.md using a tool, then reply with exactly READY. Do not change files."
         if runner == "harness":
             r = await run_harness(
-                d, args.driver, args.codex, args.model, args.effort, prompt, 120
+                d, args.driver, args.codex, args.model, args.effort, probe_prompt, 120
             )
         else:
-            r = await run_codex(d, args.codex, args.model, args.effort, prompt, 120)
-        r = summarize(r)
+            r = await run_codex(d, args.codex, args.model, args.effort, probe_prompt, 120)
+        r = accounting(r)
         preflights.append(r)
         print(json.dumps({"preflight": r}), flush=True)
         (root / "preflights.json").write_text(json.dumps(preflights, indent=2))
@@ -127,7 +148,9 @@ async def run(args):
 
     async def one(runner, index):
         d = root / (runner + "-" + str(index))
-        prompt = prepare(d / "workspace")
+        shutil.copytree(template, d / "workspace")
+        assert tree_hashes(d / "workspace") == initial
+        images = [d / "workspace" / name for name in image_names]
         hashes = protected_hashes(d / "workspace")
         print(json.dumps({"launching": runner, "trial": index}), flush=True)
         if runner == "harness":
@@ -139,17 +162,33 @@ async def run(args):
                 args.effort,
                 prompt,
                 args.duration,
-                barrier,
+                barrier, images=images,
             )
         else:
             r = await run_codex(
-                d, args.codex, args.model, args.effort, prompt, args.duration, barrier
+                d, args.codex, args.model, args.effort, prompt, args.duration, barrier, images=images
             )
-        r = summarize(r)
+        r = accounting(r)
         r["trial"] = index
         r["model"] = args.model
         r["reasoning"] = args.effort
-        r["grade"] = await grade(d, hashes, criteria)
+        assert tree_hashes(criteria) == manifest["grader_files_sha256"]
+        r["grade"] = await grade(d, hashes, criteria, args.visual)
+        r["grade"]["visual_inputs_unchanged"] = all(
+            (d / "workspace" / name).is_file() and
+            hashlib.sha256((d / "workspace" / name).read_bytes()).hexdigest() == initial[name]
+            for name in [*image_names, *(["SCENARIO.md"] if args.visual else [])])
+        assert tree_hashes(criteria) == manifest["grader_files_sha256"]
+        sections = [r["grade"], r["grade"]["audit"]]
+        if args.visual:
+            sections.append(r["grade"]["visual"])
+        r["accepted"] = (r["state"] == "completed" and not r["timed_out"] and not r.get("failure")
+                         and all(part.get("total",0) > 0 and part.get("passed") == part.get("total")
+                                 and not part.get("grader_error") for part in sections)
+                         and r["grade"]["generated_tests"]["pass"]
+                         and r["grade"]["readme_written"] and r["grade"]["additional_test_files"] > 0
+                         and r["grade"]["protected_inputs_unchanged"]
+                         and r["grade"]["visual_inputs_unchanged"])
         (d / "result.json").write_text(json.dumps(r, ensure_ascii=False, indent=2))
         results.append(r)
         (root / "results.json").write_text(
@@ -191,6 +230,7 @@ def main():
     p.add_argument(
         "--effort", default="xhigh", choices=["low", "medium", "high", "xhigh"]
     )
+    p.add_argument("--visual", action="store_true", help="Attach image-only scenario facts and grade integration")
     p.add_argument("--duration", type=int, default=600)
     p.add_argument("--repetitions", type=int, default=3)
     args = p.parse_args()

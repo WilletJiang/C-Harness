@@ -1,25 +1,12 @@
 #include "policies.h"
 #include "ah/workspace.h"
 #include "../internal.h"
-#include <errno.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 
 void cli_policy_init(cli_policy_options *options) {
     memset(options, 0, sizeof(*options));
     ah_context_config_init(&options->context);
-}
-static bool number(const char *text, uintmax_t maximum, uintmax_t *out) {
-    if (!text || *text < '0' || *text > '9')
-        return false;
-    char *end = NULL;
-    errno = 0;
-    uintmax_t value = strtoumax(text, &end, 10);
-    if (errno || *end || value > maximum)
-        return false;
-    *out = value;
-    return true;
 }
 cli_option_status cli_policy_option(cli_policy_options *options, int argc, char **argv, int *at) {
     const char *arg = argv[*at];
@@ -44,11 +31,9 @@ cli_option_status cli_policy_option(cli_policy_options *options, int argc, char 
         return CLI_OPTION_INVALID;
     }
     uintmax_t value = 0, maximum = bytes ? 64u * 1024u * 1024u : keep ? 64u : UINT_MAX;
-    if (!number(argv[++*at], maximum, &value) || (tokens && !value) ||
-        (bytes == &options->context_bytes && value < 4096)) {
-        fprintf(stderr, "Invalid %s\n", arg);
+    uintmax_t minimum = bytes == &options->context_bytes ? 4096 : tokens ? 1 : 0;
+    if (!cli_option_number(arg, argv[++*at], minimum, maximum, &value))
         return CLI_OPTION_INVALID;
-    }
     if (bytes)
         *bytes = (size_t)value;
     else if (keep)

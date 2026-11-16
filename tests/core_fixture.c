@@ -125,8 +125,8 @@ ah_engine *open_engine(fixture *f, const char *path, ah_config *custom) {
     return engine;
 }
 void register_tool(ah_engine *engine, fixture *f, ah_effect effect, bool approval) {
-    ah_tool tool = {"test_tool", "Test doubling", schema, effect,
-                    approval,    fixture_execute, f,      false};
+    ah_tool tool = {"test_tool", "Test doubling", schema, effect, approval, fixture_execute,
+                    f,           false,           NULL};
     ah_error error = {0};
     ok(ah_register_tool(engine, &tool, &error), &error);
 }

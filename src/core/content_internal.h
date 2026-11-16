@@ -16,6 +16,8 @@ typedef struct {
 } core_content;
 
 ah_code core_content_prepare(ah_engine *, const char *, const char *, core_content *, ah_error *);
+ah_code core_content_parts_prepare(ah_engine *, const char *, const char *, size_t, core_content *,
+                                   ah_error *);
 void core_content_free(core_content *);
 ah_code core_content_save(ah_engine *, const char *, const core_content *, ah_error *);
 ah_code core_submit_item(ah_engine *, const char *, const char *, const char *, int,

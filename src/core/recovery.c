@@ -1,4 +1,78 @@
 #include "core.h"
+#include "work.h"
+
+static ah_code recover_operations(ah_engine *e, const char *sid, ah_state *state, ah_error *error) {
+    sqlite3_stmt *stmt = NULL;
+    ah_code code = core_prepare(e,
+                                "SELECT id FROM operations WHERE session_id=? AND status!='done' "
+                                "ORDER BY seq",
+                                &stmt, error);
+    if (code != AH_OK)
+        return code;
+    sqlite3_bind_text(stmt, 1, sid, -1, SQLITE_TRANSIENT);
+    bool blocked = false;
+    int step = SQLITE_DONE;
+    while (code == AH_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        core_operation op;
+        code = core_get_operation(e, sid, (const char *)sqlite3_column_text(stmt, 0), &op, error);
+        if (code != AH_OK)
+            break;
+        bool executing = !strcmp(op.status, "executing");
+        bool parent = false;
+        if (op.durable)
+            code = core_work_has_children(e, op.id, &parent, error);
+        bool handled = false, unknown = false;
+        if (code == AH_OK && executing)
+            code = core_work_recover(e, sid, op.id, &handled, &unknown, error);
+        if (code != AH_OK) {
+            core_operation_free(&op);
+            break;
+        }
+        if (handled) {
+            blocked = true;
+            if (unknown) {
+                *state = AH_OUTCOME_UNKNOWN;
+            }
+            core_operation_free(&op);
+            continue;
+        }
+        if (!strcmp(op.status, "unknown") || (executing && op.effect != AH_EFFECT_READ)) {
+            blocked = true;
+            *state = AH_OUTCOME_UNKNOWN;
+            if (executing) {
+                code = core_set_operation(e, sid, op.id, "unknown", error);
+                if (code == AH_OK)
+                    code = core_event(e, sid, op.id, "tool.outcome_unknown",
+                                      "{\"reason\":\"execution interrupted\"}", error);
+            }
+        } else if (executing) {
+            const char *result = "{\"error\":\"read interrupted by process exit\"}";
+            code = blocked || parent
+                       ? core_save_result(e, sid, &op, result, true, "received", "tool.received",
+                                          error)
+                       : core_receipt(e, sid, &op, result, true, "tool.interrupted", error);
+            blocked |= parent;
+        } else if (!strcmp(op.status, "received") || !strcmp(op.status, "received_late") ||
+                   !strcmp(op.status, "resolved")) {
+            /* A terminal parent receipt may still own interrupted children.
+             * Recover every descendant before the common publisher drains or
+             * reconciles them; publishing here would orphan hidden children. */
+            if (parent)
+                blocked = true;
+            else if (!blocked)
+                code = core_receipt(e, sid, &op, op.result, op.is_error,
+                                    !strcmp(op.status, "received_late") ? "tool.late_result"
+                                                                        : "tool.completed",
+                                    error);
+        } else
+            blocked = true;
+        core_operation_free(&op);
+    }
+    sqlite3_finalize(stmt);
+    if (code == AH_OK && step != SQLITE_DONE)
+        code = ah_fail(error, AH_IO, "cannot recover operations");
+    return code;
+}
 
 ah_code core_recover(ah_engine *e, ah_error *err) {
     sqlite3_stmt *s = NULL;
@@ -34,38 +108,8 @@ ah_code core_recover(ah_engine *e, ah_error *err) {
         uint64_t after = 0;
         rc = core_begin(e, &after, err);
         ah_state state = AH_STOPPED;
-        while (rc == AH_OK) {
-            sqlite3_stmt *pending = NULL;
-            rc = core_prepare(e,
-                              "SELECT id FROM operations WHERE session_id=? AND status='executing' "
-                              "ORDER BY seq LIMIT 1",
-                              &pending, err);
-            if (rc != AH_OK)
-                break;
-            sqlite3_bind_text(pending, 1, ids[i], -1, SQLITE_TRANSIENT);
-            int found = sqlite3_step(pending);
-            core_operation op = {0};
-            if (found == SQLITE_ROW)
-                rc = core_get_operation(e, ids[i], (const char *)sqlite3_column_text(pending, 0),
-                                        &op, err);
-            else if (found != SQLITE_DONE)
-                rc = ah_fail(err, AH_IO, "cannot recover operation");
-            sqlite3_finalize(pending);
-            if (rc != AH_OK || found == SQLITE_DONE)
-                break;
-            if (op.effect == AH_EFFECT_READ)
-                rc =
-                    core_receipt(e, ids[i], &op, "{\"error\":\"read interrupted by process exit\"}",
-                                 true, "tool.interrupted", err);
-            else {
-                rc = core_set_operation(e, ids[i], op.id, "unknown", err);
-                state = AH_OUTCOME_UNKNOWN;
-                if (rc == AH_OK)
-                    rc = core_event(e, ids[i], op.id, "tool.outcome_unknown",
-                                    "{\"reason\":\"execution interrupted\"}", err);
-            }
-            core_operation_free(&op);
-        }
+        if (rc == AH_OK)
+            rc = recover_operations(e, ids[i], &state, err);
         if (rc == AH_OK)
             rc = core_state(e, ids[i], state, err);
         if (rc == AH_OK)

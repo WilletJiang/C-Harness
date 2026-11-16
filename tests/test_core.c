@@ -337,7 +337,8 @@ static void approval_contract_change(void) {
                     true,
                     fixture_execute,
                     &changed,
-                    false};
+                    false,
+                    NULL};
     ok(ah_register_tool(e, &tool, &error), &error);
     ok(ah_run(e, id, &error), &error);
     assert(changed.executions == 0);

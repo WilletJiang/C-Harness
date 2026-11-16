@@ -115,9 +115,15 @@ ah_code ah_local_checks_register(ah_local_tools *tools, ah_engine *engine, ah_er
     strcpy(description, prefix);
     strcat(description, json);
     free(json);
-    ah_tool tool = {
-        "check", description, ah_checks_schema, AH_EFFECT_EXTERNAL, approval, ah_local_run_checks,
-        tools,   false};
+    ah_tool tool = {"check",
+                    description,
+                    ah_checks_schema,
+                    AH_EFFECT_EXTERNAL,
+                    approval,
+                    ah_local_run_checks,
+                    tools,
+                    false,
+                    NULL};
     ah_code code = ah_register_tool(engine, &tool, error);
     free(description);
     return code;

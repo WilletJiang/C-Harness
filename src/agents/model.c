@@ -47,29 +47,10 @@ ah_code agents_model_start(agent_job *job, ah_error *error) {
     ah_engine *e = job->engine;
     core_session *session = &job->session;
     job->cancelled = false;
-    if (session->model_calls >= e->config.max_model_calls)
-        return ah_fail(error, AH_LIMIT, "model call budget exhausted");
-    ah_code code = core_task_allow(e, session->id, true, 1, NULL, error);
-    if (code == AH_OK)
-        code = core_task_deadline(e, session->id, &job->deadline, error);
-    uint64_t assembled = ah_now_us();
-    if (code == AH_OK)
-        code = core_request(e, session, &job->request, error);
-    core_metric(e, session->id, NULL, "request", assembled, ah_now_us(),
-                job->request ? strlen(job->request) : 0, session->model_calls + 1, code);
-    if (code == AH_OK)
-        code = core_model_intent(e, session, error);
-    if (code != AH_OK) {
-        agents_model_release(job);
+    ah_code code = core_model_prepare(e, session, &job->request, error);
+    job->deadline = e->deadline;
+    if (code != AH_OK)
         return code;
-    }
-    if (cancelled(job)) {
-        agents_model_release(job);
-        return ah_fail(error,
-                       atomic_load_explicit(&e->cancelled, memory_order_relaxed) ? AH_CANCELLED
-                                                                                 : AH_LIMIT,
-                       "cancelled before model dispatch");
-    }
     job->request_generation = job->generation;
     job->request_turn = session->turn;
     job->request_attempt = session->model_calls;
@@ -112,11 +93,13 @@ ah_code agents_model_finish(agent_job *job, bool *done, ah_error *error) {
     ah_engine *e = job->engine;
     ah_async_provider *provider = &e->agents.provider;
     bool stale = job->request_generation != job->generation || job->session.state != AH_RUNNING;
+    /* A provider may deliver buffered deltas while collecting its result. */
+    if (stale)
+        job->cancelled = true;
     char *response = NULL;
     ah_code code = provider->result(provider->context, job->handle, done, &response, error);
     if (stale) {
         /* A stop may precede this scan within the same owner iteration. */
-        job->cancelled = true;
         code = save_usage(job, response, error);
         free(response);
         agents_model_release(job);

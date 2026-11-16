@@ -188,9 +188,39 @@ static void failed_cancellation_receipt_recovers(void) {
     remove_database(path);
 }
 
+static void failed_capture_sweep_recovers(void) {
+    char path[] = "/tmp/ah-read-capture-fault-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0 && close(fd) == 0);
+    fixture f = {
+        .names = {"read", "background"}, .count = 2, .database_path = path, .barrier_count = 2};
+    open_fixture(&f, 2, 2, 10000);
+    ah_error error = {0};
+    ok(core_sql(f.engine,
+                "CREATE TRIGGER fail_capture BEFORE UPDATE ON operations "
+                "WHEN NEW.status='received' BEGIN SELECT RAISE(ABORT,'capture failure'); END",
+                &error),
+       &error);
+    char sid[AH_ID_CAP];
+    assert(run_fixture(&f, sid) == AH_INVALID);
+    assert(f.executions == 2 && f.provider_calls == 1 && !core_jobs_running(f.engine, NULL));
+    assert(scalar(&f, "SELECT state FROM sessions") == AH_RUNNING);
+    ok(core_sql(f.engine, "DROP TRIGGER fail_capture", &error), &error);
+    reopen_fixture(&f);
+    assert(scalar(&f, "SELECT state FROM sessions") == AH_STOPPED);
+    assert(scalar(&f, "SELECT COUNT(*) FROM operations WHERE status='executing'") == 0);
+    ok(ah_resume(f.engine, sid, &error), &error);
+    ok(ah_run(f.engine, sid, &error), &error);
+    assert(f.executions == 2 && f.provider_calls == 2);
+    assert_receipt_order(&f, 2);
+    close_fixture(&f);
+    remove_database(path);
+}
+
 void parallel_recovery_cases(void) {
     unknown_results_survive_restart();
     failed_intent_observation_recovers();
     failed_pause_observation_preserves_wait();
     failed_cancellation_receipt_recovers();
+    failed_capture_sweep_recovers();
 }

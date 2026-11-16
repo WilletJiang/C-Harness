@@ -5,7 +5,7 @@
 typedef struct core_job {
     ah_engine *engine;
     core_tool *tool;
-    char *session, *operation, *arguments;
+    char *session, *operation, *arguments, *checkpoint, *wake;
     ah_tool_call call;
     ah_tool_result result;
     ah_error error;
@@ -13,6 +13,7 @@ typedef struct core_job {
     pthread_t thread;
     atomic_bool cancelled;
     bool finished;
+    bool scoped_cancel;
     ah_code stopped;
     uint64_t began, ended;
     struct core_job *next;
@@ -25,10 +26,7 @@ struct core_jobs {
     unsigned count;
 };
 
-ah_code ah_register_background_tool(ah_engine *e, const ah_tool *tool, ah_error *error) {
-    ah_code code = core_guard(e, error);
-    if (code != AH_OK)
-        return code;
+ah_code core_jobs_init(ah_engine *e, ah_error *error) {
     if (!e->jobs) {
         struct core_jobs *jobs = calloc(1, sizeof(*jobs));
         if (!jobs)
@@ -54,7 +52,15 @@ ah_code ah_register_background_tool(ah_engine *e, const ah_tool *tool, ah_error 
         }
         e->jobs = jobs;
     }
-    code = ah_register_tool(e, tool, error);
+    return AH_OK;
+}
+
+ah_code ah_register_background_tool(ah_engine *e, const ah_tool *tool, ah_error *error) {
+    ah_code code = core_guard(e, error);
+    if (code == AH_OK)
+        code = core_jobs_init(e, error);
+    if (code == AH_OK)
+        code = ah_register_tool(e, tool, error);
     if (code == AH_OK)
         e->tools[e->tool_count - 1].background = true;
     return code;
@@ -91,9 +97,14 @@ static void *execute(void *context) {
     return NULL;
 }
 
-bool core_jobs_available(ah_engine *e) {
+unsigned core_jobs_capacity(ah_engine *e) {
     unsigned limit = e->config.max_parallel_tools ? e->config.max_parallel_tools : 1;
-    return e->jobs && e->jobs->count < limit;
+    unsigned used = (e->jobs ? e->jobs->count : 0) + e->inline_tools;
+    return used < limit ? limit - used : 0;
+}
+
+bool core_jobs_available(ah_engine *e) {
+    return core_jobs_capacity(e) != 0;
 }
 
 bool core_jobs_running(ah_engine *e, const char *sid) {
@@ -108,7 +119,10 @@ static void free_job(core_job *job) {
     free(job->session);
     free(job->operation);
     free(job->arguments);
+    free(job->checkpoint);
+    free(job->wake);
     free(job->result.json);
+    free(job->result.continuation_json);
     free(job);
 }
 
@@ -119,14 +133,19 @@ ah_code core_jobs_start(ah_engine *e, core_session *session, core_operation *ope
         job->session = ah_strdup(session->id);
         job->operation = ah_strdup(operation->id);
         job->arguments = ah_strdup(operation->arguments);
+        job->checkpoint = call->checkpoint_json ? ah_strdup(call->checkpoint_json) : NULL;
+        job->wake = call->wake_json ? ah_strdup(call->wake_json) : NULL;
     }
-    if (job && job->session && job->operation && job->arguments) {
+    if (job && job->session && job->operation && job->arguments &&
+        (!call->checkpoint_json || job->checkpoint) && (!call->wake_json || job->wake)) {
         job->engine = e;
         job->tool = tool;
         job->call = *call;
         job->call.session_id = job->session;
         job->call.operation_id = job->operation;
         job->call.arguments_json = job->arguments;
+        job->call.checkpoint_json = job->checkpoint;
+        job->call.wake_json = job->wake;
         job->call.cancelled = cancelled;
         job->call.cancel_context = job;
         job->call.checkpoint = NULL;
@@ -137,8 +156,10 @@ ah_code core_jobs_start(ah_engine *e, core_session *session, core_operation *ope
         pthread_mutex_lock(&e->jobs->mutex);
         int launched = pthread_create(&job->thread, NULL, execute, job);
         if (!launched) {
-            job->next = e->jobs->head;
-            e->jobs->head = job;
+            core_job **slot = &e->jobs->head;
+            while (*slot)
+                slot = &(*slot)->next;
+            *slot = job;
             e->jobs->count++;
         }
         pthread_mutex_unlock(&e->jobs->mutex);
@@ -151,12 +172,15 @@ ah_code core_jobs_start(ah_engine *e, core_session *session, core_operation *ope
                              .is_error = true};
     ah_error execution = {0};
     ah_code code =
-        core_complete_operation(e, session, operation, &result, AH_OK, &execution, AH_OK, error);
+        core_capture_operation(e, session, operation, &result, AH_OK, &execution, AH_OK, error);
     free(result.json);
-    return code;
+    if (code == AH_OK)
+        code = core_publish_ready(e, session, error);
+    return code == AH_OK ? ah_fail(error, AH_IO, "cannot start tool worker; receipt recorded")
+                         : code;
 }
 
-ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
+static ah_code cancel_job(ah_engine *e, const char *operation, bool scoped, ah_error *error) {
     if (!e || !operation)
         return ah_fail(error, AH_INVALID, "engine and operation required");
     if (!e->jobs)
@@ -166,6 +190,8 @@ ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
     while (job && strcmp(job->operation, operation))
         job = job->next;
     if (job) {
+        if (!scoped || !atomic_load_explicit(&job->cancelled, memory_order_relaxed))
+            job->scoped_cancel = scoped;
         atomic_store_explicit(&job->cancelled, true, memory_order_relaxed);
         pthread_cond_broadcast(&e->jobs->changed);
     }
@@ -174,6 +200,14 @@ ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
         return ah_fail(error, AH_NOT_FOUND, "tool job is not active");
     ah_error_clear(error);
     return AH_OK;
+}
+
+ah_code ah_cancel_job(ah_engine *e, const char *operation, ah_error *error) {
+    return cancel_job(e, operation, false, error);
+}
+
+ah_code core_jobs_cancel_owned(ah_engine *e, const char *operation, ah_error *error) {
+    return cancel_job(e, operation, true, error);
 }
 
 void core_jobs_cancel(ah_engine *e, const char *sid) {
@@ -213,50 +247,105 @@ void core_jobs_wait(ah_engine *e, unsigned milliseconds) {
 #endif
     }
     pthread_mutex_unlock(&jobs->mutex);
+    if (e->yield)
+        e->yield(e->yield_context);
 }
 
-ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
-    if (!e->jobs)
-        return AH_OK;
-    struct core_jobs *jobs = e->jobs;
-    pthread_mutex_lock(&jobs->mutex);
-    core_job **slot = &jobs->head;
-    while (*slot && strcmp((*slot)->session, session->id))
-        slot = &(*slot)->next;
-    core_job *job = *slot;
-    if (!job || !job->finished) {
-        pthread_mutex_unlock(&jobs->mutex);
-        return AH_OK;
-    }
-    *slot = job->next;
-    jobs->count--;
-    pthread_mutex_unlock(&jobs->mutex);
-    pthread_join(job->thread, NULL);
-    core_metric(e, session->id, job->operation, "tool", job->began, job->ended,
-                job->result.json ? strlen(job->result.json) : 0, 1, job->executed);
+static ah_code capture_job(ah_engine *e, core_session *session, core_job *job, ah_error *error) {
+    /* Cancellation can arrive after the callback returned but before the owner
+     * captures it. A late continuation must not resurrect cancelled work. */
+    if (atomic_load_explicit(&job->cancelled, memory_order_relaxed) ||
+        atomic_load_explicit(&e->cancelled, memory_order_relaxed))
+        job->stopped = AH_CANCELLED;
     core_operation operation;
     ah_code code = core_get_operation(e, session->id, job->operation, &operation, error);
-    if (code == AH_OK && !strcmp(operation.status, "executing"))
-        code = core_complete_operation(e, session, &operation, &job->result, job->executed,
-                                       &job->error, job->stopped, error);
+    if (code == AH_OK && !strcmp(operation.status, "executing") &&
+        operation.generation == job->call.generation)
+        code = core_capture_operation(e, session, &operation, &job->result, job->executed,
+                                      &job->error, job->stopped, error);
     else if (code == AH_OK) {
-        /* An explicit agent interruption may already have published a READ
-         * failure or marked an effect unknown. Never publish a second output or
-         * turn an interrupted effect into permission to replay. */
-        uint64_t after = 0;
-        code = core_begin(e, &after, error);
-        bool valid = job->result.json && strlen(job->result.json) <= e->config.max_output_bytes &&
+        /* An explicit interruption has already settled this call. Its late
+         * return must not publish twice or make an uncertain effect replayable. */
+        bool valid = job->result.format == AH_TOOL_RESULT_JSON && job->result.json &&
+                     strlen(job->result.json) <= e->config.max_output_bytes &&
                      ah_json_valid(job->result.json);
         if (code == AH_OK)
             code = core_event(e, session->id, operation.id, "tool.late_result",
                               valid ? job->result.json : "{\"discarded\":true}", error);
-        if (code == AH_OK)
-            code = core_commit(e, after, error);
-        else
-            core_rollback(e);
     }
     core_operation_free(&operation);
-    free_job(job);
+    bool scoped = job->scoped_cancel && job->stopped == AH_CANCELLED &&
+                  !atomic_load_explicit(&e->cancelled, memory_order_relaxed);
+    if (code == AH_CANCELLED && scoped)
+        code = AH_OK;
+    if (code == AH_OK && job->stopped != AH_OK && !scoped)
+        code = ah_fail(error, job->stopped,
+                       "tool completed after cancellation or deadline; receipt recorded");
+    return code;
+}
+
+ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
+    core_job *finished = NULL, **tail = &finished;
+    if (e->jobs) {
+        struct core_jobs *jobs = e->jobs;
+        pthread_mutex_lock(&jobs->mutex);
+        core_job **slot = &jobs->head;
+        while (*slot) {
+            core_job *job = *slot;
+            if (strcmp(job->session, session->id) || !job->finished) {
+                slot = &job->next;
+                continue;
+            }
+            *slot = job->next;
+            jobs->count--;
+            job->next = NULL;
+            *tail = job;
+            tail = &job->next;
+        }
+        pthread_mutex_unlock(&jobs->mutex);
+    }
+    if (!finished)
+        return core_publish_ready(e, session, error);
+    for (core_job *job = finished; job; job = job->next) {
+        pthread_join(job->thread, NULL);
+        core_metric(e, session->id, job->operation, "tool", job->began, job->ended,
+                    job->result.json ? strlen(job->result.json) : 0, 1, job->executed);
+    }
+    uint64_t after = 0;
+    ah_code code = core_begin(e, &after, error), stopped = AH_OK;
+    bool uncertain = false;
+    for (core_job *job = finished; job && code == AH_OK; job = job->next) {
+        code = capture_job(e, session, job, error);
+        if (code == AH_UNCERTAIN) {
+            /* One hidden child's unknown effect must not discard trustworthy
+             * receipts from siblings already removed from the worker list. */
+            uncertain = true;
+            code = AH_OK;
+        } else if (code == AH_CANCELLED || code == AH_LIMIT) {
+            stopped = code;
+            code = AH_OK;
+        }
+    }
+    if (code == AH_OK)
+        code = core_publish_ready(e, session, error);
+    if (code == AH_OK || code == AH_UNCERTAIN) {
+        ah_code committed = core_commit(e, after, error);
+        if (committed != AH_OK)
+            code = committed;
+    } else
+        core_rollback(e);
+    while (finished) {
+        core_job *job = finished;
+        finished = job->next;
+        free_job(job);
+    }
+    if (code != AH_OK && code != AH_UNCERTAIN)
+        session->state = AH_OUTCOME_UNKNOWN;
+    if (code == AH_OK && uncertain)
+        code = ah_fail(error, AH_UNCERTAIN, "child tool outcome requires explicit resolution");
+    if (code == AH_OK && stopped != AH_OK)
+        code = ah_fail(error, stopped,
+                       "tool completed after cancellation or deadline; receipt recorded");
     return code;
 }
 

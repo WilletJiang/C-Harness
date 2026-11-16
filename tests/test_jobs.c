@@ -200,6 +200,7 @@ static uint64_t overlap(unsigned workers) {
 int job_recovery_child(int, char **);
 void job_recovery_cases(const char *);
 void agent_job_cases(void);
+void job_capacity_cases(void);
 
 int main(int argc, char **argv) {
     int child = job_recovery_child(argc, argv);
@@ -209,6 +210,7 @@ int main(int argc, char **argv) {
     approval_and_timeout();
     cancellation_receipt();
     agent_job_cases();
+    job_capacity_cases();
     uint64_t sequential = overlap(1), concurrent = overlap(2);
     assert(concurrent * 4 < sequential * 3);
     printf("native exec fixed receipts: sequential=%llu ms concurrent=%llu ms\n",

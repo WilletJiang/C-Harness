@@ -288,7 +288,7 @@ int main(int argc, char **argv) {
     ah_local_tools_config config = {.workspace = workspace, .approve_writes = true};
     CHECK(ah_local_tools_open(&config, &tools, &error) == AH_OK);
     CHECK(ah_local_tools_register(tools, (ah_engine *)(void *)&config, &error) == AH_OK);
-    CHECK(tool_count == 3 && !lookup("exec") && lookup("write_file")->requires_approval);
+    CHECK(tool_count == 4 && !lookup("exec") && lookup("write_file")->requires_approval);
     CHECK(lookup("read_file")->parallel_safe);
     CHECK(!lookup("list_directory") && !lookup("edit_file") && !lookup("search"));
     CHECK(!lookup("write_file")->parallel_safe && !lookup("apply_changes")->parallel_safe);
@@ -363,7 +363,7 @@ int main(int argc, char **argv) {
     tool_count = 0;
     CHECK(ah_local_tools_open(&config, &tools, &error) == AH_OK);
     CHECK(ah_local_tools_register(tools, (ah_engine *)(void *)&config, &error) == AH_OK);
-    CHECK(tool_count == 4 && lookup("exec")->requires_approval &&
+    CHECK(tool_count == 5 && lookup("exec")->requires_approval &&
           !lookup("write_file")->requires_approval && !lookup("apply_changes")->requires_approval);
     const char *literal = "space $HOME ; $(touch forbidden) * ' \"";
     char *args = exec_arguments(executable, "args", literal);

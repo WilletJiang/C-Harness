@@ -5,6 +5,7 @@
 #include "ah/agents.h"
 #include "ah/context.h"
 #include "ah/jobs.h"
+#include "ah/content.h"
 #include "internal.h"
 #include "cli/cli.h"
 #include "tools/local_internal.h"
@@ -32,6 +33,59 @@ static bool option(const char *name, unsigned fallback, unsigned maximum, unsign
         return false;
     *out = (unsigned)value;
     return true;
+}
+
+/* Attach the host's PNG fixtures through the public artifact/input API. */
+static ah_code submit(ah_engine *engine, const char *session, const char *workspace,
+                      const char *prompt, ah_error *error) {
+    const char *images = getenv("AH_EVAL_IMAGES");
+    if (!images)
+        return ah_submit(engine, session, "eval-command-1", prompt, error);
+    yyjson_doc *source = yyjson_read(images, strlen(images), 0);
+    yyjson_val *paths = yyjson_doc_get_root(source);
+    if (!yyjson_is_arr(paths) || !yyjson_arr_size(paths) || yyjson_arr_size(paths) > 8) {
+        yyjson_doc_free(source);
+        return ah_fail(error, AH_INVALID, "AH_EVAL_IMAGES requires 1..8 workspace PNG paths");
+    }
+    yyjson_mut_doc *doc = ah_mut_doc_new();
+    yyjson_mut_val *parts = yyjson_mut_arr(doc), *text = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, parts);
+    yyjson_mut_obj_add_str(doc, text, "type", "input_text");
+    yyjson_mut_obj_add_strcpy(doc, text, "text", prompt);
+    yyjson_mut_arr_append(parts, text);
+    char *root = realpath(workspace, NULL);
+    ah_code code = root && doc ? AH_OK : ah_fail(error, AH_IO, "cannot prepare image input");
+    size_t index, count;
+    yyjson_val *path;
+    yyjson_arr_foreach(paths, index, count, path) {
+        if (code != AH_OK)
+            break;
+        const char *name = yyjson_get_str(path);
+        char *resolved = name ? realpath(name, NULL) : NULL;
+        if (!resolved || strncmp(resolved, root, strlen(root)) || resolved[strlen(root)] != '/') {
+            free(resolved);
+            code = ah_fail(error, AH_INVALID, "image fixture must be inside the workspace");
+            break;
+        }
+        char id[AH_ARTIFACT_ID_CAP];
+        code = ah_artifact_import(engine, session, resolved, "image/png", id, error);
+        free(resolved);
+        if (code == AH_OK) {
+            yyjson_mut_val *part = yyjson_mut_obj(doc);
+            yyjson_mut_obj_add_str(doc, part, "type", "input_image");
+            yyjson_mut_obj_add_strcpy(doc, part, "artifact_id", id);
+            yyjson_mut_arr_append(parts, part);
+        }
+    }
+    char *json = code == AH_OK ? ah_mut_write(doc) : NULL;
+    if (code == AH_OK)
+        code = json ? ah_submit_content(engine, session, "eval-command-1", json, error)
+                    : ah_fail(error, AH_IO, "cannot encode image input");
+    free(json);
+    free(root);
+    ah_mut_doc_free(doc);
+    yyjson_doc_free(source);
+    return code;
 }
 
 static ah_code sandbox_exec(void *context, const ah_tool_call *call, ah_tool_result *result,
@@ -211,7 +265,8 @@ int main(int argc, char **argv) {
                        false,
                        sandbox_exec,
                        &eval,
-                       false};
+                       false,
+                       NULL};
     if (code == AH_OK)
         code = agents ? ah_register_background_tool(engine, &process, &error)
                       : ah_register_tool(engine, &process, &error);
@@ -238,7 +293,7 @@ int main(int argc, char **argv) {
             "available at /usr/bin/python3.",
             session, &error);
     if (code == AH_OK)
-        code = ah_submit(engine, session, "eval-command-1", prompt, &error);
+        code = submit(engine, session, argv[1], prompt, &error);
     if (code == AH_OK)
         code = ah_run(engine, session, &error);
     char *snapshot = NULL;

@@ -1,4 +1,5 @@
 #include "core.h"
+#include "work.h"
 #include "../agents/agents_internal.h"
 
 typedef struct {
@@ -10,8 +11,35 @@ static void on_delta(void *context, const char *text, size_t length) {
     core_emit_delta(sink->engine, sink->session, text, length);
 }
 ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
-    if (e && e->agents_enabled)
+    ah_code code = core_guard(e, err);
+    bool host = false;
+    if (code == AH_OK)
+        code = core_work_host_session(e, sid, &host, err);
+    if (code != AH_OK)
+        return code;
+    if (!host && e->agents_enabled)
         return agents_run(e, sid, err);
+    return core_run(e, sid, host, err);
+}
+ah_code ah_work_run(ah_engine *e, const char *sid, ah_error *err) {
+    ah_code code = core_guard(e, err);
+    bool host = false;
+    if (code == AH_OK)
+        code = core_work_host_session(e, sid, &host, err);
+    if (code != AH_OK)
+        return code;
+    return host ? core_run(e, sid, true, err)
+                : ah_fail(err, AH_INVALID, "session is not host work");
+}
+ah_code ah_work_next_wake(ah_engine *e, const char *sid, uint64_t *at, ah_error *err) {
+    ah_code code = core_guard(e, err);
+    if (code != AH_OK)
+        return code;
+    if (!sid || !at)
+        return ah_fail(err, AH_INVALID, "session and time output required");
+    return core_work_next_wake(e, sid, at, err);
+}
+ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -24,14 +52,14 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
         core_session_free(&session);
         return AH_OK;
     }
-    if (session.state != AH_READY) {
+    if (session.state != AH_READY && session.state != AH_WAITING_WORK) {
         ah_state state = session.state;
         core_session_free(&session);
         return ah_fail(err, state == AH_OUTCOME_UNKNOWN ? AH_UNCERTAIN : AH_INVALID,
                        "session must be ready; submit or resume explicitly");
     }
     e->running = true;
-    core_mailbox_active(e, sid);
+    core_mailbox_active(e, host ? NULL : sid);
     uint64_t now = ah_now_ms();
     e->deadline = now + e->config.run_timeout_ms;
     if (e->deadline < now)
@@ -39,60 +67,28 @@ ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
     rc = core_task_allow(e, sid, true, 0, NULL, err);
     if (rc == AH_OK)
         rc = core_task_deadline(e, sid, &e->deadline, err);
-    if (rc == AH_OK)
-        rc = core_run_transition(e, sid, AH_RUNNING, "run.started", "{}", err);
-    session.state = AH_RUNNING;
-    while (rc == AH_OK && session.state == AH_RUNNING) {
-        if (core_cancelled(e)) {
-            rc = ah_fail(err,
-                         atomic_load_explicit(&e->cancelled, memory_order_relaxed) ? AH_CANCELLED
-                                                                                   : AH_LIMIT,
-                         "run cancelled or deadline exceeded");
+    while (rc == AH_OK && (session.state == AH_READY || session.state == AH_RUNNING ||
+                           session.state == AH_WAITING_WORK)) {
+        bool needs_model = false;
+        rc = core_session_step(e, &session, &needs_model, err);
+        if (rc != AH_OK)
             break;
-        }
-        core_operation op;
-        ah_code found = core_next_operation(e, sid, &op, err);
-        if (found == AH_OK) {
-            bool batched = false;
-            rc = core_execute_parallel(e, &session, &op, &batched, err);
-            if (rc == AH_OK && !batched)
-                rc = core_execute_operation(e, &session, &op, err);
-            core_operation_free(&op);
-            if (rc == AH_OK && core_jobs_running(e, sid))
+        if (!needs_model) {
+            if (core_jobs_running(e, sid))
                 core_jobs_wait(e, 20);
+            else if (session.state == AH_WAITING_WORK)
+                break;
             continue;
         }
-        if (found != AH_NOT_FOUND) {
-            rc = found;
+        if (host) {
+            rc = core_run_transition(e, sid, AH_COMPLETED, "work.completed", "{}", err);
+            session.state = AH_COMPLETED;
             break;
         }
-        rc = core_drain_steering(e, &session, false, err);
-        if (rc != AH_OK)
-            break;
-        if (session.model_calls >= e->config.max_model_calls) {
-            rc = ah_fail(err, AH_LIMIT, "model call budget exhausted");
-            break;
-        }
-        rc = core_task_allow(e, sid, true, 1, NULL, err);
-        if (rc != AH_OK)
-            break;
         char *request = NULL;
-        uint64_t assembled = ah_now_us();
-        rc = core_request(e, &session, &request, err);
-        core_metric(e, sid, NULL, "request", assembled, ah_now_us(), request ? strlen(request) : 0,
-                    session.model_calls + 1, rc);
+        rc = core_model_prepare(e, &session, &request, err);
         if (rc != AH_OK)
             break;
-        rc = core_model_intent(e, &session, err);
-        if (rc != AH_OK) {
-            free(request);
-            break;
-        }
-        if (core_cancelled(e)) {
-            free(request);
-            rc = ah_fail(err, AH_CANCELLED, "cancelled before model call");
-            break;
-        }
         char *response = NULL;
         delta_context sink = {e, sid};
         uint64_t started = ah_now_us();

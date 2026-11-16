@@ -43,33 +43,21 @@ python3 -B -m evals.endurance.run --help
 python3 -B -m evals.cache.run --help
 ```
 
-The former flat script names are removed. Existing Keychain service/account names
-and public registration paths are retained. Public C headers, SQLite schema and
-runtime behavior were unchanged by that layout refactor. The subsequent 0.3 workflow
-implementation extends public structs and adds schema-3 task/observation tables.
-See [workflows](workflows.md) for ownership, recovery and migration contracts.
+The session step is shared by synchronous runs and the subagent scheduler. Tool
+intent, authorization, dispatch and receipt handling are shared by inline,
+background, resumable and host-created work. `work_store.c` owns checkpoint,
+wait and generation transitions; `work_signal.c` owns the bounded durable inbox;
+`work_calls.c` and `work_join.c` own keyed composition; `work_cancel.c` preserves
+unresolved descendant effects. `work_dispatch.c` selects the runnable frontier
+and checks definition compatibility. `work_host.c` exposes host-only roots.
+These extend existing operation identities; they do not own a second scheduler.
 
-Version 0.4 consolidates editing in `src/tools/changes.c` and native text retrieval
-in `src/tools/find.c`. Directory listing and the separate exact-edit implementation
-are removed. The public C structs and schema 3 remain unchanged from 0.3.
+A parked callback retains JSON state rather than a stack or thread. The host
+runs again after delivering a signal or at `ah_work_next_wake`. `observe.c`
+opens independent read-only connections without engine locks or recovery; event
+batches release database read locks before calling UI observers. Model text
+streaming remains provisional until a completed response is committed.
 
-Version 0.5 introduces `src/agents/` for fresh-context delegation and schema-4
-mail, waits and usage. `src/core/inference.c` shares request intent, acceptance and
-failure handling between the synchronous loop and the agent scheduler.
-`src/providers/responses_async.c` drives concurrent requests on a shared multi
-transport. The extended tool-call struct exposes cooperative owner-thread I/O
-progress. See [subagents](subagents.md) for execution and ownership details.
-
-Version 0.6 makes this an independent repository and adds lazy extensions. The core
-owns durable session skill snapshots (schema 5); the extension catalog owns bounded
-metadata and the transport owns live MCP connections. Parsing uses pinned tomlc17
-alongside yyjson. See [extensions](extensions.md) and [usage](usage.md).
-
-Version 0.7 adds schema-6 exchange identities, checkpoint references, immutable
-artifacts and workspace ownership. `request.c` assembles and budgets outgoing
-content; `response.c` accepts completed provider output. `context_*` owns exact
-archives/recall and native compaction, `content_*` owns typed inputs and blob
-references, `retention.c` owns explicit deletion, and `workspace_*` owns grants
-and dispatch policy. `jobs.c` schedules thread-safe callbacks around existing
-operation intents and receipts; workers never own SQLite or observers. Native
-exec and MCP opt into those bounded jobs. The core still has one database owner.
+Schema 8 migrates older stores transactionally. Native clients must rebuild for
+the extended public structures in version 0.10. See [durable work](durable.md),
+[SDK integration](sdk.md), and [recovery semantics](semantics.md).

@@ -1,10 +1,17 @@
 #include "core.h"
+#include "work.h"
 
 static ah_code checkpoint_allowed(ah_engine *e, const char *sid, core_session *session,
                                   bool recover, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
+    bool host = false;
+    rc = core_work_host_session(e, sid, &host, err);
+    if (rc != AH_OK || host)
+        return rc != AH_OK ? rc
+                           : ah_fail(err, AH_INVALID,
+                                     "host work sessions have no model context checkpoint");
     rc = core_load(e, sid, session, err);
     if (rc != AH_OK)
         return rc;
