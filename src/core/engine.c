@@ -38,9 +38,22 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         return ah_fail(err, AH_IO, "out of memory");
     e->config = *config;
     e->lock_fd = -1;
+    if (config->flow_runner_path) {
+        if (config->flow_runner_path[0] != '/') {
+            free(e);
+            return ah_fail(err, AH_INVALID, "flow helper requires an absolute path");
+        }
+        e->flow_runner_path = ah_strdup(config->flow_runner_path);
+        if (!e->flow_runner_path) {
+            free(e);
+            return ah_fail(err, AH_IO, "out of memory");
+        }
+    }
+    e->config.flow_runner_path = e->flow_runner_path;
     atomic_init(&e->cancelled, false);
     atomic_init(&e->jobs, NULL);
     if (pthread_mutex_init(&e->mailbox_lock, NULL) != 0) {
+        free(e->flow_runner_path);
         free(e);
         return ah_fail(err, AH_IO, "cannot initialize steering mailbox");
     }
@@ -219,6 +232,8 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         rc = core_task_recover(e, err);
     if (rc == AH_OK)
         rc = core_context_restore(e, err);
+    if (rc == AH_OK)
+        rc = core_flow_register(e, err);
     if (rc != AH_OK) {
         ah_close(e);
         return rc;
@@ -230,6 +245,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
 void ah_close(ah_engine *e) {
     if (!e)
         return;
+    core_flow_close(e);
     core_jobs_close(e);
     ext_close(e->extensions);
     core_mailbox_free(e);
@@ -246,6 +262,7 @@ void ah_close(ah_engine *e) {
         free(e->tools[i].work);
     }
     free(e->tools);
+    free(e->flow_runner_path);
     free(e);
 }
 ah_code ah_register_tool(ah_engine *e, const ah_tool *tool, ah_error *err) {

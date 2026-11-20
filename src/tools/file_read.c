@@ -203,14 +203,17 @@ ah_code ah_local_read_file(void *context, const ah_tool_call *call, ah_tool_resu
     char leaf[4097];
     int parent = ah_local_parent_fd(context, path, leaf);
     if (parent < 0) {
+        bool missing = errno == ENOENT;
         yyjson_doc_free(args);
+        if (missing)
+            return ah_local_error(call, result, error, AH_NOT_FOUND, "File path does not exist");
         return ah_local_error(call, result, error, AH_INVALID,
                               "Path is invalid or cannot be traversed without symlinks");
     }
     int fd = openat(parent, leaf, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    ah_code code = fd >= 0 ? AH_OK : errno == ENOENT ? AH_NOT_FOUND : AH_IO;
     close(parent);
     struct stat st;
-    ah_code code = fd < 0 ? AH_IO : AH_OK;
     if (code == AH_OK && (fstat(fd, &st) || !S_ISREG(st.st_mode)))
         code = AH_INVALID;
     if (code != AH_OK) {
@@ -218,7 +221,9 @@ ah_code ah_local_read_file(void *context, const ah_tool_call *call, ah_tool_resu
             close(fd);
         yyjson_doc_free(args);
         return ah_local_error(call, result, error, code,
-                              "Cannot read a regular file without following symlinks");
+                              code == AH_NOT_FOUND
+                                  ? "File path does not exist"
+                                  : "Cannot read a regular file without following symlinks");
     }
     page.file_bytes = (uint64_t)st.st_size;
     yyjson_mut_doc *sizing = page_receipt(yyjson_get_str(path), &page);

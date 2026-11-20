@@ -7,6 +7,8 @@ static ah_code complete(ah_engine *e, core_session *session, core_operation *op,
     bool valid = result->json && strlen(result->json) <= e->config.max_output_bytes &&
                  ah_json_valid(result->json);
     bool owned = sqlite3_get_autocommit(e->db) != 0;
+    bool inline_read =
+        owned && publish && op->hidden && op->effect == AH_EFFECT_READ && !op->durable;
     uint64_t after = 0;
     ah_code code = owned ? core_begin(e, &after, error) : AH_OK;
     ah_error normalization = {0};
@@ -19,10 +21,14 @@ static ah_code complete(ah_engine *e, core_session *session, core_operation *op,
         if (code == AH_OK)
             code = core_sql(e, "RELEASE continuation", error);
         if (code == AH_OK) {
-            if (owned)
-                code = core_commit(e, after, error);
-            if (code == AH_OK && stopped != AH_OK)
-                code = ah_fail(error, stopped, "durable checkpoint saved after interruption");
+            if (owned && !strcmp(op->name, "flow"))
+                code = core_stage_flow_reads(e, session, op, error);
+            if (owned) {
+                if (code == AH_OK)
+                    code = core_commit(e, after, error);
+                else
+                    core_rollback(e);
+            }
             return code;
         }
         ah_code rollback = core_sql(e, "ROLLBACK TO continuation; RELEASE continuation", error);
@@ -104,6 +110,8 @@ static ah_code complete(ah_engine *e, core_session *session, core_operation *op,
                                 result->is_error || executed != AH_OK,
                                 stopped != AH_OK ? "received_late" : "received",
                                 stopped != AH_OK ? "tool.received_late" : "tool.received", error);
+    if (inline_read && !unknown && stopped == AH_OK && code == AH_OK && e->flow_cells)
+        code = core_flow_stage(e, session, NULL, error);
     if (owned) {
         if (code == AH_OK)
             code = core_commit(e, after, error);

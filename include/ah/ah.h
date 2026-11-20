@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define AH_VERSION "0.10.0"
+#define AH_VERSION "0.11.0"
 #define AH_ID_CAP 37
 #define AH_ERROR_CAP 512
 
@@ -137,8 +137,9 @@ typedef struct {
     unsigned max_tool_calls;
     uint64_t run_timeout_ms;
     uint64_t tool_timeout_ms;
-    unsigned max_parallel_tools; /* 1 serial; 0 also serial; maximum 16. */
-    size_t max_model_tool_bytes; /* Per-receipt model view; 0 disables extra cap. */
+    unsigned max_parallel_tools;  /* 1 serial; 0 also serial; maximum 16. */
+    size_t max_model_tool_bytes;  /* Per-receipt model view; 0 disables extra cap. */
+    const char *flow_runner_path; /* Absolute trusted helper path, or NULL for installed/sibling. */
 } ah_config;
 
 void ah_config_init(ah_config *config);

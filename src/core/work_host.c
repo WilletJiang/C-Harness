@@ -76,7 +76,7 @@ ah_code ah_work_start(ah_engine *e, const char *sid, const char *key, const char
         code = core_done(e, row, error);
     }
     if (code == AH_OK)
-        code = core_work_create_call(e, sid, NULL, key, tool, args, id, error);
+        code = core_work_create_root(e, sid, key, tool, args, id, error);
     if (code == AH_OK && !exists)
         code = core_state(e, sid, AH_READY, error);
     if (code == AH_OK)
@@ -149,6 +149,8 @@ ah_code ah_work_json(ah_engine *e, const char *sid, const char *id, char **json,
     yyjson_mut_doc_set_root(doc, root);
     core_work work;
     code = core_work_load(e, sid, id, &work, error);
+    if (code == AH_OK)
+        code = core_work_materialize_wake(e, sid, id, &work, error);
     if (code == AH_OK) {
         yyjson_mut_obj_add_uint(doc, root, "version", work.version);
         yyjson_mut_obj_add_uint(doc, root, "generation", work.generation);
@@ -166,11 +168,11 @@ ah_code ah_work_json(ah_engine *e, const char *sid, const char *id, char **json,
                 yyjson_mut_obj_add_null(doc, root, fields[index]);
             yyjson_doc_free(parsed);
         }
-        core_work_free(&work);
     } else if (code == AH_NOT_FOUND) {
         code = AH_OK;
         ah_error_clear(error);
     }
+    core_work_free(&work);
     if (code == AH_OK)
         code = add_children(e, sid, id, doc, root, error);
     if (code == AH_OK) {

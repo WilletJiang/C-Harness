@@ -10,7 +10,7 @@ typedef struct {
     const char *workspace;
     bool enable_exec; /* Explicit broad local-process authority; NOT a sandbox. */
     bool approve_writes;
-    bool enable_workflows; /* Opt-in find and host check presets. Editing is always registered. */
+    bool enable_workflows; /* Enable host-defined check presets. Workspace search and editing are always registered. */
 } ah_local_tools_config;
 ah_code ah_local_tools_open(const ah_local_tools_config *config, ah_local_tools **out,
                             ah_error *error);

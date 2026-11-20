@@ -1,5 +1,6 @@
 #include "core.h"
 #include "work.h"
+#include "../tools/local_internal.h"
 
 #define MAX_TOOL_WORKERS 16
 
@@ -16,9 +17,9 @@ bool core_independent_read(ah_engine *e, const core_operation *op) {
 
 /* Only consecutive independent reads may pass an unfinished earlier read.
  * Everything else, including approval and agent tools, closes the window. */
-static ah_code collect_reads(ah_engine *e, const char *sid, const char *first,
-                             core_operation *reads, unsigned limit, unsigned *count,
-                             ah_error *error) {
+ah_code core_collect_reads(ah_engine *e, const char *sid, const char *first, const char *flow,
+                           core_operation *reads, unsigned limit, unsigned *count,
+                           ah_error *error) {
     sqlite3_stmt *stmt = NULL;
     const char *sql =
         e->has_work
@@ -28,12 +29,15 @@ static ah_code collect_reads(ah_engine *e, const char *sid, const char *first,
               "AND seq>=(SELECT seq FROM operations WHERE id=?2) "
               "ORDER BY seq"
             : "SELECT id FROM operations WHERE session_id=? AND status!='done' ORDER BY seq";
+    if (flow)
+        sql = "SELECT o.id FROM work_calls w JOIN operations o ON o.id=w.operation_id "
+              "WHERE w.session_id=?1 AND w.parent_id=?2 AND o.status!='done' ORDER BY o.seq";
     ah_code code = core_prepare(e, sql, &stmt, error);
     if (code != AH_OK)
         return code;
     sqlite3_bind_text(stmt, 1, sid, -1, SQLITE_TRANSIENT);
     if (e->has_work)
-        sqlite3_bind_text(stmt, 2, first, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, flow ? flow : first, -1, SQLITE_TRANSIENT);
     while (*count < limit) {
         int step = sqlite3_step(stmt);
         if (step == SQLITE_DONE)
@@ -48,6 +52,8 @@ static ah_code collect_reads(ah_engine *e, const char *sid, const char *first,
         if (code != AH_OK)
             break;
         bool eligible = core_independent_read(e, &operation);
+        if (eligible && flow && (operation.durable || core_find_tool(e, operation.name)->work))
+            eligible = false;
         bool pending =
             !strcmp(operation.status, "pending") || !strcmp(operation.status, "work_ready");
         bool parked = !strcmp(operation.status, "parked");
@@ -91,8 +97,12 @@ static ah_code launch_reads(ah_engine *e, core_session *session, core_operation 
     }
     if (code == AH_OK)
         code = core_tool_intents(e, session, reads, count, error);
-    if (code != AH_OK)
-        return code;
+    return code == AH_OK ? core_dispatch_reads(e, session, reads, count, error) : code;
+}
+
+ah_code core_dispatch_reads(ah_engine *e, core_session *session, core_operation *reads,
+                            unsigned count, ah_error *error) {
+    ah_code code = AH_OK;
     for (unsigned i = 0; i < count; i++) {
         if (code == AH_OK) {
             code = core_dispatch_tool(e, session, &reads[i], true, false, error);
@@ -128,7 +138,12 @@ static ah_code launch_reads(ah_engine *e, core_session *session, core_operation 
 
 ah_code core_tools_step(ah_engine *e, core_session *session, bool *pending, ah_error *error) {
     *pending = true;
-    ah_code code = core_jobs_running(e, session->id) ? core_jobs_finish(e, session, error) : AH_OK;
+    if (session->flow_batch)
+        return core_flow_dispatch_staged(e, session, error);
+    ah_code code =
+        core_jobs_running(e, session->id) ? core_jobs_advance(e, session, true, error) : AH_OK;
+    if (code == AH_OK && session->flow_batch)
+        return core_flow_dispatch_staged(e, session, error);
     if (code != AH_OK)
         return code;
     core_operation first;
@@ -177,6 +192,23 @@ ah_code core_tools_step(ah_engine *e, core_session *session, bool *pending, ah_e
         core_operation_free(&first);
         return code;
     }
+    /* Native writes cannot infer the footprint of an already-running external
+     * process in another session. Drain it before ordinary or batched edits. */
+    core_tool *next_tool = core_find_tool(e, first.name);
+    if (next_tool &&
+        (next_tool->tool.execute == ah_local_write_file ||
+         next_tool->tool.execute == ah_local_apply) &&
+        core_jobs_running(e, NULL)) {
+        core_operation_free(&first);
+        return AH_OK;
+    }
+    bool batched = false;
+    if (ready && !running && first.effect != AH_EFFECT_READ)
+        code = core_write_batch(e, session, &first, &batched, error);
+    if (code != AH_OK || batched) {
+        core_operation_free(&first);
+        return code;
+    }
     if (core_independent_read(e, &first) &&
         (!strcmp(first.status, "pending") || !strcmp(first.status, "executing") ||
          !strcmp(first.status, "parked") || !strcmp(first.status, "work_ready"))) {
@@ -194,7 +226,7 @@ ah_code core_tools_step(ah_engine *e, core_session *session, bool *pending, ah_e
         core_operation reads[MAX_TOOL_WORKERS] = {0};
         unsigned count = 0;
         if (code == AH_OK && limit)
-            code = collect_reads(e, session->id, first.id, reads, limit, &count, error);
+            code = core_collect_reads(e, session->id, first.id, NULL, reads, limit, &count, error);
         bool workers = count && (count > 1 || running || core_jobs_running(e, NULL) ||
                                  core_find_tool(e, reads[0].name)->background);
         if (code == AH_OK && workers)
@@ -212,7 +244,7 @@ ah_code core_tools_step(ah_engine *e, core_session *session, bool *pending, ah_e
      * are captured; it is not a failed parent invocation. */
     if (code == AH_BUSY && core_jobs_running(e, session->id))
         return AH_OK;
-    if (code == AH_OK && !core_jobs_running(e, session->id)) {
+    if (code == AH_OK && !session->flow_batch && !core_jobs_running(e, session->id)) {
         code = core_next_operation(e, session->id, &first, error);
         *pending = code != AH_NOT_FOUND;
         if (code == AH_OK) {

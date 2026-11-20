@@ -27,6 +27,12 @@ find_package(ah CONFIG REQUIRED) # Set CMAKE_PREFIX_PATH to /path/to/sdk.
 target_link_libraries(my_app PRIVATE ah::ah)
 ```
 
+CMake also builds and installs `ah-flow-vm`. Ship the helper from the same build as the library. Place it beside the
+embedding executable, retain the configured install prefix, or set
+`config.engine.flow_runner_path` to its absolute deployed path. Swift Package
+Manager provides the `ah-flow-vm` executable product; macOS applications must
+bundle it alongside their executable (or set that path). See [flow](flow.md).
+
 The package exports the native dependency links; applications do not have to list
 the private JSON/TOML libraries themselves. The CMake SDK target is a C17 static library.
 Use matching headers and rebuild the host when upgrading this pre-1.0 API.

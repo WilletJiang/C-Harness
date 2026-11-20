@@ -235,17 +235,22 @@ ah_code ah_sessions_json(ah_engine *e, char **json, ah_error *err) {
     ah_mut_doc_free(d);
     return rc;
 }
-static ah_code pending_operation(ah_engine *e, const char *sid, ah_state state, core_operation *op,
-                                 ah_error *err) {
-    if (state != AH_OUTCOME_UNKNOWN)
+ah_code core_pending_operation(ah_engine *e, const char *sid, ah_state state, core_operation *op,
+                               ah_error *err) {
+    const char *status = state == AH_WAITING_APPROVAL  ? "approval"
+                         : state == AH_WAITING_INPUT   ? "input"
+                         : state == AH_OUTCOME_UNKNOWN ? "unknown"
+                                                       : NULL;
+    if (!status)
         return core_next_operation(e, sid, op, err);
     sqlite3_stmt *s = NULL;
     ah_code rc = core_prepare(e,
-                              "SELECT id FROM operations WHERE session_id=? AND status='unknown' "
+                              "SELECT id FROM operations WHERE session_id=? AND status=? "
                               "ORDER BY seq LIMIT 1",
                               &s, err);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 2, status, -1, SQLITE_STATIC);
         int step = sqlite3_step(s);
         if (step == SQLITE_ROW)
             rc = core_get_operation(e, sid, (const char *)sqlite3_column_text(s, 0), op, err);
@@ -281,7 +286,7 @@ ah_code ah_session_json(ah_engine *e, const char *sid, char **json, ah_error *er
     yyjson_mut_doc_set_root(d, o);
     sqlite3_finalize(s);
     core_operation op;
-    rc = pending_operation(e, sid, state, &op, err);
+    rc = core_pending_operation(e, sid, state, &op, err);
     if (rc == AH_OK) {
         yyjson_mut_val *p = yyjson_mut_obj(d);
         yyjson_mut_obj_add_val(d, o, "pending", p);

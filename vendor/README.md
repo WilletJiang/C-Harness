@@ -23,3 +23,9 @@ SHA-256:
 - `tomlc17/tomlc17.h`: `29c0909092f4b23c7edce705167064f4a90548db5334b4aa2cd95d7ad801adb9`
 - `tomlc17/tomlc17.c`: `7476923b6c9b8f0858b82b63ed6107f57448882983390e70c31327f7d3e2a362`
 - `tomlc17/LICENSE`: `f949d0976f85076c96fc5122f0632b5a1b806d8b2badbe968c42c97230e6e79e`
+
+QuickJS 2026-06-04 is vendored from https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz
+(archive SHA-256 b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a).
+Only its interpreter and dependencies are built into the flow helper. License: quickjs/LICENSE.
+Local patch: the M4 opcode matcher packs its high byte with an unsigned shift
+to avoid signed-shift undefined behavior, then passes the packed int to code_match.

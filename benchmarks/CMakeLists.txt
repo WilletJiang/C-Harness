@@ -1,4 +1,4 @@
-foreach(name runtime files parallel find agents durable)
+foreach(name runtime files parallel find agents durable flow)
   add_executable(bench_${name} ${name}.c)
   ah_compile_target(bench_${name})
   target_link_libraries(bench_${name} PRIVATE ah ah_json)

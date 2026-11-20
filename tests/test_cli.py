@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix='ah-cli-') as tmp:
     state = run('run', '--session', plain, '--prompt', 'Hello', '--command-id', 'u1')
     assert state['state'] == 'completed'
     names = {tool['name'] for tool in requests[-1]['tools'][0]['tools']}
-    assert 'apply_changes' in names and 'find' not in names
+    assert {'apply_changes', 'find', 'flow', 'test'} <= names
     assert not names.intersection({'list_directory', 'edit_file', 'search'})
     extension_names = {'discover', 'skill', 'mcp', 'mcp_call'}
     assert not names.intersection(extension_names), 'Installed extensions must be opt-in'

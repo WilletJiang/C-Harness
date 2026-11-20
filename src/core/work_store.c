@@ -87,14 +87,47 @@ ah_code core_work_load(ah_engine *e, const char *sid, const char *id, core_work 
     return rc;
 }
 
+/* Builtin flow waits for every child in a wave. Once done, those receipts
+ * are immutable. Store the compact wait object as its wake reference. Public
+ * wake snapshots always start with "reason" and are still read verbatim. */
+static bool flow_wait(const core_operation *op, const core_work *work) {
+    if (strcmp(op->name, "flow") || !work->wait_json)
+        return false;
+    yyjson_doc *doc = yyjson_read(work->wait_json, strlen(work->wait_json), 0);
+    yyjson_val *wait = yyjson_doc_get_root(doc);
+    bool all = yyjson_obj_size(wait) == 1 && yyjson_is_arr(yyjson_obj_get(wait, "calls"));
+    yyjson_doc_free(doc);
+    return all;
+}
+
+ah_code core_work_materialize_wake(ah_engine *e, const char *sid, const char *id, core_work *work,
+                                   ah_error *error) {
+    if (!work->wake_json || strncmp(work->wake_json, "{\"calls\":[", sizeof("{\"calls\":[") - 1))
+        return AH_OK;
+    core_work wait = {.wait_json = work->wake_json};
+    char *wake = NULL, *signal = NULL;
+    bool ready = false;
+    ah_code code = core_work_wake(e, sid, id, &wait, &ready, &wake, &signal, error);
+    free(signal);
+    if (code == AH_OK && !ready)
+        code = ah_fail(error, AH_PROTOCOL, "stored flow wake references unsettled children");
+    if (code == AH_OK) {
+        free(work->wake_json);
+        work->wake_json = wake;
+    } else
+        free(wake);
+    return code;
+}
+
 static bool failed_join(const core_work *work, const char *wake) {
     if (!work->wait_json || !wake)
         return false;
     yyjson_doc *waiting = yyjson_read(work->wait_json, strlen(work->wait_json), 0),
-               *received = yyjson_read(wake, strlen(wake), 0);
+               *received = NULL;
     const char *policy = yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(waiting), "policy"));
     bool failed = false;
     if (policy && !strcmp(policy, "fail_fast")) {
+        received = yyjson_read(wake, strlen(wake), 0);
         yyjson_val *calls = yyjson_obj_get(yyjson_doc_get_root(received), "calls"), *key, *value;
         size_t index, count;
         yyjson_obj_foreach(calls, index, count, key, value) {
@@ -109,16 +142,16 @@ static bool failed_join(const core_work *work, const char *wake) {
     return failed;
 }
 
-ah_code core_work_claim(ah_engine *e, const char *sid, const char *id, core_work *out,
-                        ah_error *err) {
-    memset(out, 0, sizeof(*out));
+ah_code core_work_claim(ah_engine *e, const char *sid, core_operation *op, ah_error *err) {
+    const char *id = op->id;
     core_work work;
     ah_code rc = core_work_load(e, sid, id, &work, err);
     if (rc != AH_OK)
         return rc;
+    bool reference = flow_wait(op, &work);
     bool ready = false;
     char *wake = NULL, *signal = NULL;
-    rc = core_work_wake(e, sid, id, &work, &ready, &wake, &signal, err);
+    rc = core_work_wake(e, sid, id, &work, &ready, reference ? NULL : &wake, &signal, err);
     if (rc == AH_OK && !ready)
         rc = ah_fail(err, AH_BUSY, "durable work is not ready");
     if (rc == AH_OK && failed_join(&work, wake)) {
@@ -140,7 +173,7 @@ ah_code core_work_claim(ah_engine *e, const char *sid, const char *id, core_work
                           "AND status IN('pending','approved','parked','work_ready'))",
                           &s, err);
     if (rc == AH_OK) {
-        const char *value = wake ? wake : work.wake_json;
+        const char *value = reference ? work.wait_json : (wake ? wake : work.wake_json);
         if (value)
             sqlite3_bind_text(s, 1, value, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(s, 2, id, -1, SQLITE_TRANSIENT);
@@ -156,8 +189,10 @@ ah_code core_work_claim(ah_engine *e, const char *sid, const char *id, core_work
         rc = core_set_operation(e, sid, id, "executing", err);
     free(wake);
     free(signal);
+    if (rc == AH_OK)
+        op->generation = work.generation + 1;
     core_work_free(&work);
-    return rc == AH_OK ? core_work_load(e, sid, id, out, err) : rc;
+    return rc;
 }
 
 static ah_code continuation_wait(yyjson_val *wait, uint64_t *until, ah_error *err) {
@@ -259,11 +294,8 @@ ah_code core_work_apply(ah_engine *e, const char *sid, const char *id, uint64_t 
         rc = core_work_reserve_signal(e, id, wait, err);
     bool ready = !wait;
     if (rc == AH_OK && wait) {
-        char *wake = NULL, *signal = NULL;
         core_work pending = {.wait_json = waiting, .wake_at_ms = until};
-        rc = core_work_wake(e, sid, id, &pending, &ready, &wake, &signal, err);
-        free(wake);
-        free(signal);
+        rc = core_work_wake(e, sid, id, &pending, &ready, NULL, NULL, err);
     }
     if (rc == AH_OK)
         rc = core_set_operation(e, sid, id, ready ? "work_ready" : "parked", err);

@@ -19,7 +19,7 @@ ah_code core_session_step(ah_engine *e, core_session *session, bool *needs_model
         }
         return AH_OK;
     }
-    if (core_cancelled(e))
+    if (core_cancelled(e) && !session->flow_batch)
         return ah_fail(error,
                        atomic_load_explicit(&e->cancelled, memory_order_relaxed) ? AH_CANCELLED
                                                                                  : AH_LIMIT,

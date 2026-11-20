@@ -21,7 +21,9 @@ ah_code core_work_seed(ah_engine *, const char *, const core_operation *, const 
                        ah_error *);
 ah_code core_work_load(ah_engine *, const char *, const char *, core_work *, ah_error *);
 void core_work_free(core_work *);
-ah_code core_work_claim(ah_engine *, const char *, const char *, core_work *, ah_error *);
+ah_code core_work_claim(ah_engine *, const char *, core_operation *, ah_error *);
+ah_code core_work_materialize_wake(ah_engine *, const char *, const char *, core_work *,
+                                   ah_error *);
 ah_code core_work_apply(ah_engine *, const char *, const char *, uint64_t, const char *,
                         ah_error *);
 ah_code core_work_ready(ah_engine *, const char *, const char *, bool *, ah_error *);
@@ -36,9 +38,9 @@ ah_code core_work_calls_schema(ah_engine *, ah_error *);
 ah_code core_work_children(ah_engine *, const char *, const char *, uint64_t, yyjson_val *,
                            ah_error *);
 ah_code core_work_children_ready(ah_engine *, const char *, const char *, yyjson_val *, bool *,
-                                 char **, ah_error *);
-ah_code core_work_create_call(ah_engine *, const char *, const char *, const char *, const char *,
-                              const char *, char[AH_ID_CAP], ah_error *);
+                                 yyjson_mut_doc *, yyjson_mut_val **, ah_error *);
+ah_code core_work_create_root(ah_engine *, const char *, const char *, const char *, const char *,
+                              char[AH_ID_CAP], ah_error *);
 ah_code core_work_host_session(ah_engine *, const char *, bool *, ah_error *);
 ah_code core_work_cancel_tree(ah_engine *, const char *, const char *, ah_error *);
 ah_code core_work_finish_children(ah_engine *, const char *, const char *, ah_error *);

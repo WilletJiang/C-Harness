@@ -156,6 +156,15 @@ ah_code ah_local_tools_open(const ah_local_tools_config *config, ah_local_tools 
     return AH_OK;
 }
 
+ah_code ah_local_test(void *context, const ah_tool_call *call, ah_tool_result *result,
+                      ah_error *error) {
+    ah_tool_call run = *call;
+    run.arguments_json = "{\"argv\":[\"./test\"]}";
+    ah_local_tools runner = {.workspace_fd = ((ah_local_tools *)context)->workspace_fd,
+                             .enable_exec = true};
+    return ah_local_exec(&runner, &run, result, error);
+}
+
 ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_error *error) {
     if (!tools || !engine || tools->registered)
         return ah_fail(error, AH_INVALID, "Missing local tools or engine");
@@ -175,7 +184,11 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "the whole group. Use one file and one edit for a single replacement.",
          ah_apply_schema, AH_EFFECT_EXTERNAL, approval, ah_local_apply, tools, false, NULL},
         {"find",
-         "Search a single-line literal in workspace UTF-8 files and return merged source "
+         "List regular file paths with mode=files (omit query; path defaults to .), including "
+         "binary files. "
+         "Discovery respects workspace .gitignore rules; include_ignored includes ignored files. "
+         "With query, search a single-line literal in workspace UTF-8 files and return merged "
+         "source "
          "excerpts with SHA-256 revisions. Use path '.' for root; optional glob matches relative "
          "paths. "
          "Skips symlinks, .git, non-text and files over 1 MiB. Bounded scan: narrow path/glob when "
@@ -201,17 +214,21 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "Use this to inspect images, including crops produced by other tools. Default detail "
          "is auto; original requires provider support. Refuses symlinks and oversized files.",
          ah_image_schema, AH_EFFECT_READ, false, ah_local_view_image, tools, true, NULL},
+        {"test",
+         "Run the executable ./test in this workspace after edits settle. Requires approval.",
+         "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
+         AH_EFFECT_EXTERNAL, true, ah_local_test, tools, false, NULL},
         {"exec",
          "Execute argv in the workspace with broad local process authority. This is NOT a sandbox.",
          ah_exec_schema, AH_EFFECT_EXTERNAL, true, ah_local_exec, tools, false, NULL}};
     size_t count = sizeof(definitions) / sizeof(*definitions);
     for (size_t i = 0; i < count; ++i) {
-        if ((!tools->enable_workflows && !strcmp(definitions[i].name, "find")) ||
-            (!tools->enable_exec && !strcmp(definitions[i].name, "exec")))
+        if (!tools->enable_exec && !strcmp(definitions[i].name, "exec"))
             continue;
-        ah_code code = !strcmp(definitions[i].name, "exec")
-                           ? ah_register_background_tool(engine, &definitions[i], error)
-                           : ah_register_tool(engine, &definitions[i], error);
+        ah_code code =
+            (!strcmp(definitions[i].name, "exec") || !strcmp(definitions[i].name, "test"))
+                ? ah_register_background_tool(engine, &definitions[i], error)
+                : ah_register_tool(engine, &definitions[i], error);
         if (code != AH_OK)
             return code;
     }

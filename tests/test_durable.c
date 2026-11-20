@@ -409,10 +409,15 @@ static void cancelled_continuation_cannot_revive(void) {
     ah_close(f->engine);
 }
 
-void df_deferred_cases(void);
+void df_deferred_cases(const char *);
+void df_crash_deferred(const char *, bool, bool);
 void durable_receipt_cases(void);
 
 int main(int argc, char **argv) {
+    if (argc == 5 && !strcmp(argv[1], "--deferred")) {
+        df_crash_deferred(argv[2], !strcmp(argv[3], "1"), !strcmp(argv[4], "1"));
+        return 2;
+    }
     int child = df_recovery_child(argc, argv);
     if (child >= 0)
         return child;
@@ -429,7 +434,7 @@ int main(int argc, char **argv) {
     cancel_parked();
     cancelled_continuation_cannot_revive();
     df_recovery_cases(argv[0]);
-    df_deferred_cases();
+    df_deferred_cases(argv[0]);
     durable_receipt_cases();
     puts("durable steps, signals, capacity, timers and crash recovery passed");
     return 0;

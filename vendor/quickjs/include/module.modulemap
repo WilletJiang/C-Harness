@@ -1,0 +1,4 @@
+module FlowQuickJS {
+    header "../quickjs.h"
+    export *
+}

@@ -30,8 +30,10 @@ static ah_code read_signal(ah_engine *e, const char *id, const char *key, char *
 ah_code core_work_wake(ah_engine *e, const char *sid, const char *id, const core_work *work,
                        bool *ready, char **wake, char **signal_key, ah_error *err) {
     *ready = work->wait_json == NULL;
-    *wake = NULL;
-    *signal_key = NULL;
+    if (wake)
+        *wake = NULL;
+    if (signal_key)
+        *signal_key = NULL;
     if (!work->wait_json)
         return AH_OK;
     yyjson_doc *doc = yyjson_read(work->wait_json, strlen(work->wait_json), 0);
@@ -41,7 +43,9 @@ ah_code core_work_wake(ah_engine *e, const char *sid, const char *id, const core
         return ah_fail(err, AH_PROTOCOL, "invalid stored durable wait");
     }
     const char *key = yyjson_get_str(yyjson_obj_get(wait, "signal"));
-    char *signal = NULL, *children = NULL;
+    char *signal = NULL;
+    yyjson_mut_doc *out = wake ? ah_mut_doc_new() : NULL;
+    yyjson_mut_val *children = NULL;
     int consumed = SIGNAL_DELIVERED;
     bool child_ready = false;
     ah_code rc = key ? read_signal(e, id, key, &signal, &consumed, err) : AH_OK;
@@ -51,57 +55,52 @@ ah_code core_work_wake(ah_engine *e, const char *sid, const char *id, const core
     }
     if (rc == AH_OK && consumed >= SIGNAL_CONSUMED)
         rc = ah_fail(err, AH_INVALID, "durable signal key was already consumed");
+    if (rc == AH_OK && wake && !out)
+        rc = ah_fail(err, AH_IO, "out of memory");
     if (rc == AH_OK)
-        rc = core_work_children_ready(e, sid, id, wait, &child_ready, &children, err);
+        rc = core_work_children_ready(e, sid, id, wait, &child_ready, out, &children, err);
     bool timer = work->wake_at_ms && work->wake_at_ms <= core_wall_ms();
     *ready = rc == AH_OK && (signal || child_ready || timer);
-    if (*ready) {
-        yyjson_mut_doc *out = ah_mut_doc_new();
-        yyjson_mut_val *root = out ? yyjson_mut_obj(out) : NULL;
-        if (!out)
-            rc = ah_fail(err, AH_IO, "out of memory");
-        else {
-            yyjson_mut_doc_set_root(out, root);
-            yyjson_mut_obj_add_str(out, root, "reason",
-                                   signal        ? "signal"
-                                   : child_ready ? "calls"
-                                                 : "timer");
-            if (signal) {
-                yyjson_doc *value = yyjson_read(signal, strlen(signal), 0);
-                yyjson_mut_val *received = yyjson_mut_obj(out);
-                yyjson_mut_obj_add_strcpy(out, received, "key", key);
-                yyjson_mut_obj_add_val(out, received, "value",
-                                       yyjson_val_mut_copy(out, yyjson_doc_get_root(value)));
-                yyjson_mut_obj_add_val(out, root, "signal", received);
-                yyjson_doc_free(value);
-                *signal_key = ah_strdup(key);
-                if (!*signal_key)
-                    rc = ah_fail(err, AH_IO, "out of memory");
-            }
-            if (children) {
-                yyjson_doc *value = yyjson_read(children, strlen(children), 0);
-                yyjson_val *calls = yyjson_obj_get(yyjson_doc_get_root(value), "calls");
-                if (calls)
-                    yyjson_mut_obj_add_val(out, root, "calls", yyjson_val_mut_copy(out, calls));
-                yyjson_doc_free(value);
-            }
-            if (timer)
-                yyjson_mut_obj_add_uint(out, root, "until_ms", work->wake_at_ms);
-            if (rc == AH_OK)
-                *wake = ah_mut_write(out);
-            ah_mut_doc_free(out);
-            if (rc == AH_OK && !*wake)
-                rc = ah_fail(err, AH_IO, "cannot encode durable wake");
+    if (*ready && wake) {
+        yyjson_mut_val *root = yyjson_mut_obj(out);
+        yyjson_mut_doc_set_root(out, root);
+        yyjson_mut_obj_add_str(out, root, "reason",
+                               signal        ? "signal"
+                               : child_ready ? "calls"
+                                             : "timer");
+        if (signal) {
+            yyjson_doc *value = yyjson_read(signal, strlen(signal), 0);
+            yyjson_mut_val *received = yyjson_mut_obj(out);
+            yyjson_mut_obj_add_strcpy(out, received, "key", key);
+            yyjson_mut_obj_add_val(out, received, "value",
+                                   yyjson_val_mut_copy(out, yyjson_doc_get_root(value)));
+            yyjson_mut_obj_add_val(out, root, "signal", received);
+            yyjson_doc_free(value);
+            *signal_key = ah_strdup(key);
+            if (!*signal_key)
+                rc = ah_fail(err, AH_IO, "out of memory");
         }
+        if (children)
+            yyjson_mut_obj_add_val(out, root, "calls", children);
+        if (timer)
+            yyjson_mut_obj_add_uint(out, root, "until_ms", work->wake_at_ms);
+        if (rc == AH_OK)
+            *wake = ah_mut_write(out);
+        if (rc == AH_OK && !*wake)
+            rc = ah_fail(err, AH_IO, "cannot encode durable wake");
     }
+    ah_mut_doc_free(out);
     free(signal);
-    free(children);
     yyjson_doc_free(doc);
     if (rc != AH_OK) {
-        free(*wake);
-        free(*signal_key);
-        *wake = NULL;
-        *signal_key = NULL;
+        if (wake) {
+            free(*wake);
+            *wake = NULL;
+        }
+        if (signal_key) {
+            free(*signal_key);
+            *signal_key = NULL;
+        }
         *ready = false;
     }
     return rc;
@@ -109,15 +108,23 @@ ah_code core_work_wake(ah_engine *e, const char *sid, const char *id, const core
 
 ah_code core_work_ready(ah_engine *e, const char *sid, const char *id, bool *ready, ah_error *err) {
     *ready = false;
-    core_work work;
-    ah_code rc = core_work_load(e, sid, id, &work, err);
+    sqlite3_stmt *row = NULL;
+    ah_code rc = core_prepare(
+        e, "SELECT wait_json,wake_at_ms FROM operation_work WHERE session_id=? AND operation_id=?",
+        &row, err);
     if (rc != AH_OK)
         return rc;
-    char *wake = NULL, *key = NULL;
-    rc = core_work_wake(e, sid, id, &work, ready, &wake, &key, err);
-    free(wake);
-    free(key);
-    core_work_free(&work);
+    sqlite3_bind_text(row, 1, sid, -1, SQLITE_STATIC);
+    sqlite3_bind_text(row, 2, id, -1, SQLITE_STATIC);
+    int step = sqlite3_step(row);
+    if (step == SQLITE_ROW) {
+        core_work work = {.wait_json = (char *)sqlite3_column_text(row, 0),
+                          .wake_at_ms = (uint64_t)sqlite3_column_int64(row, 1)};
+        rc = core_work_wake(e, sid, id, &work, ready, NULL, NULL, err);
+    } else
+        rc =
+            step == SQLITE_DONE ? AH_NOT_FOUND : ah_fail(err, AH_IO, "cannot inspect durable wait");
+    sqlite3_finalize(row);
     return rc;
 }
 

@@ -4,6 +4,49 @@ The objective is **less wall time to an independently accepted result at the sam
 quality**, including verification and necessary repair. Total tokens, local loop
 speed and first visible feedback are supporting metrics, not substitutes.
 
+## Flow and native concurrent reads
+
+Build `bench_flow` with `-DAH_BENCHMARK=ON` in a Release build. Arguments are
+the measured round count, number of distinct files and bytes per file. These
+commands exercise the four-worker default using a local mock provider:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAH_BENCHMARK=ON
+cmake --build build --target bench_flow
+./build/bench_flow 51 8 4096
+./build/bench_flow 51 32 4096
+./build/bench_flow 51 8 65536 full
+```
+
+Each sample times `ah_run` on a fresh SQLite database with FULL synchronization.
+It includes helper startup, worker dispatch, journal commits and building the
+second model request. Each mode gets three warmup rounds and rotates its place
+in the measured rounds. File creation, SDK setup, output validation and teardown
+are outside the timer. All modes must finish in two mock model calls.
+
+The default profile compares direct calls with `Promise.all` and sequential
+`await` over the same files. Both scripts return ordered path, length and
+first-character summaries. In the `full` profile, both paths deliver every
+file's full content to the model. The benchmark raises the output budgets for
+both paths and verifies every byte. The OS file cache is warm in both profiles.
+
+Apple M2, macOS 26.5.2, 51 samples per mode. Values are P50 / P95 in milliseconds.
+
+| Files | Flow output | Direct reads | Parallel flow |
+| --- | --- | ---: | ---: |
+| 8 × 4 KiB | Summaries | 4.85 / 5.85 | 7.29 / 7.94 |
+| 8 × 4 KiB | Full contents | 4.78 / 5.97 | 7.51 / 8.86 |
+| 32 × 4 KiB | Summaries | 15.21 / 18.71 | 14.50 / 18.77 |
+| 32 × 4 KiB | Full contents | 14.66 / 19.50 | 15.61 / 17.29 |
+| 8 × 64 KiB | Summaries | 9.16 / 10.83 | 10.65 / 12.82 |
+| 8 × 64 KiB | Full contents | 8.82 / 9.54 | 15.69 / 19.22 |
+
+On the same machine the preceding phase-per-process implementation took
+16.37 ms median for the eight 4 KiB parallel reads and 53.10 ms for sequential
+`await`. The live helper took 7.29 and 15.09 ms respectively with the same summary workload.
+The full-content comparison includes passing each child result into JS and returning
+the combined array through the parent receipt.
+
 ## Evidence so far
 
 The Sol comparison produced 77,548 harness output tokens versus 77,008 for Codex:

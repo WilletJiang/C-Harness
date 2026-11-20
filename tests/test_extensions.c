@@ -207,8 +207,9 @@ static void disabled_is_inert(void) {
     config.workspace = "/missing-extension-workspace";
     config.max_context_bytes = 0; /* Disabled features do not validate or read their sources. */
     ah_error error = {0};
+    size_t before = agent.engine->tool_count;
     af_ok(ah_extensions_enable(agent.engine, &config, &error), &error);
-    assert(!agent.engine->extensions && !agent.engine->tool_count);
+    assert(!agent.engine->extensions && agent.engine->tool_count == before);
     af_create(&agent, "default invocation");
     af_run(&agent);
     assert(!strstr(agent.requests[0].request, "discover"));
