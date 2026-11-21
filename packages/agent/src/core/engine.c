@@ -53,6 +53,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     }
     e->config.flow_runner_path = e->flow_runner_path;
     atomic_init(&e->cancelled, false);
+    atomic_init(&e->mailbox_bytes, 0);
     atomic_init(&e->jobs, NULL);
     if (pthread_mutex_init(&e->mailbox_lock, NULL) != 0) {
         free(e->flow_runner_path);

@@ -1,4 +1,5 @@
 #include "responses_internal.h"
+#include "turn.h"
 
 static responses_request *find_request(ah_responses *provider, void *handle) {
     for (responses_request *t = provider->requests; t; t = t->next)
@@ -7,9 +8,9 @@ static responses_request *find_request(ah_responses *provider, void *handle) {
     return NULL;
 }
 
-static ah_code start(void *context, const char *json, ah_delta_sink delta, void *delta_context,
-                     ah_cancel_check cancelled, void *cancel_context, void **handle,
-                     ah_error *error) {
+static ah_code start_scoped(void *context, const char *sid, unsigned turn, const char *json,
+                            ah_delta_sink delta, void *delta_context, ah_cancel_check cancelled,
+                            void *cancel_context, void **handle, ah_error *error) {
     ah_responses *provider = context;
     ah_error_clear(error);
     if (handle)
@@ -36,7 +37,7 @@ static ah_code start(void *context, const char *json, ah_delta_sink delta, void 
                                              : now + provider->config.timeout_ms,
                              .limit = provider->config.max_response_bytes,
                              .measure = provider->config.observe != NULL};
-    ah_code code = responses_request_setup(t, error);
+    ah_code code = responses_request_setup(t, sid, turn, error);
     if (!code) {
         code = responses_attempt_start(t);
         if (code && error)
@@ -50,6 +51,19 @@ static ah_code start(void *context, const char *json, ah_delta_sink delta, void 
     provider->requests = t;
     *handle = t;
     return AH_OK;
+}
+
+static ah_code start(void *context, const char *json, ah_delta_sink delta, void *dc,
+                     ah_cancel_check cancelled, void *cc, void **handle, ah_error *err) {
+    return start_scoped(context, NULL, 0, json, delta, dc, cancelled, cc, handle, err);
+}
+
+ah_code responses_start_in_turn(ah_async_provider p, const char *sid, unsigned turn,
+                                const char *json, ah_delta_sink delta, void *dc,
+                                ah_cancel_check cancelled, void *cc, void **handle, ah_error *err) {
+    if (p.start == start)
+        return start_scoped(p.context, sid, turn, json, delta, dc, cancelled, cc, handle, err);
+    return p.start(p.context, json, delta, dc, cancelled, cc, handle, err);
 }
 
 /* Retry waits are request state, never sleeps inside one request's completion. */
@@ -145,8 +159,7 @@ done:
     return code;
 }
 
-static ah_code result(void *context, void *handle, bool *done, char **response,
-                      ah_error *error) {
+static ah_code result(void *context, void *handle, bool *done, char **response, ah_error *error) {
     ah_responses *provider = context;
     ah_error_clear(error);
     if (done)
@@ -200,9 +213,9 @@ ah_async_provider ah_responses_async_provider(ah_responses *provider) {
                                .release = release};
 }
 
-ah_code responses_complete(void *context, const char *json, ah_delta_sink delta,
-                           void *delta_context, ah_cancel_check cancelled, void *cancel_context,
-                           char **response, ah_error *error) {
+static ah_code complete_scoped(void *context, const char *sid, unsigned turn, const char *json,
+                               ah_delta_sink delta, void *delta_context, ah_cancel_check cancelled,
+                               void *cancel_context, char **response, ah_error *error) {
     ah_responses *provider = context;
     ah_error_clear(error);
     if (response)
@@ -212,8 +225,8 @@ ah_code responses_complete(void *context, const char *json, ah_delta_sink delta,
     if (provider->requests || provider->dispatching)
         return ah_fail(error, AH_BUSY, "provider is running");
     void *handle = NULL;
-    ah_code code = start(context, json, delta, delta_context, cancelled, cancel_context,
-                         &handle, error);
+    ah_code code = start_scoped(context, sid, turn, json, delta, delta_context, cancelled,
+                                cancel_context, &handle, error);
     if (code)
         return code;
     bool done = false;
@@ -224,4 +237,17 @@ ah_code responses_complete(void *context, const char *json, ah_delta_sink delta,
     }
     release(context, handle);
     return code;
+}
+
+ah_code responses_complete(void *context, const char *json, ah_delta_sink delta, void *dc,
+                           ah_cancel_check cancelled, void *cc, char **response, ah_error *err) {
+    return complete_scoped(context, NULL, 0, json, delta, dc, cancelled, cc, response, err);
+}
+
+ah_code responses_complete_in_turn(ah_provider p, const char *sid, unsigned turn, const char *json,
+                                   ah_delta_sink delta, void *dc, ah_cancel_check cancelled,
+                                   void *cc, char **response, ah_error *err) {
+    if (p.complete == responses_complete)
+        return complete_scoped(p.context, sid, turn, json, delta, dc, cancelled, cc, response, err);
+    return p.complete(p.context, json, delta, dc, cancelled, cc, response, err);
 }

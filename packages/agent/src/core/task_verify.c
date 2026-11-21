@@ -71,6 +71,10 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
     code = core_id(id, error);
     if (code != AH_OK)
         return code;
+    core_session session;
+    code = core_load(e, sid, &session, error);
+    if (code != AH_OK)
+        return code;
     uint64_t after = 0;
     code = core_begin(e, &after, error);
     sqlite3_stmt *s = NULL;
@@ -88,11 +92,13 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
         code = core_commit(e, after, error);
     else
         core_rollback(e);
-    if (code != AH_OK)
+    if (code != AH_OK) {
+        core_session_free(&session);
         return code;
+    }
 
     e->running = true;
-    core_mailbox_active(e, sid);
+    core_mailbox_active(e, sid, session.turn);
     uint64_t now = ah_now_ms();
     e->deadline = now + e->config.tool_timeout_ms;
     if (e->deadline < now)
@@ -134,14 +140,9 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
         context.failed || result.outcome_unknown || (invoked && (code != AH_OK || !valid));
     bool passed = invoked && code == AH_OK && !result.is_error && parsed &&
                   yyjson_is_true(yyjson_obj_get(yyjson_doc_get_root(parsed), "ok"));
-    bool superseded = false;
-    core_session session;
-    ah_code drained = core_load(e, sid, &session, &check_error);
-    if (drained == AH_OK) {
-        drained = core_drain_steering(e, &session, true, &check_error);
-        superseded = session.state != AH_COMPLETED;
-        core_session_free(&session);
-    }
+    ah_code drained = core_drain_steering(e, &session, true, NULL, &check_error);
+    bool superseded = session.state != AH_COMPLETED;
+    core_session_free(&session);
     if (drained != AH_OK)
         unknown = true;
     const char *status = unknown          ? "unknown"
@@ -184,7 +185,7 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
                        receipt, error)
                 : ah_fail(error, AH_IO, "Cannot record verification; reconcile before reuse");
     free(receipt);
-    core_mailbox_active(e, NULL);
+    core_mailbox_active(e, NULL, 0);
     e->deadline = 0;
     e->running = false;
     if (saved != AH_OK)

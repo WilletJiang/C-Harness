@@ -6,6 +6,7 @@
 #include "internal.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -96,8 +97,18 @@ static void dispatch(cli_context *cli, run_job *job, const char *line) {
         goto done;
     }
     if (!strcmp(method, "steer")) {
-        code = ah_steer(cli->engine, session, str(obj, "command"), str(obj, "text"), &error);
-        reply(cli, id, code, code == AH_OK ? "{\"queued\":true}" : NULL, &error);
+        yyjson_val *expected = yyjson_obj_get(obj, "expected_turn");
+        if (expected && (!yyjson_is_uint(expected) || !yyjson_get_uint(expected) ||
+                         yyjson_get_uint(expected) > UINT_MAX)) {
+            invalid(cli, id, "expected_turn must be a positive turn number");
+            goto done;
+        }
+        unsigned turn = 0;
+        code = ah_steer_turn(cli->engine, session, (unsigned)yyjson_get_uint(expected),
+                             str(obj, "command"), str(obj, "text"), &turn, &error);
+        char ack[64];
+        snprintf(ack, sizeof(ack), "{\"queued\":true,\"turn\":%u}", turn);
+        reply(cli, id, code, code == AH_OK ? ack : NULL, &error);
         goto done;
     }
     if (running) {

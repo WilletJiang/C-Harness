@@ -302,9 +302,8 @@ static void steering_boundaries(void) {
         state_is(e, id, "completed");
         assert(f.calls == 2);
         assert(strstr(f.last_request, "steer after tools"));
-        if (with_tool)
-            assert(strstr(f.last_request, "function_call_output") <
-                   strstr(f.last_request, "steer after tools"));
+        assert(!f.executions && !strstr(f.last_request, "function_call_output"));
+        assert(!strstr(f.last_request, "\"type\":\"function_call\""));
         assert(ah_steer(e, id, "late", "too late", &error) == AH_BUSY);
         ah_close(e);
         free(f.last_request);

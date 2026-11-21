@@ -245,7 +245,7 @@ class Trace:
         self.file.write(json.dumps(row, ensure_ascii=False) + "\n")
         self.file.flush()
         compact = dict(event)
-        if event.get("event") in ("model.completed", "model.late_result"):
+        if event.get("event") in ("model.completed", "model.late_result", "model.interrupted"):
             compact["data"] = {
                 k: event.get("data", {}).get(k) for k in ("usage", "model", "reasoning")
             }

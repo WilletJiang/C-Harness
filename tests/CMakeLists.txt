@@ -1,5 +1,5 @@
 if(AH_TESTS_ENABLED)
-  foreach(test search_quota flow_recovery reader durable sdk view_image worker_launch session_step content tool_content retention core stream stream_items tools alloc parallel context context_policy results recovery cache workflow task observations find changes agents extensions jobs workspace)
+  foreach(test turn_route search_quota flow_recovery reader durable sdk view_image worker_launch session_step content tool_content retention core stream stream_items tools alloc parallel context context_policy results recovery cache workflow task observations find changes agents extensions jobs workspace)
     add_executable(test_${test} test_${test}.c)
     ah_compile_target(test_${test})
     target_compile_options(test_${test} PRIVATE -UNDEBUG)

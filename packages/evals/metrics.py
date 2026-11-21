@@ -15,13 +15,16 @@ def summarize(result):
     served = set()
     efforts = set()
     last_activity = 0
+    interrupted_usage_missing = False
     for row in result.pop("events"):
         e = row["event"]
         seconds = row["seconds"]
         kind = e.get("event") or e.get("method", "")
         if result["runner"] == "harness":
-            if kind in ("model.completed", "model.late_result"):
+            if kind in ("model.completed", "model.late_result", "model.interrupted"):
                 usage = e.get("data", {}).get("usage")
+                if kind == "model.interrupted" and not usage:
+                    interrupted_usage_missing = True
                 if usage:
                     calls += 1
                     totals["input_tokens"] += usage.get("input_tokens", 0)
@@ -78,6 +81,6 @@ def summarize(result):
         errors=errors,
     )
     result["usage_complete"] = (
-        not result["timed_out"] and result["state"] == "completed"
+        not result["timed_out"] and result["state"] == "completed" and not interrupted_usage_missing
     )
     return result

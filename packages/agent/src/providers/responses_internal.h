@@ -5,10 +5,21 @@
 #include "stream.h"
 #include <curl/curl.h>
 
+/* Bounded per-pool cache; eviction only loses affinity. A late response must
+ * still match its slot generation before it can publish a header. */
+typedef struct {
+    char session[AH_ID_CAP];
+    unsigned turn;
+    uint64_t generation;
+    char *header;
+} responses_route;
+
 struct ah_responses {
     ah_responses_config config;
     char *endpoint, *token;
     CURLM *multi;
+    responses_route routes[32];
+    size_t next_route;
     struct responses_request *requests;
     bool loopback, dispatching;
 };
@@ -23,6 +34,10 @@ typedef struct responses_request {
     struct responses_request *next;
     ah_responses *provider;
     CURL *easy;
+    responses_route *route;
+    uint64_t route_generation;
+    char *candidate_route;
+    bool route_header_seen, route_sent;
     struct curl_slist *headers;
     const char *json;
     char *response;
@@ -46,7 +61,13 @@ void responses_phase(void *context, ah_stream_phase phase);
 void responses_observe(ah_responses *provider, CURL *easy, responses_measurement *measurement);
 
 ah_code responses_check_stop(responses_request *request);
-ah_code responses_request_setup(responses_request *request, ah_error *error);
+ah_code responses_request_setup(responses_request *, const char *sid, unsigned turn, ah_error *);
+void responses_route_bind(responses_request *, const char *sid, unsigned turn);
+void responses_route_capture(responses_request *, const char *, size_t);
+void responses_route_commit(responses_request *);
+ah_code responses_route_apply(responses_request *);
+void responses_routes_clear(ah_responses *);
+void responses_route_reset(responses_request *);
 ah_code responses_attempt_start(responses_request *request);
 void responses_attempt_finish(responses_request *request, CURLcode result);
 void responses_request_free(responses_request *request);

@@ -1,14 +1,20 @@
 #include "core.h"
 #include "work.h"
+#include "../providers/turn.h"
 #include "../agents/agents_internal.h"
 
 typedef struct {
     ah_engine *engine;
     const char *session;
 } delta_context;
+static bool model_cancelled(void *context) {
+    delta_context *sink = context;
+    return core_cancelled(sink->engine) || core_model_has_steer(sink->engine, sink->session);
+}
 static void on_delta(void *context, const char *text, size_t length) {
     delta_context *sink = context;
-    core_emit_delta(sink->engine, sink->session, text, length);
+    if (!core_model_has_steer(sink->engine, sink->session))
+        core_emit_delta(sink->engine, sink->session, text, length);
 }
 ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
     ah_code code = core_guard(e, err);
@@ -59,7 +65,7 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
                        "session must be ready; submit or resume explicitly");
     }
     e->running = true;
-    core_mailbox_active(e, host ? NULL : sid);
+    core_mailbox_active(e, host ? NULL : sid, session.turn);
     uint64_t now = ah_now_ms();
     e->deadline = now + e->config.run_timeout_ms;
     if (e->deadline < now)
@@ -92,10 +98,11 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
         char *response = NULL;
         delta_context sink = {e, sid};
         uint64_t started = ah_now_us();
-        rc = e->config.provider.complete(e->config.provider.context, request, on_delta, &sink,
-                                         core_cancelled, e, &response, err);
+        rc = responses_complete_in_turn(e->config.provider, sid, session.turn, request, on_delta,
+                                        &sink, model_cancelled, &sink, &response, err);
         core_metric(e, sid, NULL, "model", started, ah_now_us(), response ? strlen(response) : 0,
-                    session.model_calls, rc);
+                    session.model_calls,
+                    rc == AH_OK && core_model_has_steer(e, sid) ? AH_CANCELLED : rc);
         free(request);
         rc = core_model_finish(e, &session, response, rc, err);
         free(response);
@@ -113,7 +120,7 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
         }
     }
     rc = core_run_failure(e, &session, rc, err, NULL);
-    core_mailbox_active(e, NULL);
+    core_mailbox_active(e, NULL, 0);
     e->deadline = 0;
     core_flow_close(e);
     e->running = false;

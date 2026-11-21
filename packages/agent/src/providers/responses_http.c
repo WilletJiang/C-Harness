@@ -44,13 +44,20 @@ static size_t header(char *bytes, size_t size, size_t count, void *context) {
             return 0;
         }
         t->status = (space[1] - '0') * 100 + (space[2] - '0') * 10 + space[3] - '0';
+        responses_route_reset(t);
         t->content_type = false;
         t->content_type_seen = false;
         t->header_complete = false;
         t->retry_after = 0;
     } else if ((length == 2 && bytes[0] == '\r' && bytes[1] == '\n') ||
                (length == 1 && bytes[0] == '\n')) {
+        if (!t->header_complete)
+            responses_route_commit(t);
         t->header_complete = true;
+    } else if (!t->header_complete && length >= sizeof("x-codex-turn-state:") - 1 &&
+               !strncasecmp(bytes, "x-codex-turn-state:", sizeof("x-codex-turn-state:") - 1)) {
+        size_t name = sizeof("x-codex-turn-state:") - 1;
+        responses_route_capture(t, bytes + name, length - name);
     } else if (length >= 13 && !strncasecmp(bytes, "Content-Type:", 13)) {
         if (t->content_type_seen) {
             ah_fail(&t->error, AH_PROTOCOL, "duplicate Content-Type header");
@@ -140,11 +147,19 @@ static bool request_route(const char *json, char route[525]) {
     return valid;
 }
 
-ah_code responses_request_setup(responses_request *t, ah_error *error) {
+ah_code responses_request_setup(responses_request *t, const char *sid, unsigned turn,
+                                ah_error *error) {
     ah_responses *provider = t->provider;
     char route[525];
     if (!request_route(t->json, route))
         return ah_fail(error, AH_INVALID, "invalid provider request");
+#if LIBCURL_VERSION_NUM >= 0x073600
+    if (sid && route[0] && !strcmp(route + sizeof("session-id: ") - 1, sid))
+        responses_route_bind(t, sid, turn);
+#else
+    (void)sid;
+    (void)turn;
+#endif
     size_t auth_size = strlen(provider->token) + 23;
     char *auth = malloc(auth_size);
     if (!auth)
@@ -178,6 +193,9 @@ ah_code responses_request_setup(responses_request *t, ah_error *error) {
     SET(CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)t->request_bytes);
     SET(CURLOPT_POST, 1L);
     SET(CURLOPT_FOLLOWLOCATION, 0L);
+#if LIBCURL_VERSION_NUM >= 0x073600
+    SET(CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+#endif
     SET(CURLOPT_SSL_VERIFYPEER, 1L);
     SET(CURLOPT_SSL_VERIFYHOST, 2L);
     SET(CURLOPT_NOSIGNAL, 1L);
@@ -206,6 +224,9 @@ failed:
 ah_code responses_attempt_start(responses_request *t) {
     ah_responses *provider = t->provider;
     uint64_t now = ah_now_ms();
+    responses_route_reset(t);
+    if (responses_route_apply(t) != AH_OK)
+        return t->error.code;
     uint64_t remaining = now < t->deadline ? t->deadline - now : 1;
     if (curl_easy_setopt(t->easy, CURLOPT_TIMEOUT_MS, (long)remaining) != CURLE_OK ||
         curl_multi_add_handle(provider->multi, t->easy) != CURLM_OK)
@@ -281,6 +302,7 @@ void responses_attempt_finish(responses_request *t, CURLcode curl_result) {
 void responses_request_free(responses_request *t) {
     if (!t)
         return;
+    responses_route_reset(t);
     curl_easy_cleanup(t->easy);
     for (struct curl_slist *item = t->headers; item; item = item->next)
         responses_wipe(item->data);

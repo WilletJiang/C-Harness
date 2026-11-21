@@ -1,4 +1,5 @@
 #include "core.h"
+#include <stdio.h>
 #include "../agents/agents_internal.h"
 
 void core_emit_delta(ah_engine *e, const char *sid, const char *text, size_t length) {
@@ -58,8 +59,12 @@ ah_code core_model_intent(ah_engine *e, core_session *session, ah_error *err) {
         rc = core_task_charge(e, session->id, true, 1, err);
     if (rc == AH_OK && e->agents_enabled)
         rc = agents_usage_intent(e, session, err);
-    if (rc == AH_OK)
-        rc = core_event(e, session->id, NULL, "model.started", "{}", err);
+    if (rc == AH_OK) {
+        char info[80];
+        snprintf(info, sizeof(info), "{\"turn\":%u,\"attempt\":%u}", session->turn,
+                 session->model_calls + 1);
+        rc = core_event(e, session->id, NULL, "model.started", info, err);
+    }
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else
@@ -91,10 +96,36 @@ ah_code core_model_finish(ah_engine *e, core_session *session, const char *respo
                  : saved;
         return rc;
     }
+    /* This check is the admission boundary. Even a provider that returns completed
+     * output after observing cancellation cannot commit stale tool intents. */
+    if ((rc == AH_OK || rc == AH_CANCELLED || rc == AH_NETWORK) &&
+        core_model_has_steer(e, session->id)) {
+        yyjson_doc *reply = response && strlen(response) <= e->config.max_output_bytes
+                                ? yyjson_read(response, strlen(response), 0)
+                                : NULL;
+        yyjson_mut_doc *doc = ah_mut_doc_new();
+        yyjson_mut_val *event = yyjson_mut_obj(doc);
+        yyjson_mut_doc_set_root(doc, event);
+        yyjson_mut_obj_add_str(doc, event, "reason", "steer");
+        yyjson_mut_obj_add_uint(doc, event, "turn", session->turn);
+        yyjson_mut_obj_add_uint(doc, event, "attempt", session->model_calls);
+        yyjson_val *usage = yyjson_obj_get(yyjson_doc_get_root(reply), "usage");
+        if (yyjson_is_obj(usage))
+            yyjson_mut_obj_add_val(doc, event, "usage", yyjson_val_mut_copy(doc, usage));
+        char *json = ah_mut_write(doc);
+        ah_mut_doc_free(doc);
+        yyjson_doc_free(reply);
+        ah_code saved = json ? core_drain_steering(e, session, false, json, err)
+                             : ah_fail(err, AH_IO, "cannot encode interrupted attempt");
+        free(json);
+        if (saved == AH_OK)
+            ah_error_clear(err);
+        return saved;
+    }
     if (rc == AH_OK)
         rc = core_accept_response(e, session, response, err);
     if (rc == AH_OK && session->state == AH_COMPLETED) {
-        rc = core_drain_steering(e, session, true, err);
+        rc = core_drain_steering(e, session, true, NULL, err);
         if (rc == AH_OK && session->state == AH_COMPLETED && !session->completion_committed)
             rc = core_run_transition(e, session->id, AH_COMPLETED, NULL, NULL, err);
     }

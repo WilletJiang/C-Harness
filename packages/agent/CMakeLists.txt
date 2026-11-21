@@ -71,6 +71,7 @@ add_library(ah STATIC
   src/providers/responses.c
   src/providers/responses_async.c
   src/providers/responses_http.c
+  src/providers/turn_route.c
   src/providers/responses_metrics.c
   src/providers/stream.c
   src/providers/stream_items.c

@@ -8,7 +8,8 @@ typedef struct {
     const char *effort;
     bool omit_cache_key, diagnostics, trace;
     char *comparison_id;
-    unsigned request_serial;
+    unsigned request_serial, turn;
+    char session[AH_ID_CAP];
 } eval_model;
 ah_provider eval_model_provider(eval_model *model);
 ah_async_provider eval_model_async_provider(eval_model *model);

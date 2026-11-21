@@ -122,7 +122,7 @@ static ah_code sandbox_exec(void *context, const ah_tool_call *call, ah_tool_res
 }
 
 static void observe(void *context, const ah_event *event) {
-    (void)context;
+    eval_model *model = context;
     if (!event->seq && strcmp(event->type, "runtime.metrics"))
         return;
     yyjson_mut_doc *doc = ah_mut_doc_new();
@@ -136,6 +136,10 @@ static void observe(void *context, const ah_event *event) {
     if (event->operation_id)
         yyjson_mut_obj_add_strcpy(doc, root, "operation_id", event->operation_id);
     yyjson_doc *data = yyjson_read(event->json, strlen(event->json), 0);
+    if (!strcmp(event->type, "model.started") && event->session_id) {
+        snprintf(model->session, sizeof(model->session), "%s", event->session_id);
+        model->turn = (unsigned)yyjson_get_uint(yyjson_obj_get(yyjson_doc_get_root(data), "turn"));
+    }
     if (data)
         yyjson_mut_obj_add_val(doc, root, "data",
                                yyjson_val_mut_copy(doc, yyjson_doc_get_root(data)));
@@ -220,6 +224,7 @@ int main(int argc, char **argv) {
     config.database_path = argv[2];
     config.provider = eval_model_provider(&eval.model);
     config.observer = observe;
+    config.observer_context = &eval.model;
     config.run_timeout_ms = run_seconds * 1000;
     config.max_parallel_tools = parallel;
     if (argc == 7) {

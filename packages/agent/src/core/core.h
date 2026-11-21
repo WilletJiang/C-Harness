@@ -13,6 +13,8 @@
 
 typedef struct core_steering {
     char *session, *command, *text;
+    enum { STEER_UNCHECKED, STEER_NEW, STEER_RECORDED } command_status;
+    unsigned turn;
     struct core_steering *next;
 } core_steering;
 typedef struct {
@@ -49,8 +51,9 @@ struct ah_engine {
     pthread_mutex_t mailbox_lock;
     bool mailbox_initialized;
     char active_session[AH_ID_CAP];
+    unsigned active_turn;
     core_steering *mailbox_head, *mailbox_tail;
-    size_t mailbox_bytes;
+    atomic_size_t mailbox_bytes;
 };
 typedef struct {
     char *id, *model, *instructions, *summary;
@@ -71,9 +74,10 @@ typedef struct {
     bool durable;
 } core_operation;
 
-void core_mailbox_active(ah_engine *, const char *);
+void core_mailbox_active(ah_engine *, const char *, unsigned);
 void core_mailbox_free(ah_engine *);
-ah_code core_drain_steering(ah_engine *, core_session *, bool, ah_error *);
+bool core_model_has_steer(ah_engine *, const char *);
+ah_code core_drain_steering(ah_engine *, core_session *, bool, const char *, ah_error *);
 ah_code core_sql(ah_engine *, const char *, ah_error *);
 ah_code core_prepare(ah_engine *, const char *, sqlite3_stmt **, ah_error *);
 ah_code core_done(ah_engine *, sqlite3_stmt *, ah_error *);

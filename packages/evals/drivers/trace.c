@@ -1,4 +1,5 @@
 #include "trace.h"
+#include "providers/turn.h"
 #include "internal.h"
 #include <stdio.h>
 
@@ -149,8 +150,9 @@ static ah_code complete(void *context, const char *request, ah_delta_sink delta,
     if (!json)
         return AH_IO;
     uint64_t started = ah_now_ms();
-    ah_code code = model->inner.complete(model->inner.context, json, delta, delta_ctx, cancelled,
-                                         cancel_ctx, response, error);
+    ah_code code =
+        responses_complete_in_turn(model->inner, model->session, model->turn, json, delta,
+                                   delta_ctx, cancelled, cancel_ctx, response, error);
     if (model->trace)
         response_event(*response, code, error, ah_now_ms() - started, request_id);
     if (code == AH_OK)
@@ -177,9 +179,11 @@ static ah_code start(void *context, const char *request, ah_delta_sink delta, vo
     call->request = prepare_request(model, request, call->request_id, error);
     call->started = ah_now_ms();
     ah_async_provider *inner = &model->async_inner;
-    ah_code code = call->request ? inner->start(inner->context, call->request, delta, delta_ctx,
-                                                cancelled, cancel_ctx, &call->inner, error)
-                                 : AH_IO;
+    ah_code code =
+        call->request
+            ? responses_start_in_turn(*inner, model->session, model->turn, call->request, delta,
+                                      delta_ctx, cancelled, cancel_ctx, &call->inner, error)
+            : AH_IO;
     if (code != AH_OK) {
         free(call->request);
         free(call);

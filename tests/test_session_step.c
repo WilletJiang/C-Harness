@@ -131,7 +131,7 @@ static char *exercise(enum scenario scenario, bool async) {
         ok(code, &error);
     if (scenario != MODEL_BUDGET) {
         state_is(engine, session, "completed");
-        assert(f.calls == 2 && f.executions == (scenario == ASK ? 0 : 1));
+        assert(f.calls == 2 && f.executions == ((scenario == ASK || scenario == STEER) ? 0 : 1));
         ok(ah_run(engine, session, &error), &error);
         assert(f.calls == 2);
     }

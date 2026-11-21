@@ -33,6 +33,8 @@ ah_code ah_responses_set_token(ah_responses *provider, const char *token, ah_err
     char *copy = ah_strdup(token);
     if (!copy)
         return ah_fail(error, AH_IO, "token allocation failed");
+    if (!provider->token || strcmp(provider->token, copy))
+        responses_routes_clear(provider);
     responses_wipe(provider->token);
     free(provider->token);
     provider->token = copy;
@@ -85,6 +87,7 @@ void ah_responses_close(ah_responses *provider) {
     while (provider->requests)
         async.release(provider, provider->requests);
     curl_multi_cleanup(provider->multi);
+    responses_routes_clear(provider);
     responses_wipe(provider->token);
     free(provider->token);
     free(provider->endpoint);

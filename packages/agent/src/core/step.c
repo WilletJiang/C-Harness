@@ -41,7 +41,7 @@ ah_code core_session_step(ah_engine *e, core_session *session, bool *needs_model
     bool host = false;
     code = core_work_host_session(e, session->id, &host, error);
     if (code == AH_OK && !host)
-        code = core_drain_steering(e, session, false, error);
+        code = core_drain_steering(e, session, false, NULL, error);
     if (code == AH_OK)
         *needs_model = true;
     return code;

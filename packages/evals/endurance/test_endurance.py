@@ -96,6 +96,18 @@ class EnduranceChecks(unittest.TestCase):
 
         asyncio.run(check())
 
+    def test_interrupted_attempt_usage(self):
+        for receipt in ({}, {"usage": {"input_tokens": 11, "output_tokens": 3}}):
+            result = summarize({
+                "runner": "harness", "timed_out": False, "state": "completed", "events": [
+                    {"seconds": 1, "event": {"event": "model.interrupted", "data": receipt}},
+                    {"seconds": 2, "event": {"event": "model.completed", "data": {
+                        "usage": {"input_tokens": 12, "output_tokens": 4}}}},
+                ],
+            })
+            self.assertEqual(result["usage_complete"], bool(receipt))
+            self.assertEqual(result["usage"]["input_tokens"], 23 if receipt else 12)
+
     def test_usage_subsets_and_cumulative_codex(self):
         c = {"runner": "codex", "timed_out": False, "state": "completed", "events": []}
         for n in (100, 300, 300):

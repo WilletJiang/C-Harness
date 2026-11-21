@@ -6,8 +6,9 @@ static void free_message(core_steering *message) {
     free(message->text);
     free(message);
 }
-void core_mailbox_active(ah_engine *e, const char *sid) {
+void core_mailbox_active(ah_engine *e, const char *sid, unsigned turn) {
     pthread_mutex_lock(&e->mailbox_lock);
+    e->active_turn = turn;
     if (sid)
         memcpy(e->active_session, sid, AH_ID_CAP);
     else
@@ -27,6 +28,10 @@ void core_mailbox_free(ah_engine *e) {
 }
 ah_code ah_steer(ah_engine *e, const char *sid, const char *command, const char *text,
                  ah_error *err) {
+    return ah_steer_turn(e, sid, 0, command, text, NULL, err);
+}
+ah_code ah_steer_turn(ah_engine *e, const char *sid, unsigned expected_turn, const char *command,
+                      const char *text, unsigned *accepted_turn, ah_error *err) {
     if (!e || !sid || !command || !*command || strlen(command) > 256 || !text || !*text ||
         strlen(text) > e->config.max_context_bytes)
         return ah_fail(err, AH_INVALID, "bounded session, command id and steering text required");
@@ -37,11 +42,21 @@ ah_code ah_steer(ah_engine *e, const char *sid, const char *command, const char 
         pthread_mutex_unlock(&e->mailbox_lock);
         return ah_fail(err, AH_BUSY, "steering requires the active running session");
     }
+    if (expected_turn && expected_turn != e->active_turn) {
+        pthread_mutex_unlock(&e->mailbox_lock);
+        return ah_fail(err, AH_BUSY, "steering turn is no longer active");
+    }
+    unsigned turn = e->active_turn;
     for (core_steering *m = e->mailbox_head; m; m = m->next) {
-        if (!strcmp(m->session, sid) && !strcmp(m->command, command)) {
+        if (m->turn == turn && !strcmp(m->session, sid) && !strcmp(m->command, command)) {
             bool same = !strcmp(m->text, text);
             pthread_mutex_unlock(&e->mailbox_lock);
-            return same ? AH_OK : ah_fail(err, AH_INVALID, "queued command id has different text");
+            if (!same)
+                return ah_fail(err, AH_INVALID, "queued command id has different text");
+            if (accepted_turn)
+                *accepted_turn = turn;
+            ah_error_clear(err);
+            return AH_OK;
         }
     }
     size_t bytes = strlen(sid) + strlen(command) + strlen(text) + 3;
@@ -52,6 +67,7 @@ ah_code ah_steer(ah_engine *e, const char *sid, const char *command, const char 
     }
     core_steering *message = calloc(1, sizeof(*message));
     if (message) {
+        message->turn = turn;
         message->session = ah_strdup(sid);
         message->command = ah_strdup(command);
         message->text = ah_strdup(text);
@@ -68,9 +84,44 @@ ah_code ah_steer(ah_engine *e, const char *sid, const char *command, const char 
         e->mailbox_head = message;
     e->mailbox_tail = message;
     e->mailbox_bytes += bytes;
+    if (accepted_turn)
+        *accepted_turn = turn;
     pthread_mutex_unlock(&e->mailbox_lock);
     ah_error_clear(err);
     return AH_OK;
+}
+/* Owner-only, including provider progress checks. Duplicate or conflicting command
+ * IDs get their normal durable receipt without interrupting another generation. */
+bool core_model_has_steer(ah_engine *e, const char *sid) {
+    if (!atomic_load_explicit(&e->mailbox_bytes, memory_order_acquire))
+        return false;
+    bool pending = false;
+    pthread_mutex_lock(&e->mailbox_lock);
+    for (core_steering *m = e->mailbox_head; m; m = m->next) {
+        if (m->command_status == STEER_RECORDED || m->turn != e->active_turn ||
+            strcmp(m->session, sid))
+            continue;
+        if (m->command_status == STEER_UNCHECKED) {
+            sqlite3_stmt *s = NULL;
+            if (core_prepare(e, "SELECT 1 FROM commands WHERE session_id=? AND id=?", &s, NULL) ==
+                AH_OK) {
+                sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(s, 2, m->command, -1, SQLITE_TRANSIENT);
+                int step = sqlite3_step(s);
+                if (step == SQLITE_ROW)
+                    m->command_status = STEER_RECORDED;
+                else if (step == SQLITE_DONE)
+                    m->command_status = STEER_NEW;
+            }
+            sqlite3_finalize(s);
+        }
+        if (m->command_status == STEER_NEW) {
+            pending = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&e->mailbox_lock);
+    return pending;
 }
 static char *ack_json(const core_steering *message, bool duplicate) {
     yyjson_mut_doc *d = ah_mut_doc_new();
@@ -81,12 +132,13 @@ static char *ack_json(const core_steering *message, bool duplicate) {
     yyjson_mut_obj_add_strcpy(d, o, "command_id", message->command);
     yyjson_mut_obj_add_strcpy(d, o, "text", message->text);
     yyjson_mut_obj_add_bool(d, o, "duplicate", duplicate);
+    yyjson_mut_obj_add_uint(d, o, "turn", message->turn);
     char *json = ah_mut_write(d);
     ah_mut_doc_free(d);
     return json;
 }
 static ah_code persist_message(ah_engine *e, core_session *session, core_steering *message,
-                               bool *added, ah_error *err) {
+                               bool *added, const char *interruption, ah_error *err) {
     sqlite3_stmt *s = NULL;
     ah_code rc =
         core_prepare(e, "SELECT text,kind FROM commands WHERE session_id=? AND id=?", &s, err);
@@ -101,12 +153,13 @@ static ah_code persist_message(ah_engine *e, core_session *session, core_steerin
     sqlite3_finalize(s);
     if (step != SQLITE_ROW && step != SQLITE_DONE)
         return ah_fail(err, AH_IO, "steering command lookup failed");
+    bool stale = message->turn != session->turn;
     char *ack = ack_json(message, exists);
     if (!ack)
         return ah_fail(err, AH_IO, "out of memory");
     uint64_t after = 0;
     rc = core_begin(e, &after, err);
-    if (rc == AH_OK && !exists) {
+    if (rc == AH_OK && !exists && !stale) {
         rc = core_prepare(e, "INSERT INTO commands(session_id,id,text) VALUES(?,?,?)", &s, err);
         if (rc == AH_OK) {
             sqlite3_bind_text(s, 1, message->session, -1, SQLITE_TRANSIENT);
@@ -134,22 +187,25 @@ static ah_code persist_message(ah_engine *e, core_session *session, core_steerin
         if (rc == AH_OK)
             rc = core_state(e, session->id, AH_RUNNING, err);
     }
+    if (rc == AH_OK && !exists && !stale && !*added && interruption)
+        rc = core_event(e, session->id, NULL, "model.interrupted", interruption, err);
     if (rc == AH_OK)
-        rc = core_event(e, session->id, NULL, exists && !same ? "input.rejected" : "input.steered",
-                        ack, err);
+        rc = core_event(e, session->id, NULL,
+                        stale || (exists && !same) ? "input.rejected" : "input.steered", ack, err);
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else
         core_rollback(e);
     free(ack);
-    if (rc == AH_OK && !exists) {
+    if (rc == AH_OK && !exists && !stale) {
         *added = true;
         session->state = AH_RUNNING;
         session->completion_committed = false;
     }
     return rc;
 }
-ah_code core_drain_steering(ah_engine *e, core_session *session, bool terminal, ah_error *err) {
+ah_code core_drain_steering(ah_engine *e, core_session *session, bool terminal,
+                            const char *interruption, ah_error *err) {
     pthread_mutex_lock(&e->mailbox_lock);
     if (terminal && !e->agents_enabled && !strcmp(e->active_session, session->id))
         e->active_session[0] = '\0';
@@ -174,7 +230,7 @@ ah_code core_drain_steering(ah_engine *e, core_session *session, bool terminal, 
     ah_code rc = AH_OK;
     bool added = false;
     while (messages) {
-        rc = persist_message(e, session, messages, &added, err);
+        rc = persist_message(e, session, messages, &added, interruption, err);
         if (rc != AH_OK) {
             pthread_mutex_lock(&e->mailbox_lock);
             tail->next = e->mailbox_head;
@@ -194,6 +250,6 @@ ah_code core_drain_steering(ah_engine *e, core_session *session, bool terminal, 
         messages = next;
     }
     if (terminal && added && rc == AH_OK)
-        core_mailbox_active(e, session->id);
+        core_mailbox_active(e, session->id, session->turn);
     return rc;
 }

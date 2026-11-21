@@ -163,11 +163,17 @@ ah_code ah_submit(ah_engine *engine, const char *session_id, const char *command
 ah_code ah_run(ah_engine *engine, const char *session_id, ah_error *error);
 /* Cross-thread operations. Engine must remain alive until the owner joins. */
 void ah_cancel(ah_engine *engine);
-/* Queues a bounded, copied update for the next model boundary. AH_OK means
+/* Queues a bounded update. Active inference yields and uncommitted model output is discarded.
+ * Already admitted tool work settles before the next inference. AH_OK means
  * queued; input.steered is the durable acknowledgment. Retry unacknowledged
  * command IDs after a crash. Does not interrupt an in-flight tool. */
 ah_code ah_steer(ah_engine *engine, const char *session_id, const char *command_id,
                  const char *text, ah_error *error);
+/* As ah_steer, rejecting a late message addressed to a different turn. Zero selects
+ * the current turn. accepted_turn, when supplied, is written on successful admission. */
+ah_code ah_steer_turn(ah_engine *engine, const char *session_id, unsigned expected_turn,
+                      const char *command_id, const char *text, unsigned *accepted_turn,
+                      ah_error *error);
 ah_code ah_resume(ah_engine *engine, const char *session_id, ah_error *error);
 ah_code ah_decide(ah_engine *engine, const char *session_id, const char *operation_id, bool allow,
                   ah_error *error);

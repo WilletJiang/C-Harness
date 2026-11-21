@@ -165,7 +165,7 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
     }
     code = job->recover ? recover_job(job, error) : AH_OK;
     if (code == AH_OK && !strcmp(session->id, scheduler->root) && session->state == AH_COMPLETED)
-        code = core_drain_steering(e, session, true, error);
+        code = core_drain_steering(e, session, true, NULL, error);
     bool changed = false;
     if (code == AH_OK)
         code = agents_drain(e, session, &changed, error);
@@ -186,7 +186,7 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
     if (code != AH_OK)
         return code;
     code = agents_model_start(job, error);
-    if (code == AH_OK)
+    if (code == AH_OK && job->handle)
         scheduler->active++;
     return code;
 }
@@ -268,7 +268,7 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
     e->running = true;
     e->yield = pump_models;
     e->yield_context = &scheduler;
-    core_mailbox_active(e, scheduler.root);
+    core_mailbox_active(e, scheduler.root, scheduler.jobs[0]->session.turn);
     while (code == AH_OK) {
         e->deadline = scheduler.deadline;
         if (core_cancelled(e)) {
@@ -356,7 +356,7 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
                 *error = cleanup_error;
         }
     }
-    core_mailbox_active(e, NULL);
+    core_mailbox_active(e, NULL, 0);
     e->deadline = 0;
     core_flow_close(e);
     e->running = false;
