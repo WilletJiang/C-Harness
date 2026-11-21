@@ -122,7 +122,7 @@ class LocalTransportTests(unittest.IsolatedAsyncioTestCase):
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
         await site.start()
         port = self.runner.addresses[0][1]
-        self.endpoint = patch("evals.transport.client.ENDPOINT", f"http://127.0.0.1:{port}/v1/responses")
+        self.endpoint = patch(f"{__package__}.client.ENDPOINT", f"http://127.0.0.1:{port}/v1/responses")
         self.endpoint.start()
         self.environment = patch.dict(os.environ, {}, clear=True)
         self.environment.start()

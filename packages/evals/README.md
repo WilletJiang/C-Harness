@@ -19,7 +19,7 @@ servers only; live inference is always an explicit command.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAH_LIVE_EVAL=ON
 cmake --build build --parallel
-python3 -B -m host.auth login
+python3 -B -m packages.host.auth login
 ```
 
 The optional [host adapter](../host/README.md) reuses the subscription login in
@@ -30,7 +30,7 @@ Platform API key. Workspaces and tools must not receive refresh credentials.
 ## Small tasks
 
 ```sh
-python3 -B -m host.auth exec -- python3 -B -m evals.smoke.run \
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.smoke.run \
   --driver build/live_driver --output /private/fresh-smoke \
   --model gpt-6.1-sol --effort low
 ```
@@ -53,7 +53,7 @@ and context policies still differ between implementations.
 ## Parallel long tasks
 
 ```sh
-python3 -B -m host.auth exec -- python3 -B -m evals.endurance.run \
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.endurance.run \
   --driver build/live_driver --output /private/fresh-endurance \
   --model gpt-6.1-sol --effort xhigh --duration 600 --repetitions 3
 ```
@@ -71,7 +71,7 @@ completion, correctness, missing deliverables and externally stopped work must b
 reported separately. The additional audit runs with:
 
 ```sh
-python3 -B -m evals.endurance.quality /absolute/path/to/workspace
+python3 -B -m packages.evals.endurance.quality /absolute/path/to/workspace
 ```
 
 Do not modify submitted implementations before grading. Generated tests should also
@@ -82,7 +82,7 @@ Conflict/NotFound precedence case remains an unscored observation.
 ## Cache controls
 
 ```sh
-python3 -B -m host.auth exec -- python3 -B -m evals.cache.run \
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.cache.run \
   --driver build/cache_driver --output /private/fresh-cache --rounds 2 --parallel
 ```
 
@@ -115,7 +115,7 @@ full-history WebSocket and same-socket incremental WebSocket. It has a separate
 Python 3.11+ / `aiohttp` dependency and 14 offline tests; it is not required by the
 C build or default CTest suite. It reuses the host login and retains compact metrics
 without raw model text or credentials. The production C provider remains HTTP/SSE.
-See the [measured results and limits](../docs/evaluations/websocket-evaluation.md).
+See the [measured results and limits](../../docs/evaluations/websocket-evaluation.md).
 
 ## Boundaries and records
 
@@ -127,7 +127,7 @@ caches and load. Small task counts cannot establish broad superiority.
 
 Keep generated code, databases and raw traces outside the repository. Remove them
 after retaining the necessary compact measurements; retain the Keychain login.
-Historical reports and ledgers live in [docs/evaluations](../docs/evaluations/README.md).
+Historical reports and ledgers live in [docs/evaluations](../../docs/evaluations/README.md).
 The layout changed after those experiments; their recorded source hashes refer to
 the original commits. Prompt/specification contents remain unchanged.
 
@@ -137,7 +137,7 @@ Keep separately built baseline and candidate drivers, then run the fixed short
 (`update`) and medium (`intervals`, `reconcile`) tasks in paired trials:
 
 ```sh
-python3 -B -m host.auth exec -- python3 -B -m evals.compare \
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.compare \
   --baseline-driver /private/baseline/live_driver \
   --candidate-driver /private/candidate/live_driver \
   --output /private/fresh-paired-report --model gpt-6.1-sol --effort low \
@@ -181,7 +181,7 @@ use loopback fixtures only.
 
 ## Image-based long tasks
 
-`python3 -B -m host.auth exec -- python3 -B -m evals.endurance.run --driver build/live_driver --output /private/fresh-visual --model gpt-6.1-sol --effort xhigh --visual --duration 1100 --repetitions 3`
+`python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.endurance.run --driver build/live_driver --output /private/fresh-visual --model gpt-6.1-sol --effort xhigh --visual --duration 1100 --repetitions 3`
 adds three native image inputs to the Workboard release task. All six runs start
 behind a barrier; no cutoff or follow-up is disclosed to the models. A dependency
 graph, parameter table and execution timeline are available only as PNGs. The

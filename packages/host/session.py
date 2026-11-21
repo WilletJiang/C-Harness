@@ -134,7 +134,7 @@ class SessionManager:
         if record is None:
             raise AuthError(
                 "login_required",
-                "Run python -m host.auth login once to connect ChatGPT",
+                f"Run python -m {__package__}.auth login once to connect ChatGPT",
             )
         if (
             not isinstance(record, dict)

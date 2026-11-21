@@ -155,7 +155,10 @@ def report(results, plan):
 async def run(args, runners=None):
     runners = runners or {"harness": run_harness, "codex": run_codex}
     root = args.output.resolve()
-    if root.is_relative_to(Path(__file__).resolve().parents[1]):
+    source_root = Path(__file__).resolve().parents[1]
+    if source_root.name == "packages":
+        source_root = source_root.parent
+    if root.is_relative_to(source_root):
         raise ValueError("Evaluation output must be outside the repository")
     if root.exists() and (not root.is_dir() or any(root.iterdir())):
         raise ValueError("A fresh empty output directory is required; attempts are never overwritten")

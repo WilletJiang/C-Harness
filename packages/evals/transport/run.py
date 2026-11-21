@@ -155,7 +155,7 @@ async def chain(token, args, ledger, mode, repetition):
 async def execute(args):
     token = os.environ.get("AH_ACCESS_TOKEN")
     if not token:
-        raise SystemExit("AH_ACCESS_TOKEN is required; use host.auth exec")
+        raise SystemExit("AH_ACCESS_TOKEN is required; use packages.host.auth exec from the repository root")
     path = args.output.resolve()
     if path.exists():
         raise SystemExit("Output already exists; preserve prior attempts")

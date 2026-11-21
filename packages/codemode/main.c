@@ -1,5 +1,5 @@
 /* Isolated VM for one flow. Only the owner can settle outstanding tool promises. */
-#include "../vendor/quickjs/quickjs.h"
+#include "../../vendor/quickjs/quickjs.h"
 #include <arpa/inet.h>
 #include <signal.h>
 #include <stdint.h>

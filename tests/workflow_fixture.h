@@ -1,6 +1,6 @@
 #ifndef AH_WORKFLOW_FIXTURE_H
 #define AH_WORKFLOW_FIXTURE_H
-#include "../src/tools/local_internal.h"
+#include "tools/local_internal.h"
 #include <assert.h>
 #include <limits.h>
 #include <sqlite3.h>

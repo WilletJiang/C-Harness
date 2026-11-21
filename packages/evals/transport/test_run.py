@@ -92,8 +92,8 @@ class ProbeTests(unittest.IsolatedAsyncioTestCase):
                 ])
                 ledger = SimpleNamespace(data={"probe": []}, save=Mock())
                 args = SimpleNamespace(model="m", effort="xhigh")
-                with patch("evals.transport.run.Client", return_value=client), \
-                     patch("evals.transport.run.uuid.uuid4", return_value=identifier), \
+                with patch(f"{__package__}.run.Client", return_value=client), \
+                     patch(f"{__package__}.run.uuid.uuid4", return_value=identifier), \
                      patch("builtins.print"):
                     result = await probe("dummy-test-token", args, ledger)
                 self.assertEqual(result, expected)

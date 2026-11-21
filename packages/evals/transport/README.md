@@ -9,11 +9,11 @@ pinned to the measured version 3.13.4 in `requirements.txt`.
 From the harness root, after the existing subscription login is available:
 
 ```sh
-python3 -m pip install -r evals/transport/requirements.txt
-python3 -B -m unittest discover -s evals/transport -t .
-python3 -B -m host.auth exec -- python3 -B -m evals.transport.run \
+python3 -m pip install -r packages/evals/transport/requirements.txt
+python3 -B -m unittest discover -s packages/evals/transport -t .
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.transport.run \
   --probe --output /private/fresh-websocket-probe.json
-python3 -B -m host.auth exec -- python3 -B -m evals.transport.run \
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.transport.run \
   --rounds 3 --output /private/fresh-websocket-comparison.json
 ```
 
@@ -62,7 +62,7 @@ For two additional HTTP checks through the unchanged C transport:
 cmake -S . -B /private/fresh-build -DAH_LIVE_EVAL=ON \
   -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build /private/fresh-build --target cache_driver --parallel
-python3 -B -m host.auth exec -- python3 -B -m evals.transport.c_sanity \
+python3 -B -m packages.host.auth exec -- python3 -B -m packages.evals.transport.c_sanity \
   --driver /private/fresh-build/cache_driver --output /private/fresh-c-sanity.json
 ```
 
@@ -71,5 +71,5 @@ does not expose first-content timing or observed connection-reuse counters. This
 sanity check is not a C-versus-Python performance comparison. Remove the temporary
 build afterward; preserve the subscription login.
 
-The [2026-11-05 report](../../docs/evaluations/websocket-evaluation.md) includes all
+The [2026-11-05 report](../../../docs/evaluations/websocket-evaluation.md) includes all
 measured attempts, the quality failure and the limits on interpreting the results.
