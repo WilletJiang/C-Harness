@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import socket
+import ssl
 import threading
 import time
 import unittest
@@ -13,10 +14,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ..login import login
 from ..oauth import AuthError, ISSUER, OAuthClient
+from ..oauth_http import OAuthConnection
 from ..session import SessionManager
 from .test_session import FakeOAuth, MemoryVault
 
@@ -27,6 +29,36 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class LoginTests(unittest.TestCase):
+    def test_token_post_retries_handshake_but_never_resends_body(self):
+        for lose_reply in (False, True):
+            with self.subTest(lose_reply=lose_reply):
+                conn = OAuthConnection("auth.openai.com")
+                sock = Mock()
+                attempts, sent = [], []
+
+                def connect(client):
+                    attempts.append(True)
+                    if len(attempts) == 1:
+                        raise ssl.SSLEOFError("TLS closed before HTTP")
+                    client.sock = sock
+
+                def write(data):
+                    if data == b"one-use-code":
+                        sent.append(data)
+                        if lose_reply:
+                            raise ConnectionResetError("connection lost during POST")
+
+                sock.sendall.side_effect = write
+                with patch("http.client.HTTPSConnection.connect", connect), patch("time.sleep"):
+                    if lose_reply:
+                        with self.assertRaises(ConnectionResetError):
+                            conn.request("POST", "/token", b"one-use-code")
+                    else:
+                        conn.request("POST", "/token", b"one-use-code")
+                self.assertEqual(len(attempts), 2)
+                self.assertEqual(sent, [b"one-use-code"])
+                conn.close()
+
     def test_manual_link_and_pkce_with_and_without_a_saved_hint(self):
         for with_hint in (False, True):
             with self.subTest(with_hint=with_hint):
@@ -141,6 +173,15 @@ class LoginTests(unittest.TestCase):
 
         valid = token({})
         self.assertEqual(api.identity(valid, "issued", nonce="nonce")["sub"], "user")
+        with (
+            patch.object(api.jwks, "get_signing_key_from_jwt",
+                         side_effect=jwt.PyJWKClientConnectionError("offline")) as fetch,
+            patch("time.sleep"),
+            self.assertRaises(AuthError) as missing,
+        ):
+            api.identity(valid, "issued", nonce="nonce")
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual(missing.exception.code, "network")
         for changes in (
             {"iss": "wrong"},
             {"aud": "wrong"},
@@ -168,9 +209,10 @@ class LoginTests(unittest.TestCase):
                 ).encode()
             ),
         )
-        with patch("urllib.request.urlopen", side_effect=error):
+        client = OAuthClient()
+        with patch.object(client.http, "open", side_effect=error):
             with self.assertRaises(AuthError) as caught:
-                OAuthClient().refresh("client", "refresh-secret")
+                client.refresh("client", "refresh-secret")
         error.close()
         self.assertEqual(caught.exception.code, "invalid_grant")
         self.assertNotIn("secret", str(caught.exception))

@@ -2,9 +2,11 @@
 
 import hashlib
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from .oauth_http import OAuthHTTPSHandler
 
 ISSUER = "https://auth.openai.com"
 RESOURCE = "https://api.openai.com/v1"
@@ -23,13 +25,14 @@ class OAuthClient:
     def __init__(self):
         self.discovery = None
         self.jwks = None
+        self.http = urllib.request.build_opener(OAuthHTTPSHandler())
 
     def _request(self, url, values=None):
         body = urllib.parse.urlencode(values).encode() if values is not None else None
         headers = {"Content-Type": "application/x-www-form-urlencoded"} if body else {}
         request = urllib.request.Request(url, data=body, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with self.http.open(request, timeout=30) as response:
                 raw = response.read(65537)
                 if len(raw) > 65536:
                     raise AuthError(
@@ -59,8 +62,9 @@ class OAuthClient:
                 earliest_refresh_at=earliest,
             ) from None
         except (urllib.error.URLError, TimeoutError, OSError) as error:
+            path = urllib.parse.urlsplit(url).path
             raise AuthError(
-                "network", "OpenAI authorization network request failed", retryable=True
+                "network", f"Network request to OpenAI failed at {path}", retryable=True
             ) from error
         except (ValueError, UnicodeError) as error:
             raise AuthError(
@@ -96,7 +100,14 @@ class OAuthClient:
         try:
             if self.jwks is None:
                 self.jwks = jwt.PyJWKClient(discovery["jwks_uri"])
-            key = self.jwks.get_signing_key_from_jwt(token)
+            for attempt in range(3):
+                try:
+                    key = self.jwks.get_signing_key_from_jwt(token)
+                    break
+                except jwt.PyJWKClientConnectionError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.25 * (2**attempt))
             required = ["exp", "iss", "aud", "sub"] + (
                 ["nonce"] if nonce is not None else []
             )
@@ -108,6 +119,10 @@ class OAuthClient:
                 audience=client_id,
                 options={"require": required},
             )
+        except jwt.PyJWKClientConnectionError as error:
+            raise AuthError(
+                "network", "Could not fetch OpenAI signing keys", retryable=True
+            ) from error
         except Exception as error:
             raise AuthError(
                 "identity", "OpenAI identity token validation failed"
@@ -153,7 +168,7 @@ class OAuthClient:
             {"token": token, "token_type_hint": "refresh_token", "client_id": client_id}
         ).encode()
         try:
-            with urllib.request.urlopen(
+            with self.http.open(
                 urllib.request.Request(
                     endpoint,
                     data=body,

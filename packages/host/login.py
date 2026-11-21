@@ -92,9 +92,10 @@ def login(manager, on_url, *, open_browser=True, timeout=600):
                 self.redirect("/complete")
             except Exception as error:
                 outcome["error"] = error
-                self.send_error(
-                    400, "Could not save a validated login session; return to the app"
-                )
+                if isinstance(error, AuthError) and error.code == "network":
+                    self.send_error(502, "OpenAI was unreachable during sign-in; return to the app")
+                else:
+                    self.send_error(400, "Could not complete sign-in; return to the app")
             finally:
                 finished.set()
                 callback_lock.release()
