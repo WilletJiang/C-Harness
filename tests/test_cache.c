@@ -58,13 +58,7 @@ static void check_layout(ah_engine *engine, const char *id, const char *instruct
     if (first_history) {
         yyjson_val *first = yyjson_arr_get_first(input);
         assert(yyjson_equals_str(yyjson_obj_get(first, "role"), "developer"));
-        yyjson_val *content = yyjson_obj_get(first, "content");
-        assert(yyjson_arr_size(content) == 1);
-        yyjson_val *part = yyjson_arr_get_first(content);
-        assert(yyjson_equals_str(yyjson_obj_get(part, "type"), "input_text"));
-        assert(yyjson_equals_str(yyjson_obj_get(part, "text"), instructions));
-        yyjson_val *mark = yyjson_obj_get(part, "prompt_cache_breakpoint");
-        assert(yyjson_equals_str(yyjson_obj_get(mark, "mode"), "explicit"));
+        assert(yyjson_equals_str(yyjson_obj_get(first, "content"), instructions));
     }
     if (summary) {
         yyjson_val *item = yyjson_arr_get(input, first_history);

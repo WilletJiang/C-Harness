@@ -75,9 +75,7 @@ def main(driver):
             assert 4 <= len(received) <= 5, len(received)  # A child completion may wake the parent.
             prefix = received[0][0]["input"][0]
             assert prefix["role"] == "developer"
-            part, = prefix["content"]
-            assert part["type"] == "input_text" and part["text"]
-            assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+            assert isinstance(prefix["content"], str) and prefix["content"]
             histories = {}
             for body, route in received:
                 assert body["model"] == "gpt-6.2-sol"

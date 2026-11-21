@@ -47,17 +47,6 @@ static bool uses_developer_prefix(const char *model) {
     return !strncmp(model, family, n) && (model[n] == '\0' || model[n] == '-');
 }
 
-static void add_developer_prefix(yyjson_mut_doc *d, yyjson_mut_val *input, const char *text) {
-    yyjson_mut_val *message = yyjson_mut_arr_add_obj(d, input);
-    yyjson_mut_obj_add_str(d, message, "role", "developer");
-    yyjson_mut_val *content = yyjson_mut_obj_add_arr(d, message, "content");
-    yyjson_mut_val *part = yyjson_mut_arr_add_obj(d, content);
-    yyjson_mut_obj_add_str(d, part, "type", "input_text");
-    yyjson_mut_obj_add_strcpy(d, part, "text", text);
-    yyjson_mut_val *boundary = yyjson_mut_obj_add_obj(d, part, "prompt_cache_breakpoint");
-    yyjson_mut_obj_add_str(d, boundary, "mode", "explicit");
-}
-
 static ah_code build_request(ah_engine *e, const core_session *session, char **json,
                              ah_error *err) {
     *json = NULL;
@@ -105,8 +94,11 @@ static ah_code build_request(ah_engine *e, const core_session *session, char **j
     yyjson_mut_val *input = yyjson_mut_arr(d);
     yyjson_mut_obj_add_val(d, root, "input", input);
     /* GPT-6.2 renders top-level instructions after all cacheable input. */
-    if (developer_prefix && *session->instructions)
-        add_developer_prefix(d, input, session->instructions);
+    if (developer_prefix && *session->instructions) {
+        yyjson_mut_val *message = yyjson_mut_arr_add_obj(d, input);
+        yyjson_mut_obj_add_str(d, message, "role", "developer");
+        yyjson_mut_obj_add_strcpy(d, message, "content", session->instructions);
+    }
     if (*session->summary) {
         yyjson_mut_val *item = yyjson_mut_obj(d);
         yyjson_mut_obj_add_str(d, item, "role", "user");
