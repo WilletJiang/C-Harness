@@ -116,6 +116,7 @@ void core_flow_close(ah_engine *);
 ah_code core_recover(ah_engine *, ah_error *);
 ah_code core_migrate_result_refs(ah_engine *, ah_error *);
 const char *core_builtin_schema(const char *);
+ah_code core_request_tools(const ah_engine *, yyjson_mut_doc *, yyjson_mut_val *, bool, ah_error *);
 ah_code core_request(ah_engine *, const core_session *, char **, ah_error *);
 ah_code core_accept_response(ah_engine *, core_session *, const char *, ah_error *);
 ah_code core_execute_operation(ah_engine *, core_session *, core_operation *, ah_error *);

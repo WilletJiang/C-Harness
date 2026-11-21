@@ -200,7 +200,30 @@ static void human_reply_fork(void) {
     }
 }
 
+static void first_native_checkpoint(void) {
+    /* A first-response native checkpoint can have no inactive input at all. */
+    fixture f = {.answers = {native_end}};
+    ah_engine *e = open_engine(&f, ":memory:", NULL);
+    enable(e, true);
+    char sid[AH_ID_CAP], *request = NULL;
+    create_input(e, sid);
+    ah_error error = {0};
+    ok(ah_run(e, sid, &error), &error);
+    assert(!scalar(e, "SELECT COUNT(*) FROM items WHERE active=0"));
+    core_session session;
+    ok(core_load(e, sid, &session, &error), &error);
+    ok(core_request(e, &session, &request, &error), &error);
+    const char *user = strstr(request, "first turn"), *note = strstr(request, "Provider-compacted"),
+               *item = strstr(request, "OPAQUE_TWO");
+    assert(user && note && item && user < note && note < item);
+    free(request);
+    core_session_free(&session);
+    ah_close(e);
+    free(f.last_request);
+}
+
 void context_native_cases(void) {
+    first_native_checkpoint();
     capability_and_roundtrip();
     rollback_and_validation();
     human_reply_fork();

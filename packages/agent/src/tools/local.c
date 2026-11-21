@@ -193,7 +193,7 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "paths. "
          "Skips symlinks, .git, non-text and files over 1 MiB. Bounded scan: narrow path/glob when "
          "scan_truncated. Paginate with next_offset and snapshot; use read_file for truncated "
-         "excerpts.",
+         "excerpts. Unchanged pages may be referenced; force=true repeats the page.",
          ah_find_schema, AH_EFFECT_READ, false, ah_local_find, tools, true, NULL},
         {"read_file",
          "Read UTF-8 file lines (default 200, max 1000) from offset_line (default 1). "

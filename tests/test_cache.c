@@ -31,6 +31,25 @@ static ah_engine *open_engine(const char *path) {
     ok(ah_open(&config, &engine, &error), &error);
     return engine;
 }
+static ah_code unused_tool(void *ctx, const ah_tool_call *call, ah_tool_result *out,
+                           ah_error *err) {
+    (void)ctx;
+    (void)call;
+    (void)out;
+    (void)err;
+    abort();
+}
+static void register_pair(ah_engine *e, const char *first, const char *second) {
+    ah_error error = {0};
+    ah_tool tool = {.name = first,
+                    .description = "fixture",
+                    .parameters_json = "{\"type\":\"object\"}",
+                    .effect = AH_EFFECT_READ,
+                    .execute = unused_tool};
+    ok(ah_register_tool(e, &tool, &error), &error);
+    tool.name = second;
+    ok(ah_register_tool(e, &tool, &error), &error);
+}
 static char *request(ah_engine *engine, const char *id) {
     core_session session;
     ah_error error = {0};
@@ -46,8 +65,8 @@ static char *request(ah_engine *engine, const char *id) {
     return json;
 }
 
-static void check_layout(ah_engine *engine, const char *id, const char *instructions,
-                         bool prefix, const char *summary) {
+static void check_layout(ah_engine *engine, const char *id, const char *instructions, bool prefix,
+                         const char *summary) {
     char *json = request(engine, id);
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     yyjson_val *root = yyjson_doc_get_root(doc);
@@ -82,9 +101,11 @@ int main(void) {
     const char *stable = "Stable instructions";
     ok(ah_session_create(engine, "gpt-6.2-sol", stable, id, &error), &error);
     check_layout(engine, id, stable, true, NULL);
+    register_pair(engine, "zebra", "alpha");
     char *before = request(engine, id);
     ah_close(engine);
     engine = open_engine(path);
+    register_pair(engine, "alpha", "zebra");
     char *after = request(engine, id);
     assert(!strcmp(before, after));
     free(before);

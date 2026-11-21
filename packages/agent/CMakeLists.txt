@@ -25,6 +25,7 @@ add_library(ah STATIC
   src/core/operations.c
   src/core/recovery.c
   src/core/request.c
+  src/core/request_tools.c
   src/core/response.c
   src/core/results.c
   src/core/retention.c

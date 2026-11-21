@@ -4,6 +4,7 @@ const char ah_find_schema[] =
     "{\"type\":\"object\",\"properties\":{"
     "\"mode\":{\"type\":\"string\",\"enum\":[\"files\",\"content\"]},"
     "\"include_ignored\":{\"type\":\"boolean\"},"
+    "\"force\":{\"type\":\"boolean\"},"
     "\"path\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":4096},"
     "\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},"
     "\"glob\":{\"type\":\"string\",\"maxLength\":256},"
