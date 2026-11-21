@@ -45,6 +45,38 @@ static char *request(ah_engine *engine, const char *id) {
     yyjson_doc_free(doc);
     return json;
 }
+
+static void check_layout(ah_engine *engine, const char *id, const char *instructions,
+                         bool prefix, const char *summary) {
+    char *json = request(engine, id);
+    yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *input = yyjson_obj_get(root, "input");
+    yyjson_val *top = yyjson_obj_get(root, "instructions");
+    assert(prefix ? !top : yyjson_equals_str(top, instructions));
+    size_t first_history = prefix && *instructions ? 1 : 0;
+    if (first_history) {
+        yyjson_val *first = yyjson_arr_get_first(input);
+        assert(yyjson_equals_str(yyjson_obj_get(first, "role"), "developer"));
+        yyjson_val *content = yyjson_obj_get(first, "content");
+        assert(yyjson_arr_size(content) == 1);
+        yyjson_val *part = yyjson_arr_get_first(content);
+        assert(yyjson_equals_str(yyjson_obj_get(part, "type"), "input_text"));
+        assert(yyjson_equals_str(yyjson_obj_get(part, "text"), instructions));
+        yyjson_val *mark = yyjson_obj_get(part, "prompt_cache_breakpoint");
+        assert(yyjson_equals_str(yyjson_obj_get(mark, "mode"), "explicit"));
+    }
+    if (summary) {
+        yyjson_val *item = yyjson_arr_get(input, first_history);
+        assert(yyjson_equals_str(yyjson_obj_get(item, "role"), "user"));
+        assert(yyjson_equals_str(yyjson_obj_get(item, "content"), summary));
+    } else {
+        assert(yyjson_arr_size(input) == first_history);
+    }
+    yyjson_doc_free(doc);
+    free(json);
+}
+
 int main(void) {
     char path[] = "/tmp/ah-cache-XXXXXX";
     int fd = mkstemp(path);
@@ -53,7 +85,9 @@ int main(void) {
     ah_engine *engine = open_engine(path);
     ah_error error = {0};
     char id[AH_ID_CAP], fork[AH_ID_CAP], second[AH_ID_CAP];
-    ok(ah_session_create(engine, "mock", "Stable instructions", id, &error), &error);
+    const char *stable = "Stable instructions";
+    ok(ah_session_create(engine, "gpt-6.2-sol", stable, id, &error), &error);
+    check_layout(engine, id, stable, true, NULL);
     char *before = request(engine, id);
     ah_close(engine);
     engine = open_engine(path);
@@ -63,10 +97,10 @@ int main(void) {
     free(after);
     ok(ah_fork(engine, id, fork, &error), &error);
     assert(strcmp(fork, id));
-    free(request(engine, fork));
+    check_layout(engine, fork, stable, true, NULL);
     ok(ah_session_create(engine, "mock", "Stable instructions", second, &error), &error);
     assert(strcmp(second, id) && strcmp(second, fork));
-    free(request(engine, second));
+    check_layout(engine, second, stable, false, NULL);
     ok(ah_submit(engine, id, "command", "Work", &error), &error);
     free(request(engine, id));
     uint64_t cursor;
@@ -74,9 +108,22 @@ int main(void) {
     ok(core_state(engine, id, AH_STOPPED, &error), &error);
     ok(core_commit(engine, cursor, &error), &error);
     ok(ah_compact(engine, id, "Checkpoint", 0, &error), &error);
-    free(request(engine, id));
+    check_layout(engine, id, stable, true, "Checkpoint");
     ok(ah_resume(engine, id, &error), &error);
-    free(request(engine, id));
+    check_layout(engine, id, stable, true, "Checkpoint");
+    const struct {
+        const char *model, *instructions;
+        bool prefix;
+    } cases[] = {{"gpt-6.2-astra", stable, true},
+                 {"gpt-6.2-sol-2026-11-01", stable, true},
+                 {"gpt-6.2", "", true},
+                 {"gpt-6.1-sol", stable, false},
+                 {"gpt-6.20-custom", stable, false}};
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ok(ah_session_create(engine, cases[i].model, cases[i].instructions, second, &error),
+           &error);
+        check_layout(engine, second, cases[i].instructions, cases[i].prefix, NULL);
+    }
     ah_close(engine);
     assert(unlink(path) == 0);
     char lock_path[80];

@@ -68,15 +68,25 @@ def main(driver):
                        AH_EVAL_PARALLEL_TOOLS="3", AH_EVAL_CACHE_KEY="omit", AH_EVAL_TRACE_REQUESTS="1",
                        AH_EVAL_IMAGES=json.dumps([str(image)]))
             result = subprocess.run([driver, str(workspace), str(root / "state.db"),
-                                     "fixture-model", "unused", "xhigh", "10"],
+                                     "gpt-6.2-sol", "unused", "xhigh", "10"],
                                     input="ROOT_MARKER: Delegate the read to a child and finish.",
                                     env=env, capture_output=True, text=True, timeout=15)
             assert result.returncode == 0, result.stderr
             assert 4 <= len(received) <= 5, len(received)  # A child completion may wake the parent.
+            prefix = received[0][0]["input"][0]
+            assert prefix["role"] == "developer"
+            part, = prefix["content"]
+            assert part["type"] == "input_text" and part["text"]
+            assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+            histories = {}
             for body, route in received:
-                assert body["model"] == "fixture-model"
+                assert body["model"] == "gpt-6.2-sol"
+                assert "instructions" not in body and body["input"][0] == prefix
                 child = any(item.get("role") == "user" and "CHILD_MARKER" in str(item.get("content"))
                             for item in body["input"])
+                earlier = histories.get(child, [])
+                assert body["input"][:len(earlier)] == earlier
+                histories[child] = body["input"]
                 images = [part for item in body["input"] for part in item.get("content", [])
                           if isinstance(part, dict) and part.get("type") == "input_image"]
                 assert len(images) == (0 if child else 1)
