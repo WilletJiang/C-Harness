@@ -216,6 +216,7 @@ int main(int argc, char **argv) {
     ah_local_tools *files = NULL;
     ah_config config;
     ah_config_init(&config);
+    config.search.disabled = true; /* Keep the offline workload equivalent to the Codex runner. */
     config.database_path = argv[2];
     config.provider = eval_model_provider(&eval.model);
     config.observer = observe;

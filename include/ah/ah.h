@@ -125,6 +125,13 @@ typedef struct {
     const ah_work_config *work; /* Optional durable contract; copied on registration. */
 } ah_tool;
 
+/* Keyless Keenable REST search. No network request is made at registration. */
+typedef struct {
+    const char *endpoint; /* NULL uses Keenable's public endpoint. Copied at open. */
+    bool disabled;
+    bool allow_loopback_http;
+} ah_search_config;
+
 typedef struct {
     const char *database_path;
     ah_provider provider;
@@ -140,6 +147,7 @@ typedef struct {
     unsigned max_parallel_tools;  /* 1 serial; 0 also serial; maximum 16. */
     size_t max_model_tool_bytes;  /* Per-receipt model view; 0 disables extra cap. */
     const char *flow_runner_path; /* Absolute trusted helper path, or NULL for installed/sibling. */
+    ah_search_config search;
 } ah_config;
 
 void ah_config_init(ah_config *config);

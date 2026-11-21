@@ -19,6 +19,7 @@ consume subscription/API quotas. Tests create temporary state and clean it up.
 | workspace | Disjoint ownership, atomic delegation, revision-bound writes, absent-file creation and broad-effect barriers |
 | eval_compare / eval_driver | Frozen graders, natural-completion pairing, failures/censoring, configuration fairness, child request parity and out-of-order usage attribution |
 | context | Over-budget/failed-turn compaction recovery, retained user constraints/steering, unresolved exchange rejection, transactional forks |
+| web_run, search_quota | Keyless REST search directly and through flow, 100 ordered queries, shared second/hour quotas, upstream cooldowns and partial receipts on cancellation |
 | flow, flow_recovery | Live helper reuse, helper loss after a write, host death before its receipt, cancellation and CPU-bound script deadlines, approval across CLI restarts |
 | results | Bounded previews, exact UTF-8 retrieval, session/fork access, stable history, new/legacy pause names |
 | recovery | Whole-batch process-crash recovery, no silent retries, version 1 schema migration/backfill |

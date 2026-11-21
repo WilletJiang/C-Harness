@@ -23,6 +23,7 @@ typedef struct {
 } core_tool;
 struct ah_engine {
     ah_config config;
+    struct ah_search *search;
     char *flow_runner_path;
     struct core_flow_cell *flow_cells;
     ah_agents_config agents;

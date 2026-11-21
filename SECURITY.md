@@ -11,6 +11,7 @@ files, remote responses, and subprocess output are untrusted data.
   known failures from uncertain post-effect outcomes.
 - Optional `exec` uses argv directly, a minimal environment, closed inherited file
   descriptors, a process group, bounded output, cancellation and reaping.
+- The built-in `web_run` sends model-selected queries to Keenable over HTTPS. Returned snippets are untrusted web content. Use `--no-web-search` or `config.search.disabled` in offline or private workloads.
 - Flow scripts run in a separate QuickJS helper without an OS module loader.
   The helper and its install location are trusted. It only requests registered
   tools; the owner enforces each actual call's policy and workspace permissions.

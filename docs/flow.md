@@ -7,6 +7,9 @@ With a workspace, `test({})` runs its executable `./test` with no arguments
 after approval. A missing runner returns a tool error. In this repository
 `./test` builds and runs the suite; `./test -R flow` selects flow tests.
 
+The built-in `await tools.web_run({queries})` searches Keenable for up to
+100 queries as one child operation. [Batch web search](web-run.md)
+
 For a small complete search, this script edits each matching file once and
 runs tests after every edit succeeds:
 
