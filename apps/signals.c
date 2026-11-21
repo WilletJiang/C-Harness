@@ -1,4 +1,5 @@
-#include "cli.h"
+#include "signals.h"
+#include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -66,7 +67,7 @@ static bool make_pipe(int fds[2], bool nonblocking_reader) {
     }
     return true;
 }
-bool cli_signals_start(ah_engine *engine) {
+bool app_signals_start(ah_engine *engine) {
     int fds[2], shutdown[2];
     if (!make_pipe(fds, false))
         return false;
@@ -109,10 +110,10 @@ failed:
     active_engine = NULL;
     return false;
 }
-int cli_shutdown_fd(void) {
+int app_shutdown_fd(void) {
     return shutdown_read_fd;
 }
-void cli_signals_stop(void) {
+void app_signals_stop(void) {
     int fd = signal_fd, shutdown = shutdown_fd;
     signal_fd = -1;
     shutdown_fd = -1;

@@ -1,4 +1,5 @@
 #include "cli.h"
+#include "signals.h"
 #include "extensions.h"
 #include "content.h"
 #include "policies.h"
@@ -243,7 +244,7 @@ int main(int argc, char **argv) {
         ac.max_depth = agent_depth;
         code = ah_agents_enable(cli.engine, &ac, &error);
     }
-    bool watching = code == AH_OK && cli_signals_start(cli.engine);
+    bool watching = code == AH_OK && app_signals_start(cli.engine);
     if (code == AH_OK && !watching) {
         code = AH_IO;
         snprintf(error.message, sizeof(error.message), "Cannot install cancellation handler");
@@ -303,7 +304,7 @@ int main(int argc, char **argv) {
         }
     }
     if (watching)
-        cli_signals_stop();
+        app_signals_stop();
     ah_close(cli.engine);
     ah_local_tools_close(tools);
     ah_responses_close(responses);

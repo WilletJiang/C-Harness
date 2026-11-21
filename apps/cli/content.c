@@ -1,6 +1,6 @@
 #include "content.h"
 #include "ah/content.h"
-#include "../internal.h"
+#include "internal.h"
 #include <stdio.h>
 
 cli_option_status cli_content_option(cli_content_options *options, int argc, char **argv, int *at) {

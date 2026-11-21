@@ -3,7 +3,6 @@
 #include "ah/ah.h"
 #include "yyjson.h"
 #include <pthread.h>
-#include <stdatomic.h>
 typedef enum { CLI_OPTION_UNHANDLED, CLI_OPTION_HANDLED, CLI_OPTION_INVALID } cli_option_status;
 typedef struct {
     ah_engine *engine;
@@ -17,7 +16,4 @@ void cli_observe(void *context, const ah_event *event);
 void cli_print(cli_context *cli, const char *json);
 int cli_rpc(cli_context *cli);
 char *cli_load_token(const char *path);
-bool cli_signals_start(ah_engine *engine);
-int cli_shutdown_fd(void);
-void cli_signals_stop(void);
 #endif

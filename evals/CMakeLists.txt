@@ -1,6 +1,7 @@
 if(AH_LIVE_EVAL)
-  add_executable(live_driver drivers/agent.c drivers/trace.c ${PROJECT_SOURCE_DIR}/src/cli/signals.c)
+  add_executable(live_driver drivers/agent.c drivers/trace.c)
   add_executable(cache_driver drivers/cache.c)
+  target_link_libraries(live_driver PRIVATE ah_app_signals)
   foreach(target live_driver cache_driver)
     ah_compile_target(${target})
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/src)

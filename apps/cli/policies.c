@@ -1,6 +1,6 @@
 #include "policies.h"
 #include "ah/workspace.h"
-#include "../internal.h"
+#include "internal.h"
 #include <limits.h>
 #include <stdio.h>
 

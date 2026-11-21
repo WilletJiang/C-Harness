@@ -1,11 +1,13 @@
 #include "cli.h"
+#include "signals.h"
 #include "content.h"
 #include "policies.h"
 #include "ah/agents.h"
-#include "../internal.h"
+#include "internal.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -213,7 +215,7 @@ int cli_rpc(cli_context *cli) {
     if (!line)
         return 1;
     int flags = fcntl(STDIN_FILENO, F_GETFL);
-    int shutdown = cli_shutdown_fd();
+    int shutdown = app_shutdown_fd();
     if (flags < 0 || shutdown < 0 || fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK) != 0) {
         free(line);
         return 1;

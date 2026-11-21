@@ -7,7 +7,7 @@
 #include "ah/jobs.h"
 #include "ah/content.h"
 #include "internal.h"
-#include "cli/cli.h"
+#include "signals.h"
 #include "tools/local_internal.h"
 #include "trace.h"
 #include <stdio.h>
@@ -280,7 +280,7 @@ int main(int argc, char **argv) {
                eval.model.diagnostics, eval.model.trace);
         fflush(stdout);
     }
-    bool signals = code == AH_OK && cli_signals_start(engine);
+    bool signals = code == AH_OK && app_signals_start(engine);
     if (code == AH_OK && !signals)
         code = ah_fail(&error, AH_IO, "Could not install evaluation cancellation handler");
     char session[AH_ID_CAP] = {0};
@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
     if (code != AH_OK)
         fprintf(stderr, "%s: %s\n", ah_code_name(code), error.message);
     if (signals)
-        cli_signals_stop();
+        app_signals_stop();
     ah_close(engine);
     ah_local_tools_close(files);
     ah_local_tools_close(eval.executor);

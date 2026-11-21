@@ -11,12 +11,12 @@ let package = Package(
                 sources: ["quickjs.c", "cutils.c", "libunicode.c", "libregexp.c", "dtoa.c"],
                 publicHeadersPath: "include",
                 cSettings: [.define("_GNU_SOURCE"), .define("asm", to: "__asm__"), .define("CONFIG_VERSION", to: "\"2026-06-04\"")]),
-        .executableTarget(name: "FlowVM", dependencies: ["FlowQuickJS"], path: "flow",
+        .executableTarget(name: "FlowVM", dependencies: ["FlowQuickJS"], path: "codemode",
                           sources: ["main.c"]),
         .target(
             name: "CHarness",
             path: ".",
-            exclude: ["src/cli"],
+            exclude: ["src/CMakeLists.txt"],
             sources: ["src", "vendor/yyjson/yyjson.c", "vendor/tomlc17/tomlc17.c"],
             publicHeadersPath: "include",
             cSettings: [
