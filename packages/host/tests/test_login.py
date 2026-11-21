@@ -27,7 +27,12 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class LoginTests(unittest.TestCase):
-    def test_pkce_state_and_hint_stays_out_of_public_url(self):
+    def test_manual_link_and_pkce_with_and_without_a_saved_hint(self):
+        for with_hint in (False, True):
+            with self.subTest(with_hint=with_hint):
+                self.check_manual_login(with_hint)
+
+    def check_manual_login(self, with_hint):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch(
@@ -40,7 +45,8 @@ class LoginTests(unittest.TestCase):
                 MemoryVault(), Path(directory) / "account.json", api
             )
             manager.remember_client("issued-client")
-            manager.accept_login("issued-client", api.tokens(), "nonce")
+            if with_hint:
+                manager.accept_login("issued-client", api.tokens(), "nonce")
             url_ready, errors, addresses = threading.Event(), [], []
 
             def on_url(value):
@@ -61,6 +67,8 @@ class LoginTests(unittest.TestCase):
             # Browsers open idle speculative connections before sending GET.
             # A single-threaded HTTPServer blocks every later callback here.
             address = urllib.parse.urlparse(local)
+            self.assertEqual(address.hostname, "127.0.0.1")
+            self.assertFalse(address.query)
             idle = socket.create_connection((address.hostname, address.port), timeout=5)
             self.addCleanup(idle.close)
             opener = urllib.request.build_opener(NoRedirect)
@@ -70,7 +78,7 @@ class LoginTests(unittest.TestCase):
             target = urllib.parse.urlparse(redirect.exception.headers["Location"])
             self.assertEqual(target.hostname, "auth.openai.com")
             query = urllib.parse.parse_qs(target.query)
-            self.assertEqual(query["id_token_hint"], ["id-one"])
+            self.assertEqual(query.get("id_token_hint"), ["id-one"] if with_hint else None)
             self.assertEqual(query["code_challenge_method"], ["S256"])
             callback = query["redirect_uri"][0]
             with self.assertRaises(urllib.error.HTTPError) as wrong:

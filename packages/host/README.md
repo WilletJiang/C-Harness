@@ -18,6 +18,8 @@ python3 -B -m packages.host.auth exec -- ./build/ah new --db /private/path/agent
 or unusable grant starts browser authorization. `--force` explicitly reconnects.
 `login --then COMMAND ...` starts a trusted child after connecting; `exec -- COMMAND ...`
 reuses the same session in later processes. Neither command prints a token.
+If the browser fails to open, follow the printed local login link on the same
+Mac while the command is running. Use `login --no-open` to open it manually.
 
 Credentials are stored as one replacement record under Keychain service
 `Argus Harness / ChatGPT`, account = issued OAuth client ID. The record contains

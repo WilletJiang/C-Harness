@@ -134,7 +134,8 @@ def login(manager, on_url, *, open_browser=True, timeout=600):
     serving = threading.Thread(target=server.serve_forever, daemon=True)
     serving.start()
     try:
-        on_url(browser_url)
+        # The manual fallback stays usable without sharing OAuth parameters in logs.
+        on_url(local_url)
         if open_browser:
             webbrowser.open(browser_url)
         if not finished.wait(timeout):
