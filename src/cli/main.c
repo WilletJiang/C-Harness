@@ -25,6 +25,8 @@ int main(int argc, char **argv) {
     const char *command_id = NULL, *operation = NULL, *value = NULL, *summary = NULL;
     const char *endpoint = "https://api.openai.com/v1/responses", *token_file = NULL;
     bool exec_enabled = false, events = false, allow_http = false, workflows = false;
+    ah_search_config search = {0};
+    uintmax_t tool_timeout_ms = 0;
     unsigned keep = 4, parallel = 4, agents = 0, agent_limit = 32, agent_depth = 8;
     const char *target = NULL;
     bool wake = false;
@@ -61,6 +63,10 @@ int main(int argc, char **argv) {
             events = true;
             continue;
         }
+        if (!strcmp(arg, "--no-web-search")) {
+            search.disabled = true;
+            continue;
+        }
         if (!strcmp(arg, "--allow-http-loopback")) {
             allow_http = true;
             continue;
@@ -92,7 +98,12 @@ int main(int argc, char **argv) {
             summary = v;
         else if (!strcmp(arg, "--endpoint"))
             endpoint = v;
-        else if (!strcmp(arg, "--target"))
+        else if (!strcmp(arg, "--search-endpoint"))
+            search.endpoint = v;
+        else if (!strcmp(arg, "--tool-timeout-ms")) {
+            if (!cli_option_number(arg, v, 1, UINT32_MAX, &tool_timeout_ms))
+                return 2;
+        } else if (!strcmp(arg, "--target"))
             target = v;
         else if (!strcmp(arg, "--agents") || !strcmp(arg, "--agent-limit") ||
                  !strcmp(arg, "--agent-depth")) {
@@ -192,6 +203,10 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&cli.output, NULL);
     ah_config config;
     ah_config_init(&config);
+    search.allow_loopback_http = allow_http;
+    config.search = search;
+    if (tool_timeout_ms)
+        config.tool_timeout_ms = tool_timeout_ms;
     config.database_path = db;
     if (policies.context_bytes)
         config.max_context_bytes = policies.context_bytes;

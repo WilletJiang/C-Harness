@@ -19,8 +19,11 @@ void cli_usage(bool all) {
          "  --content JSON       Typed text/image/file input; excludes --prompt\n"
          "  --instructions TEXT  Developer instructions for new session\n"
          "  --events             Print structured execution events\n"
+         "  --no-web-search      Disable the built-in keyless Keenable web_run tool\n"
          "\nBudgets:\n"
          "  --context-bytes N    Request byte limit (default 1 MiB; 4096..64 MiB)\n"
+
+         "  --tool-timeout-ms N      Tool deadline in milliseconds (default 30000)\n"
          "  --parallel-tools N   Concurrent opt-in read tools (default 4; 0/1 serial; max 16)\n"
          "\nOpt-in capabilities (default off):\n"
          "  --auto-context       Archive older exchanges; thresholds follow the context budget\n"
@@ -34,6 +37,7 @@ void cli_usage(bool all) {
          "                       Plugin skills/MCP also require --skills/--mcp");
     if (all)
         puts("\nAdvanced configuration:\n"
+             "  --search-endpoint URL   Override the Keenable REST endpoint for this host\n"
              "  --endpoint URL       Full Responses endpoint (default OpenAI public endpoint)\n"
              "  --token-file PATH    Private token/SIWC JSON file; otherwise AH_ACCESS_TOKEN\n"
              "  --codex-home PATH    Extension source; does not enable extensions\n"

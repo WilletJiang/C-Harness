@@ -1,5 +1,6 @@
 #include "core.h"
 #include "work.h"
+#include "../tools/search.h"
 #include "../agents/agents_internal.h"
 #include "../extensions/extensions_internal.h"
 #include <ctype.h>
@@ -37,6 +38,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     if (!e)
         return ah_fail(err, AH_IO, "out of memory");
     e->config = *config;
+    e->config.search = (ah_search_config){0};
     e->lock_fd = -1;
     if (config->flow_runner_path) {
         if (config->flow_runner_path[0] != '/') {
@@ -234,6 +236,8 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
         rc = core_context_restore(e, err);
     if (rc == AH_OK)
         rc = core_flow_register(e, err);
+    if (rc == AH_OK && !config->search.disabled)
+        rc = search_open(e, &config->search, &e->search, err);
     if (rc != AH_OK) {
         ah_close(e);
         return rc;
@@ -247,6 +251,7 @@ void ah_close(ah_engine *e) {
         return;
     core_flow_close(e);
     core_jobs_close(e);
+    search_close(e->search);
     ext_close(e->extensions);
     core_mailbox_free(e);
     if (e->db)

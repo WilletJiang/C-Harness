@@ -1,13 +1,7 @@
 #include "responses_internal.h"
+#include "http.h"
 #include <limits.h>
-#include <pthread.h>
-#include <strings.h>
 
-static pthread_once_t curl_once = PTHREAD_ONCE_INIT;
-static CURLcode curl_init_code;
-static void init_curl(void) {
-    curl_init_code = curl_global_init(CURL_GLOBAL_DEFAULT);
-}
 void responses_wipe(char *value) {
     if (!value)
         return;
@@ -25,64 +19,6 @@ void ah_responses_config_init(ah_responses_config *config) {
                                     .max_response_bytes = 32 * 1024 * 1024,
                                     .max_event_bytes = 8 * 1024 * 1024,
                                     .max_retries = 2};
-}
-
-static bool url_part_present(CURLU *url, CURLUPart part) {
-    char *value = NULL;
-    bool present = curl_url_get(url, part, &value, 0) == CURLUE_OK;
-    curl_free(value);
-    return present;
-}
-
-static bool literal_loopback(const char *endpoint) {
-    const char *authority = strstr(endpoint, "://");
-    if (!authority)
-        return false;
-    authority += 3;
-    const char *allowed[] = {"127.0.0.1", "[::1]", "localhost"};
-    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
-        size_t length = strlen(allowed[i]);
-        if (!strncasecmp(authority, allowed[i], length) &&
-            (!authority[length] || authority[length] == ':' || authority[length] == '/'))
-            return true;
-    }
-    return false;
-}
-
-static bool valid_endpoint(const ah_responses_config *config, bool *loopback) {
-    if (!config->endpoint || strlen(config->endpoint) > 8192 || strchr(config->endpoint, '?') ||
-        strchr(config->endpoint, '#'))
-        return false;
-    for (const unsigned char *p = (const unsigned char *)config->endpoint; *p; p++)
-        if (*p <= 0x20 || *p == 0x7f)
-            return false;
-    CURLU *url = curl_url();
-    char *scheme = NULL, *host = NULL;
-    bool valid = false;
-    if (!url || curl_url_set(url, CURLUPART_URL, config->endpoint, 0))
-        goto done;
-    if (curl_url_get(url, CURLUPART_SCHEME, &scheme, 0) ||
-        curl_url_get(url, CURLUPART_HOST, &host, 0))
-        goto done;
-    if (url_part_present(url, CURLUPART_USER) || url_part_present(url, CURLUPART_PASSWORD) ||
-        url_part_present(url, CURLUPART_OPTIONS) || url_part_present(url, CURLUPART_QUERY) ||
-        url_part_present(url, CURLUPART_FRAGMENT))
-        goto done;
-    *loopback =
-        !strcmp(host, "127.0.0.1") || !strcasecmp(host, "localhost") || !strcmp(host, "[::1]");
-    valid = !strcasecmp(scheme, "https") ||
-            (!strcasecmp(scheme, "http") && config->allow_loopback_http && *loopback &&
-             literal_loopback(config->endpoint));
-    /* Older curl versions resolve localhost through externally configured DNS. */
-    if (!strcasecmp(scheme, "http") && !strcasecmp(host, "localhost") &&
-        curl_version_info(CURLVERSION_NOW)->version_num < 0x074e00)
-        valid = false;
-done:
-    curl_free(scheme);
-    curl_free(host);
-    if (url)
-        curl_url_cleanup(url);
-    return valid;
 }
 
 ah_code ah_responses_set_token(ah_responses *provider, const char *token, ah_error *error) {
@@ -111,15 +47,11 @@ ah_code ah_responses_open(const ah_responses_config *config, ah_responses **out,
         !config->max_event_bytes || config->max_event_bytes > config->max_response_bytes ||
         config->max_response_bytes > 256 * 1024 * 1024 || config->max_retries > 5)
         return ah_fail(error, AH_INVALID, "invalid Responses configuration");
-    pthread_once(&curl_once, init_curl);
-    if (curl_init_code != CURLE_OK)
-        return ah_fail(error, AH_IO, "curl initialization failed");
-    const curl_version_info_data *version = curl_version_info(CURLVERSION_NOW);
-    if (!(version->features & CURL_VERSION_ASYNCHDNS))
-        return ah_fail(error, AH_INVALID,
-                       "curl must support asynchronous DNS for bounded cancellation");
+    ah_code initialized = ah_http_init(error);
+    if (initialized != AH_OK)
+        return initialized;
     bool loopback = false;
-    if (!valid_endpoint(config, &loopback))
+    if (!ah_http_endpoint(config->endpoint, config->allow_loopback_http, &loopback))
         return ah_fail(error, AH_INVALID,
                        "endpoint must be HTTPS without credentials, query, or fragment");
     ah_responses *provider = calloc(1, sizeof(*provider));
