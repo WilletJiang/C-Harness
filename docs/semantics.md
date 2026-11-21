@@ -7,9 +7,7 @@ callbacks keep an inline fast path. Consecutive independent READ callbacks marke
 `parallel_safe`, or registered with `ah_register_background_tool` (`ah/jobs.h`),
 share one bounded worker executor. Their contexts must support concurrent use.
 `max_parallel_tools` is one engine-wide cap (default 4, maximum 16; 0 means 1),
-including an inline callback while it yields to other sessions. Writes, external
-effects, approvals, input waits and agent coordination close the READ window within
-each session. Callbacks must not re-enter owner-thread engine APIs.
+including an inline callback while it yields to other sessions. Writes, external effects, approvals, input waits and agent coordination close the READ window within each session. Consecutive versioned native writes to disjoint files can form a separate bounded batch after individual approvals; see [flow](flow.md). Callbacks must not re-enter owner-thread engine APIs.
 
 Native `exec`, `mcp` and `mcp_call` use background registration. The scheduler can
 advance other sessions while workers wait; a single session waits on the same
@@ -22,8 +20,7 @@ Workers never write SQLite or notify observers. Every job uses the existing dura
 operation ID and executing intent, without another ledger. The owner captures
 completed results even when an earlier READ is still running, and publishes
 model-visible receipts in original call order. Metrics identify their operation;
-completion timing can arrive out of order. Background callbacks must honor
-cancellation/deadlines; checkpoint and yield are null. Every run drains workers
+completion timing can arrive out of order. Host background callbacks must honor cancellation/deadlines; checkpoint and yield are null. Native parallel edits forward phase checkpoints to the owner and wait for its commit. Every run drains workers
 before returning. A callback that ignores cancellation can delay shutdown
 indefinitely. Interrupted effects retain the unknown-outcome recovery rule;
 cancellation never proves an effect was undone.
@@ -113,6 +110,23 @@ receipt; an interrupted process execution may already have changed the world.
 Missing tools and invalid arguments become explicit tool error results, allowing
 the model to recover within its budgets. Runtime storage/protocol failures stop
 execution rather than pretending that a tool succeeded.
+
+A repeated deterministic error can carry `retry_feedback` with
+`reason:"same_observed_failure"`, the number of matching attempts including
+the current call, and a next action. Each operation still executes or validates
+under its normal policy. The owner compares published receipts in a bounded
+128-event window of the same session. Equivalent JSON argument objects, tool
+schemas/policies and the observed failure must match. Counts are conservative:
+new input, intervening tool results or workspace changes break the streak.
+Siblings issued together do not count as retries. Flow's own coordination events
+do not erase the evidence from its children. Hints are stored with the receipt
+and remain available across reopen; forks start with independent operations.
+
+Hints cover rejected argument schemas, missing read/search paths, stale search
+snapshots and preflight edit conflicts on the same revision. Transport errors,
+denials, cancellations and unknown effects retain their ordinary semantics.
+The feedback reports repeated observations; it never asserts the world cannot
+have changed and never automatically retries or suppresses a call.
 
 ## Cancellation and recovery
 

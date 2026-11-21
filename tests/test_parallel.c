@@ -164,6 +164,32 @@ static void approval_and_input_barriers(void) {
     }
 }
 
+/* Reader 1 waits until reader 3 enters. Reader 2 must free its slot
+ * independently. With a smaller budget the third callback must stay pending. */
+static void flow_read_window(bool limited) {
+    fixture f = {.names = {"read", "read", "read"}, .count = 3, .barrier_count = 2};
+    if (!limited)
+        f.partner[1] = 3;
+    open_fixture(&f, 2, limited ? 3 : 16, 10000);
+    f.engine->config.observer = NULL;
+    char sid[AH_ID_CAP], id[AH_ID_CAP];
+    ah_error error = {0};
+    ok(ah_session_create(f.engine, "mock", "", sid, &error), &error);
+    ok(ah_work_start(f.engine, sid, "root", "flow",
+                     "{\"script\":\"return (await "
+                     "Promise.all([1,2,3].map(id=>tools.read({id})))).map(r=>r.id)\"}",
+                     id, &error),
+       &error);
+    assert(ah_work_run(f.engine, sid, &error) == (limited ? AH_LIMIT : AH_OK));
+    assert(f.max_active == 2 && f.executions == (limited ? 2u : 3u));
+    assert(scalar(&f, "SELECT tool_calls FROM sessions") == (limited ? 3 : 5));
+    assert(scalar(&f, "SELECT COUNT(*) FROM operations WHERE status='executing'") == 0);
+    if (!limited)
+        assert(scalar(&f, "SELECT COUNT(*) FROM operations WHERE name='flow' AND result='[1,2,3]' "
+                          "AND is_error=0") == 1);
+    close_fixture(&f);
+}
+
 int main(int argc, char **argv) {
     int child = parallel_worker_child(argc, argv);
     if (child >= 0)
@@ -177,6 +203,8 @@ int main(int argc, char **argv) {
     cancellation_and_deadline();
     cancelled_before_launch();
     budget_boundary();
+    flow_read_window(false);
+    flow_read_window(true);
     approval_and_input_barriers();
     parallel_recovery_cases();
     parallel_worker_cases();

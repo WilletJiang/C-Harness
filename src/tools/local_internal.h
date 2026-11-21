@@ -45,15 +45,23 @@ ah_code ah_local_error(const ah_tool_call *call, ah_tool_result *result, ah_erro
                        ah_code code, const char *message);
 ah_code ah_local_finish(const ah_tool_call *call, ah_tool_result *result, yyjson_mut_doc *doc,
                         ah_error *error);
+ah_code ah_local_test(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
 ah_code ah_local_exec(void *context, const ah_tool_call *call, ah_tool_result *result,
                       ah_error *error);
 int ah_local_parent_fd(ah_local_tools *tools, yyjson_val *path, char leaf[4097]);
 int ah_local_parent_path(ah_local_tools *tools, const char *path, size_t length, char leaf[4097]);
 typedef struct {
-    char *items[2048];
+    char **items;
+    size_t capacity;
     size_t count, visited, skipped;
     bool truncated;
 } ah_paths;
+typedef struct {
+    const char *glob;
+    bool include_ignored, files_only;
+} ah_path_filter;
+ah_code ah_find_paths(ah_local_tools *, yyjson_val *, const ah_tool_call *, ah_paths *,
+                      const ah_path_filter *);
 ah_code ah_local_paths(ah_local_tools *, yyjson_val *, const ah_tool_call *, ah_paths *, ah_hash *);
 void ah_local_paths_free(ah_paths *);
 ah_code ah_local_input_revision(ah_local_tools *, yyjson_val *, const ah_tool_call *, char[65]);

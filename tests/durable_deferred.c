@@ -1,7 +1,9 @@
 #include "durable_fixture.h"
 #include "ah/jobs.h"
 #include "ah/work.h"
+#include <spawn.h>
 #include <sqlite3.h>
+extern char **environ;
 #include <sys/wait.h>
 #include <time.h>
 
@@ -108,7 +110,8 @@ static ah_code slow_child(void *context, const ah_tool_call *call, ah_tool_resul
     return AH_OK;
 }
 
-static void crash_deferred(const char *database, bool external, bool replay_never) {
+void df_crash_deferred(const char *database, bool external, bool replay_never) {
+    alarm(10);
     deferred_fixture fixture = {.external = external, .replay_never = replay_never};
     atomic_init(&fixture.slow_started, false);
     ah_engine *engine = open_deferred(database, &fixture);
@@ -162,15 +165,13 @@ static void count_parent(void *context, const ah_event *event) {
                         !strcmp(event->type, "tool.completed");
 }
 
-static void deferred_recovery(bool external, bool replay_never) {
+static void deferred_recovery(const char *program, bool external, bool replay_never) {
     char database[64];
     df_database(database);
-    pid_t child = fork();
-    assert(child >= 0);
-    if (!child) {
-        alarm(10);
-        crash_deferred(database, external, replay_never);
-    }
+    char *args[] = {(char *)program,          "--deferred", database, external ? "1" : "0",
+                    replay_never ? "1" : "0", NULL};
+    pid_t child;
+    assert(posix_spawn(&child, program, NULL, NULL, args, environ) == 0);
     int status;
     assert(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 77);
     sqlite3 *db = NULL;
@@ -213,8 +214,8 @@ static void deferred_recovery(bool external, bool replay_never) {
     df_remove_database(database);
 }
 
-void df_deferred_cases(void) {
-    deferred_recovery(false, false);
-    deferred_recovery(true, false);
-    deferred_recovery(false, true);
+void df_deferred_cases(const char *program) {
+    deferred_recovery(program, false, false);
+    deferred_recovery(program, true, false);
+    deferred_recovery(program, false, true);
 }

@@ -106,7 +106,9 @@ the earlier `harness_ask` and `harness_wait` names remain supported.
 | `view_image` | `path`, optional `detail` | View a workspace PNG/JPEG/GIF/WebP as native media; defaults to `auto` |
 | `write_file` | `path`, `content`; optional `base_revision` or `expect_absent` | Replace a workspace file atomically; an expectation is required for coordinated writes |
 | `apply_changes` | `files` containing `path`, `edits`, `base_revision` (required when coordinated); optional `checks` | Unified exact edits, one or multiple hunks/files; optional named checks after successful application |
-| `find` (workflow profile) | `path`, `query`, optional `glob`, `context_lines`, `max_results`, `offset`, `snapshot` | Native literal search with merged source context, revisions and bounded pagination |
+| `flow` | `script` | Run async JavaScript using registered tools; return a JSON value |
+| `test` | empty object | Ask for approval, then run the workspace executable `./test` |
+| `find` | `mode:"files"` to list paths, or `query` to search text; optional `path`, `glob`, `include_ignored`, `max_results`, `offset`, `snapshot`; `context_lines` for text | Sorted workspace discovery and paged literal search |
 | `check` (registered presets) | `checks` | Run host-fixed named checks for current inputs |
 | `exec` | `argv` | Execute a process when explicitly enabled, with approval |
 

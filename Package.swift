@@ -4,8 +4,15 @@ import PackageDescription
 let package = Package(
     name: "CHarness",
     platforms: [.macOS(.v13)],
-    products: [.library(name: "CHarness", targets: ["CHarness"])],
+    products: [.library(name: "CHarness", targets: ["CHarness"]),
+               .executable(name: "ah-flow-vm", targets: ["FlowVM"])],
     targets: [
+        .target(name: "FlowQuickJS", path: "vendor/quickjs",
+                sources: ["quickjs.c", "cutils.c", "libunicode.c", "libregexp.c", "dtoa.c"],
+                publicHeadersPath: "include",
+                cSettings: [.define("_GNU_SOURCE"), .define("asm", to: "__asm__"), .define("CONFIG_VERSION", to: "\"2026-06-04\"")]),
+        .executableTarget(name: "FlowVM", dependencies: ["FlowQuickJS"], path: "flow",
+                          sources: ["main.c"]),
         .target(
             name: "CHarness",
             path: ".",

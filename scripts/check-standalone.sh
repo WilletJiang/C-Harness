@@ -10,6 +10,7 @@ cmake -S "$work/source" -B "$work/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INST
 cmake --build "$work/build" --parallel 4
 ctest --test-dir "$work/build" --output-on-failure
 cmake --install "$work/build"
+python3 -B "$work/source/tests/test_flow.py" "$work/install/bin/ah"
 mkdir "$work/client"
 cp "$work/source/examples/embed.c" "$work/client/main.c"
 cp "$work/source/examples/embed.c" "$work/client/main.cpp"
@@ -63,5 +64,20 @@ let package = Package(name: "SDKClient", platforms: [.macOS(.v13)],
     targets: [.executableTarget(name: "Client",
         dependencies: [.product(name: "CHarness", package: "CHarness")])])
 SWIFT
-  swift run --package-path "$work/swift-client" --scratch-path "$work/swift-build" Client
+  cat >> "$work/swift-client/Sources/Client/main.swift" <<'SWIFT'
+var op = [CChar](repeating: 0, count: Int(AH_ID_CAP))
+precondition(ah_session_create(engine, "offline", "", &id, &error) == AH_OK)
+precondition(ah_work_start(engine, id, "swift", "flow", #"{"script":"return 6 * 7"}"#, &op, &error) == AH_OK)
+precondition(ah_work_run(engine, id, &error) == AH_OK)
+var snapshot: UnsafeMutablePointer<CChar>?
+precondition(ah_work_json(engine, id, op, &snapshot, &error) == AH_OK)
+precondition(String(cString: snapshot!).contains(#""result":42"#))
+ah_free(snapshot)
+SWIFT
+  swift build --package-path "$work/source" --scratch-path "$work/vm-build" --product ah-flow-vm
+  swift build --package-path "$work/swift-client" --scratch-path "$work/swift-build"
+  vm_bin=$(swift build --package-path "$work/source" --scratch-path "$work/vm-build" --show-bin-path)
+  client_bin=$(swift build --package-path "$work/swift-client" --scratch-path "$work/swift-build" --show-bin-path)
+  cp "$vm_bin/ah-flow-vm" "$client_bin/"
+  "$client_bin/Client"
 fi

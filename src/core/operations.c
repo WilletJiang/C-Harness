@@ -120,8 +120,8 @@ ah_code core_save_result(ah_engine *e, const char *sid, const core_operation *op
         rc = core_event(e, sid, op->id, event, result, err);
     return rc;
 }
-ah_code core_receipt(ah_engine *e, const char *sid, const core_operation *op, const char *result,
-                     bool is_error, const char *type, ah_error *err) {
+static ah_code store_receipt(ah_engine *e, const char *sid, const core_operation *op,
+                             const char *result, bool is_error, const char *type, ah_error *err) {
     if (op->hidden) {
         ah_code code = core_save_result(e, sid, op, result, is_error, "done", NULL, err);
         if (code == AH_OK)
@@ -190,6 +190,32 @@ ah_code core_receipt(ah_engine *e, const char *sid, const core_operation *op, co
         rc = core_event(e, sid, op->id, type, result, err);
     return rc;
 }
+ah_code core_receipt(ah_engine *e, const char *sid, const core_operation *op, const char *result,
+                     bool is_error, const char *type, ah_error *error) {
+    char *feedback = is_error && op->result_format == AH_TOOL_RESULT_JSON &&
+                             !strcmp(type, "tool.completed") && strcmp(op->status, "resolved")
+                         ? core_retry_feedback(e, sid, op, result)
+                         : NULL;
+    ah_code code = store_receipt(e, sid, op, feedback ? feedback : result, is_error, type, error);
+    free(feedback);
+    return code;
+}
+
+static ah_code deny_operation(ah_engine *e, const char *sid, core_operation *op, ah_error *error) {
+    const char *denied = "{\"error\":\"approval denied\"}";
+    if (!op->hidden) {
+        core_operation first;
+        ah_code code = core_next_operation(e, sid, &first, error);
+        if (code != AH_OK)
+            return code;
+        bool earlier = strcmp(first.id, op->id) != 0;
+        core_operation_free(&first);
+        if (earlier)
+            return core_save_result(e, sid, op, denied, true, "received", "tool.denied", error);
+    }
+    return core_receipt(e, sid, op, denied, true, "tool.denied", error);
+}
+
 ah_code ah_decide(ah_engine *e, const char *sid, const char *id, bool allow, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
@@ -226,8 +252,7 @@ ah_code ah_decide(ah_engine *e, const char *sid, const char *id, bool allow, ah_
     }
     if (rc == AH_OK)
         rc = allow ? core_set_operation(e, sid, id, "approved", err)
-                   : core_receipt(e, sid, &op, "{\"error\":\"approval denied\"}", true,
-                                  "tool.denied", err);
+                   : deny_operation(e, sid, &op, err);
     if (rc == AH_OK)
         rc = core_event(e, sid, id, "approval.decided",
                         allow ? "{\"allow\":true}" : "{\"allow\":false}", err);

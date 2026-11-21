@@ -78,7 +78,8 @@ ah_code core_workspace_authorize(ah_engine *e, const char *sid, const core_opera
         return code;
     ah_execute_fn execute = registered ? registered->tool.execute : NULL;
     bool write = execute == ah_local_write_file, apply = execute == ah_local_apply;
-    bool native = write || apply || execute == ah_local_exec || execute == ah_local_run_checks;
+    bool native = write || apply || execute == ah_local_test || execute == ah_local_exec ||
+                  execute == ah_local_run_checks;
     ah_local_tools *tools = native ? registered->tool.context : NULL;
     struct stat actual;
     if (native && (!tools || fstat(tools->workspace_fd, &actual) ||

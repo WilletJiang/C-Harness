@@ -69,7 +69,7 @@ static char *completion_result(ah_engine *e, const core_session *session, const 
     }
     if (rc == AH_OK) {
         core_operation op;
-        rc = core_next_operation(e, session->id, &op, err);
+        rc = core_pending_operation(e, session->id, session->state, &op, err);
         if (rc == AH_OK) {
             yyjson_mut_val *pending = yyjson_mut_obj(d);
             yyjson_mut_obj_add_strcpy(d, pending, "operation_id", op.id);

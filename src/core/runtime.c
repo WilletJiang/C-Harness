@@ -74,7 +74,7 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
         if (rc != AH_OK)
             break;
         if (!needs_model) {
-            if (core_jobs_running(e, sid))
+            if (!session.flow_batch && core_jobs_running(e, sid))
                 core_jobs_wait(e, 20);
             else if (session.state == AH_WAITING_WORK)
                 break;
@@ -115,6 +115,7 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
     rc = core_run_failure(e, &session, rc, err, NULL);
     core_mailbox_active(e, NULL);
     e->deadline = 0;
+    core_flow_close(e);
     e->running = false;
     core_session_free(&session);
     return rc;

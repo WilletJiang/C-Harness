@@ -27,6 +27,15 @@ char *core_result_view(ah_engine *e, const char *id, const char *json, bool is_e
             truncated ? yyjson_mut_obj(d) : yyjson_val_mut_copy(d, yyjson_doc_get_root(parsed));
         if (truncated) {
             yyjson_mut_obj_add_bool(d, value, "truncated", true);
+            /* Keep the actionable part of a long conflict visible on small previews. */
+            yyjson_val *note = yyjson_obj_get(yyjson_doc_get_root(parsed), "retry_feedback");
+            if (is_error &&
+                yyjson_equals_str(yyjson_obj_get(note, "reason"), "same_observed_failure") &&
+                yyjson_is_uint(yyjson_obj_get(note, "attempts")) &&
+                yyjson_is_str(yyjson_obj_get(note, "next_action")) &&
+                yyjson_get_len(yyjson_obj_get(note, "next_action")) <= 192 &&
+                yyjson_obj_size(note) == 3)
+                yyjson_mut_obj_add_val(d, value, "retry_feedback", yyjson_val_mut_copy(d, note));
             yyjson_mut_obj_add_strcpy(d, value, "operation_id", id);
             yyjson_mut_obj_add_uint(d, value, "total_bytes", length);
             yyjson_mut_obj_add_str(d, value, "retrieval_tool", "read_result");

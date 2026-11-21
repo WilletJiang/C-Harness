@@ -19,33 +19,12 @@ yyjson_mut_val *core_work_value(yyjson_mut_doc *doc, const core_operation *op) {
     return value;
 }
 
-static ah_code child_operation(ah_engine *e, const char *sid, const char *parent, const char *key,
-                               core_operation *operation, ah_error *error) {
-    sqlite3_stmt *row = NULL;
-    ah_code code = core_prepare(e,
-                                "SELECT operation_id FROM work_calls "
-                                "WHERE session_id=? AND parent_id=? AND key=?",
-                                &row, error);
-    if (code == AH_OK) {
-        sqlite3_bind_text(row, 1, sid, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(row, 2, parent, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(row, 3, key, -1, SQLITE_TRANSIENT);
-        int step = sqlite3_step(row);
-        if (step == SQLITE_ROW)
-            code = core_get_operation(e, sid, (const char *)sqlite3_column_text(row, 0), operation,
-                                      error);
-        else
-            code = ah_fail(error, step == SQLITE_DONE ? AH_INVALID : AH_IO,
-                           "wait references an unavailable child key");
-    }
-    sqlite3_finalize(row);
-    return code;
-}
-
+/* Use one indexed statement for the whole join. Polling needs status only;
+ * claim also materializes a single snapshot directly in the caller's document. */
 ah_code core_work_children_ready(ah_engine *e, const char *sid, const char *parent,
-                                 yyjson_val *wait, bool *ready, char **wake, ah_error *error) {
+                                 yyjson_val *wait, bool *ready, yyjson_mut_doc *doc,
+                                 yyjson_mut_val **values, ah_error *error) {
     *ready = false;
-    *wake = NULL;
     yyjson_val *keys = yyjson_obj_get(wait, "calls");
     if (!keys)
         return AH_OK;
@@ -57,50 +36,64 @@ ah_code core_work_children_ready(ah_engine *e, const char *sid, const char *pare
         policy = "all";
     if (strcmp(policy, "all") && strcmp(policy, "any") && strcmp(policy, "fail_fast"))
         return ah_fail(error, AH_INVALID, "unknown child wait policy");
-    yyjson_mut_doc *doc = ah_mut_doc_new();
-    if (!doc)
-        return ah_fail(error, AH_IO, "out of memory reading children");
-    yyjson_mut_val *root = yyjson_mut_obj(doc), *calls = yyjson_mut_obj(doc);
-    yyjson_mut_doc_set_root(doc, root);
-    yyjson_mut_obj_add_str(doc, root, "reason", "calls");
-    yyjson_mut_obj_add_strcpy(doc, root, "policy", policy);
-    yyjson_mut_obj_add_val(doc, root, "calls", calls);
-    ah_code code = AH_OK;
+    if (doc)
+        *values = yyjson_mut_obj(doc);
+    sqlite3_stmt *row = NULL;
+    ah_code code = core_prepare(
+        e,
+        "SELECT o.status,o.is_error,o.id,o.name,o.result_format,CASE WHEN ?4 THEN o.result END "
+        "FROM work_calls w JOIN operations o ON o.id=w.operation_id WHERE w.session_id=?1 AND "
+        "w.parent_id=?2 AND w.key=?3",
+        &row, error);
+    if (code != AH_OK)
+        return code;
+    sqlite3_bind_text(row, 1, sid, -1, SQLITE_STATIC);
+    sqlite3_bind_text(row, 2, parent, -1, SQLITE_STATIC);
+    sqlite3_bind_int(row, 4, doc != NULL);
     unsigned done = 0;
     bool failed = false;
-    for (size_t index = 0; index < count && code == AH_OK; index++) {
-        const char *key = yyjson_get_str(yyjson_arr_get(keys, index));
-        if (!key || !*key || strlen(key) > 256) {
+    for (size_t i = 0; i < count; i++) {
+        yyjson_val *v = yyjson_arr_get(keys, i);
+        const char *key = yyjson_get_str(v);
+        if (!key || !*key || strlen(key) > 256 || strlen(key) != yyjson_get_len(v)) {
             code = ah_fail(error, AH_INVALID, "bounded child wait key required");
             break;
         }
-        for (size_t prior = 0; prior < index; prior++) {
-            const char *other = yyjson_get_str(yyjson_arr_get(keys, prior));
-            if (!strcmp(key, other))
+        for (size_t j = 0; j < i; j++)
+            if (yyjson_equals_str(yyjson_arr_get(keys, j), key))
                 code = ah_fail(error, AH_INVALID, "duplicate child wait key");
+        if (code != AH_OK)
+            break;
+        sqlite3_bind_text(row, 3, key, -1, SQLITE_STATIC);
+        int step = sqlite3_step(row);
+        if (step != SQLITE_ROW) {
+            code = ah_fail(error, step == SQLITE_DONE ? AH_INVALID : AH_IO,
+                           "wait references an unavailable child key");
+            break;
         }
-        if (code != AH_OK)
-            break;
-        core_operation operation;
-        code = child_operation(e, sid, parent, key, &operation, error);
-        if (code != AH_OK)
-            break;
-        bool terminal = !strcmp(operation.status, "done");
+        char *status = (char *)sqlite3_column_text(row, 0);
+        bool terminal = !strcmp(status, "done"), is_error = sqlite3_column_int(row, 1) != 0;
         done += terminal;
-        failed |= terminal && operation.is_error;
-        yyjson_mut_val *value = core_work_value(doc, &operation);
-        if (!value || !yyjson_mut_obj_add_val(doc, calls, key, value))
-            code = ah_fail(error, AH_IO, "cannot encode child snapshot");
-        core_operation_free(&operation);
+        failed |= terminal && is_error;
+        if (doc) {
+            core_operation op = {.id = (char *)sqlite3_column_text(row, 2),
+                                 .name = (char *)sqlite3_column_text(row, 3),
+                                 .status = status,
+                                 .is_error = is_error,
+                                 .result_format = sqlite3_column_int(row, 4),
+                                 .result = (char *)sqlite3_column_text(row, 5)};
+            yyjson_mut_val *item = core_work_value(doc, &op);
+            if (!item || !yyjson_mut_obj_add_val(doc, *values, key, item)) {
+                code = ah_fail(error, AH_IO, "cannot encode child snapshot");
+                break;
+            }
+        }
+        sqlite3_reset(row);
     }
-    if (code == AH_OK) {
+    sqlite3_finalize(row);
+    if (code == AH_OK)
         *ready = !strcmp(policy, "any")         ? done > 0
                  : !strcmp(policy, "fail_fast") ? failed || done == count
                                                 : done == count;
-        *wake = ah_mut_write(doc);
-        if (!*wake)
-            code = ah_fail(error, AH_IO, "out of memory encoding child wake");
-    }
-    ah_mut_doc_free(doc);
     return code;
 }

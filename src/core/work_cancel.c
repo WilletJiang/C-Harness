@@ -90,14 +90,15 @@ static ah_code cancel_tree(ah_engine *e, const char *sid, const char *id, bool i
     char ids[128][AH_ID_CAP];
     unsigned count = 0;
     sqlite3_stmt *row = NULL;
-    ah_code code =
-        core_prepare(e,
-                     "WITH RECURSIVE tree(id,depth) AS (SELECT ?1,0 UNION ALL "
-                     "SELECT w.operation_id,t.depth+1 FROM work_calls w JOIN tree t "
-                     "ON w.parent_id=t.id WHERE t.depth<8) "
-                     "SELECT o.id FROM tree t JOIN operations o ON o.id=t.id "
-                     "WHERE o.session_id=?2 AND (?3 OR t.depth>0) ORDER BY t.depth DESC,o.seq",
-                     &row, error);
+    ah_code code = core_prepare(
+        e,
+        "WITH RECURSIVE tree(id,depth) AS (SELECT ?1,0 UNION ALL "
+        "SELECT w.operation_id,t.depth+1 FROM work_calls w JOIN tree t "
+        "ON w.parent_id=t.id WHERE t.depth<8) "
+        "SELECT o.id FROM tree t JOIN operations o ON o.id=t.id "
+        "WHERE o.session_id=?2 AND (?3 OR t.depth>0) AND (t.depth=0 OR o.status!='done') "
+        "ORDER BY t.depth DESC,o.seq",
+        &row, error);
     int step = SQLITE_DONE;
     if (code == AH_OK) {
         sqlite3_bind_text(row, 1, id, -1, SQLITE_TRANSIENT);

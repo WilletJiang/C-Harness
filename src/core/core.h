@@ -23,6 +23,8 @@ typedef struct {
 } core_tool;
 struct ah_engine {
     ah_config config;
+    char *flow_runner_path;
+    struct core_flow_cell *flow_cells;
     ah_agents_config agents;
     bool agents_enabled;
     struct ah_extensions *extensions;
@@ -54,6 +56,7 @@ typedef struct {
     ah_state state;
     unsigned turn, model_calls, tool_calls;
     bool completion_committed;
+    struct core_flow_batch *flow_batch;
 } core_session;
 typedef struct {
     char *id, *call_id, *name, *arguments, *status, *result, *schema;
@@ -93,6 +96,7 @@ ah_code core_context_compact(ah_engine *, core_session *, size_t, bool *, ah_err
 ah_code core_context_fork(ah_engine *, const char *, const char *, ah_error *);
 ah_code core_context_recall(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
 ah_code core_context_native(ah_engine *, const char *, sqlite3_int64, ah_error *);
+ah_code core_pending_operation(ah_engine *, const char *, ah_state, core_operation *, ah_error *);
 ah_code core_next_operation(ah_engine *, const char *, core_operation *, ah_error *);
 ah_code core_get_operation(ah_engine *, const char *, const char *, core_operation *, ah_error *);
 void core_operation_free(core_operation *);
@@ -100,11 +104,14 @@ ah_code core_normalize_result(ah_engine *, const char *, core_operation *, ah_to
                               ah_error *);
 ah_code core_save_result(ah_engine *, const char *, const core_operation *, const char *, bool,
                          const char *, const char *, ah_error *);
+char *core_retry_feedback(ah_engine *, const char *, const core_operation *, const char *);
 ah_code core_receipt(ah_engine *, const char *, const core_operation *, const char *, bool,
                      const char *, ah_error *);
 ah_code core_set_operation(ah_engine *, const char *, const char *, const char *, ah_error *);
 core_tool *core_find_tool(ah_engine *, const char *);
 bool core_cancelled(void *);
+ah_code core_flow_register(ah_engine *, ah_error *);
+void core_flow_close(ah_engine *);
 ah_code core_recover(ah_engine *, ah_error *);
 ah_code core_migrate_result_refs(ah_engine *, ah_error *);
 const char *core_builtin_schema(const char *);
@@ -119,13 +126,25 @@ bool core_jobs_available(ah_engine *);
 bool core_jobs_running(ah_engine *, const char *);
 ah_code core_jobs_start(ah_engine *, core_session *, core_operation *, core_tool *,
                         const ah_tool_call *, ah_error *);
+ah_code core_jobs_advance(ah_engine *, core_session *, bool, ah_error *);
+ah_code core_flow_stage(ah_engine *, core_session *, const char *, ah_error *);
+ah_code core_flow_dispatch_staged(ah_engine *, core_session *, ah_error *);
+void core_flow_clear_staged(core_session *);
 ah_code core_jobs_finish(ah_engine *, core_session *, ah_error *);
 void core_jobs_wait(ah_engine *, unsigned);
 void core_jobs_cancel(ah_engine *, const char *);
 ah_code core_jobs_cancel_owned(ah_engine *, const char *, ah_error *);
 void core_jobs_close(ah_engine *);
 ah_code core_tools_step(ah_engine *, core_session *, bool *, ah_error *);
+ah_code core_write_batch(ah_engine *, core_session *, const core_operation *, bool *, ah_error *);
+ah_code core_pause_approval(ah_engine *, core_session *, core_operation *, ah_error *);
+ah_code core_job_checkpoint(ah_engine *, const char *, const char *, const char *, ah_error *);
 bool core_independent_read(ah_engine *, const core_operation *);
+ah_code core_collect_reads(ah_engine *, const char *, const char *, const char *, core_operation *,
+                           unsigned, unsigned *, ah_error *);
+ah_code core_dispatch_reads(ah_engine *, core_session *, core_operation *, unsigned, ah_error *);
+ah_code core_record_intents(ah_engine *, core_session *, core_operation *, unsigned, ah_error *);
+ah_code core_stage_flow_reads(ah_engine *, core_session *, const core_operation *, ah_error *);
 ah_code core_tool_intents(ah_engine *, core_session *, core_operation *, unsigned, ah_error *);
 ah_code core_dispatch_tool(ah_engine *, core_session *, core_operation *, bool, bool, ah_error *);
 ah_code core_publish_ready(ah_engine *, core_session *, ah_error *);

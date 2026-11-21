@@ -7,29 +7,40 @@ did not establish a general speedup. Select the extra tool profile before a sess
 
 ## Tool profile and context
 
-Set `ah_local_tools_config.enable_workflows=true` (CLI: `--workflows` with
-`--workspace`) to register `find`. The default profile contains `read_file`,
-`write_file` and the unified `apply_changes`, plus explicitly enabled `exec`.
-Directory listing uses commands through `exec`; there is no `list_directory` tool.
-Host check presets also
-require the workflow profile and must be added before registration. The first
+Workspace tools include `find`, `read_file`, `view_image`, `write_file`,
+`apply_changes`, and the approval-gated `test` command. A host can add fixed
+check presets with `enable_workflows=true` before registration. The first
 registration attempt freezes presets, including on partial failure; recreate the
 tools/engine on such a failure rather than changing published callback policies.
 
-`find` accepts a single-line literal `query`, a workspace-relative `path` (`.` for
-the root), optional `glob`, `context_lines` (default 2, maximum 5), `max_results`
-(default 20, maximum 100), and pagination `offset`/`snapshot`. It returns sorted
-paths with merged source excerpts, SHA-256 file revisions, ranges and exact byte
-continuations for truncated excerpts. A continuation requires the previous snapshot;
-changed scanned inputs invalidate it. A snapshot is an observation fingerprint,
-not an atomic filesystem snapshot. Narrow scope when `scan_truncated` is true.
+`find({"mode":"files"})` lists workspace-relative regular file paths, including binary and
+empty files. Use this to discover the tree without knowing a search term. For example,
+`{"mode":"files","path":"src","glob":"*.c","max_results":20}` returns sorted
+`results: [{"path":"…"}]`, `total_files`, a snapshot and a continuation offset. Listing
+does not read file bodies; its snapshot tracks the matching names and search settings.
+For content search, pass a single-line literal `query` (mode `content`, the default).
+This returns merged line excerpts, SHA-256 file revisions and byte continuations.
+Both modes default `path` to `.`. The glob matches workspace-relative paths;
+`*` can span directories. Continue with the same settings, `next_offset` and
+`snapshot`. A stale snapshot requires restarting at zero.
 
-Traversal is bounded to 32 levels, 2,048 files and 16,384 directory entries. Search
-reads at most 32 MiB, skips non-text/over-1-MiB files, links, `.git` and in-flight
-write temporary names, and reports skipped/truncated work. Native descriptor-based
-traversal preserves workspace path rules; no shell search command or index service
-is needed. These explicit limits trade exhaustive large-tree discovery for bounded
-latency; the caller must not interpret a partial scan as absence of matches.
+Discovery applies workspace-local `.gitignore` patterns before descending into
+directories and counts only glob-matching regular files against the file cap.
+Nested rules override parent rules; an excluded parent must be re-included
+before its children can be re-included. Pass `include_ignored:true` to inspect
+ignored paths. This is filesystem discovery: no Git index, global excludes or
+repository configuration is consulted. File permissions and write grants remain
+independent of ignore rules. Host verification and check fingerprints still
+walk their declared inputs independently of discovery filters.
+
+Content search inspects up to 2,048 matching files and 32 MiB of content; listing
+can enumerate up to 16,384 entries. Both have independent depth (32 below the
+scope) and visited-entry (16,384) bounds. Pages contain at most 100 results.
+A partial scan sets `scan_truncated`; narrow the scope before concluding there
+are no matches. Symlinks, special files, Git metadata and in-flight write files
+are excluded. Content search also skips non-text and over-1-MiB files. Ignore
+rule inputs are bounded at 64 KiB per file, 1 MiB per walk and 1,024 active
+patterns. Unreadable or excessive rule input fails the search explicitly.
 
 The native implementation searches for a hit before deriving line context. It
 tracks only six recent line starts, skips repeated hits within a matching line,

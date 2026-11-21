@@ -2,7 +2,7 @@
 #include "work.h"
 #include "../agents/agents_internal.h"
 
-static ah_code count_call(ah_engine *, const char *, ah_error *);
+static ah_code count_calls(ah_engine *, const char *, unsigned, ah_error *);
 
 typedef struct {
     ah_engine *engine;
@@ -29,15 +29,31 @@ static ah_code checkpoint(void *context, const char *json, ah_error *error) {
     return code;
 }
 
+ah_code core_job_checkpoint(ah_engine *e, const char *session, const char *operation,
+                            const char *json, ah_error *error) {
+    checkpoint_context context = {e, session, operation, 0};
+    return checkpoint(&context, json, error);
+}
+
+typedef enum { TOOL_REJECTED, ARGUMENTS_REJECTED, INTERRUPTED_BEFORE_DISPATCH } rejection;
+
 static ah_code finish_error(ah_engine *e, core_session *session, core_operation *op,
-                            const char *message, bool count, ah_error *err) {
-    char *json = core_object_string("error", message);
+                            const char *message, rejection reason, ah_error *err) {
+    bool count = reason != INTERRUPTED_BEFORE_DISPATCH;
+    yyjson_mut_doc *doc = ah_mut_doc_new();
+    yyjson_mut_val *body = yyjson_mut_obj(doc);
+    yyjson_mut_doc_set_root(doc, body);
+    yyjson_mut_obj_add_str(doc, body, "error", message);
+    if (reason == ARGUMENTS_REJECTED)
+        yyjson_mut_obj_add_str(doc, body, "kind", "invalid_arguments");
+    char *json = ah_mut_write(doc);
+    ah_mut_doc_free(doc);
     if (!json)
         return ah_fail(err, AH_IO, "out of memory");
     uint64_t after = 0;
     ah_code rc = core_begin(e, &after, err);
     if (rc == AH_OK && count)
-        rc = count_call(e, session->id, err);
+        rc = count_calls(e, session->id, 1, err);
     if (rc == AH_OK)
         rc = core_receipt(e, session->id, op, json, true, "tool.completed", err);
     if (rc == AH_OK) {
@@ -71,14 +87,20 @@ static ah_code set_pause(ah_engine *e, core_session *session, core_operation *op
         session->state = state;
     return rc;
 }
-static ah_code count_call(ah_engine *e, const char *sid, ah_error *err) {
+ah_code core_pause_approval(ah_engine *e, core_session *session, core_operation *op,
+                            ah_error *error) {
+    return set_pause(e, session, op, "approval", AH_WAITING_APPROVAL, "approval.requested", error);
+}
+static ah_code count_calls(ah_engine *e, const char *sid, unsigned count, ah_error *err) {
     sqlite3_stmt *s = NULL;
-    ah_code rc = core_prepare(e, "UPDATE sessions SET tool_calls=tool_calls+1 WHERE id=?", &s, err);
+    ah_code rc =
+        core_prepare(e, "UPDATE sessions SET tool_calls=tool_calls+?2 WHERE id=?1", &s, err);
     if (rc != AH_OK)
         return rc;
     sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(s, 2, count);
     rc = core_done(e, s, err);
-    return rc == AH_OK ? core_task_charge(e, sid, false, 1, err) : rc;
+    return rc == AH_OK ? core_task_charge(e, sid, false, count, err) : rc;
 }
 static ah_code publish_received(ah_engine *e, core_session *session, core_operation *op,
                                 ah_error *err) {
@@ -194,27 +216,26 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
     const char *builtin = agents_tool_schema(op->name) ? NULL : core_builtin_schema(op->name),
                *schema = builtin ? builtin : (registered ? registered->schema : NULL);
     if (!schema)
-        return finish_error(e, session, op, "tool is unavailable", true, err);
+        return finish_error(e, session, op, "tool is unavailable", TOOL_REJECTED, err);
     if (registered && (registered->tool.effect != op->effect ||
                        registered->tool.requires_approval != op->approval || !op->schema ||
                        strcmp(registered->schema, op->schema)))
         return finish_error(e, session, op, "tool policy changed since intent; execution refused",
-                            true, err);
+                            TOOL_REJECTED, err);
     ah_error validation = {0};
     ah_code valid = ah_schema_validate(schema, op->arguments, &validation);
     if (valid != AH_OK)
         return finish_error(e, session, op,
                             validation.message[0] ? validation.message
                                                   : "tool arguments failed schema validation",
-                            true, err);
+                            ARGUMENTS_REJECTED, err);
     if (op->approval && op->decision != 1)
-        return set_pause(e, session, op, "approval", AH_WAITING_APPROVAL, "approval.requested",
-                         err);
+        return core_pause_approval(e, session, op, err);
     if (builtin && strcmp(op->name, "read_result") && strcmp(op->name, "recall")) {
         uint64_t after = 0;
         ah_code rc = core_begin(e, &after, err);
         if (rc == AH_OK)
-            rc = count_call(e, session->id, err);
+            rc = count_calls(e, session->id, 1, err);
         if (rc == AH_OK)
             rc = core_set_operation(e, session->id, op->id, "input", err);
         if (rc == AH_OK)
@@ -241,8 +262,8 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
     if (authorized == AH_BUSY)
         return AH_OK;
     if (authorized == AH_AUTH || authorized == AH_INVALID)
-        return finish_error(e, session, op, err ? err->message : "workspace access denied", true,
-                            err);
+        return finish_error(e, session, op, err ? err->message : "workspace access denied",
+                            TOOL_REJECTED, err);
     if (authorized != AH_OK)
         return authorized;
     ah_code rc = core_tool_intents(e, session, op, 1, err);
@@ -252,30 +273,29 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                               err);
 }
 
-ah_code core_tool_intents(ah_engine *e, core_session *session, core_operation *operations,
-                          unsigned count, ah_error *err) {
-    uint64_t after = 0;
-    ah_code rc = core_begin(e, &after, err);
+ah_code core_record_intents(ah_engine *e, core_session *session, core_operation *operations,
+                            unsigned count, ah_error *err) {
+    ah_code rc = count_calls(e, session->id, count, err);
     for (unsigned i = 0; i < count && rc == AH_OK; i++) {
         core_operation *op = &operations[i];
         core_tool *tool = core_find_tool(e, op->name);
-        if (tool && tool->work) {
-            core_work work;
-            rc = core_work_claim(e, session->id, op->id, &work, err);
-            if (rc == AH_OK) {
-                op->generation = work.generation;
-                core_work_free(&work);
-            }
-        }
-        if (rc == AH_OK)
-            rc = count_call(e, session->id, err);
-        if (rc == AH_OK)
+        if (tool && tool->work)
+            rc = core_work_claim(e, session->id, op, err);
+        else
             rc = core_set_operation(e, session->id, op->id, "executing", err);
         if (rc == AH_OK)
             rc = core_event(e, session->id, op->id, "tool.started", op->arguments, err);
     }
     if (rc == AH_OK && session->state == AH_WAITING_WORK)
         rc = core_state(e, session->id, AH_RUNNING, err);
+    return rc;
+}
+ah_code core_tool_intents(ah_engine *e, core_session *session, core_operation *operations,
+                          unsigned count, ah_error *err) {
+    uint64_t after = 0;
+    ah_code rc = core_begin(e, &after, err);
+    if (rc == AH_OK)
+        rc = core_record_intents(e, session, operations, count, err);
     if (rc == AH_OK) {
         rc = core_commit(e, after, err);
         if (rc != AH_OK)
@@ -304,7 +324,8 @@ ah_code core_dispatch_tool(ah_engine *e, core_session *session, core_operation *
 
     if (!worker && core_cancelled(e)) {
         core_work_free(&work);
-        rc = finish_error(e, session, op, "cancelled before execution", false, err);
+        rc = finish_error(e, session, op, "cancelled before execution", INTERRUPTED_BEFORE_DISPATCH,
+                          err);
         if (rc != AH_OK)
             session->state = AH_OUTCOME_UNKNOWN;
         return rc == AH_OK ? ah_fail(err, AH_CANCELLED, "cancelled before tool execution") : rc;

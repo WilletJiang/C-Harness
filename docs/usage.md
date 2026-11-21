@@ -8,9 +8,7 @@ uses vendored yyjson 0.12.0. Linux process tools require glibc 2.34+; macOS uses
 native spawn actions. Unsupported process isolation primitives fail closed.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+./test
 ./build/ah_embed
 ```
 
@@ -122,8 +120,7 @@ receipt commits, so later configuration changes do not rewrite past prompts.
 These are byte budgets, not token estimates. `read_file` defaults to 200 lines;
 use its continuation cursor for complete access to long files. `apply_changes` uses
 unique exact replacements for single or multi-file edits. Base revisions are optional;
-when supplied, they reject a stale observation. Directory listing goes through enabled
-process tools such as `ls`; there is no dedicated listing tool.
+when supplied, they reject a stale observation. Use `find({"mode":"files"})` to discover file paths without enabling process execution.
 
 Context checkpoint summaries are explicit host inputs; automatic summarization,
 semantic memory and provider switching are not silently performed. Text-stream

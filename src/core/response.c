@@ -131,6 +131,7 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
     }
     sqlite3_finalize(prefix);
     bool native_compaction = false;
+    char first_flow[AH_ID_CAP] = {0};
     yyjson_val *output = yyjson_obj_get(root, "output"), *item;
     size_t index, max, calls = 0;
     yyjson_arr_foreach(output, index, max, item) {
@@ -195,6 +196,8 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
                     free(intent);
                 }
             }
+            if (rc == AH_OK && !calls && !strcmp(name, "flow"))
+                memcpy(first_flow, id, strlen(id) + 1);
             calls++;
         }
     }
@@ -222,6 +225,8 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
         }
         session->state = AH_COMPLETED;
     }
+    if (rc == AH_OK && first_flow[0] && calls == 1)
+        rc = core_flow_stage(e, session, first_flow, err);
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else

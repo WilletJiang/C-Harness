@@ -195,6 +195,7 @@ ah_code core_load(ah_engine *e, const char *sid, core_session *out, ah_error *er
     return AH_OK;
 }
 void core_session_free(core_session *s) {
+    core_flow_clear_staged(s);
     free(s->id);
     free(s->model);
     free(s->instructions);

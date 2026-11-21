@@ -11,6 +11,11 @@ files, remote responses, and subprocess output are untrusted data.
   known failures from uncertain post-effect outcomes.
 - Optional `exec` uses argv directly, a minimal environment, closed inherited file
   descriptors, a process group, bounded output, cancellation and reaping.
+- Flow scripts run in a separate QuickJS helper without an OS module loader.
+  The helper and its install location are trusted. It only requests registered
+  tools; the owner enforces each actual call's policy and workspace permissions.
+  `test` always requires approval: the workspace controls its executable `./test`
+  and that process runs with ordinary OS account authority.
 - **Process execution is not sandboxed.** Once approved, a program can access anything
   permitted to its OS account, spawn detached children, or access the network. The
   process group is cancellation machinery, not a boundary against hostile programs.

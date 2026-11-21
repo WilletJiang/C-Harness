@@ -358,6 +358,7 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
     }
     core_mailbox_active(e, NULL);
     e->deadline = 0;
+    core_flow_close(e);
     e->running = false;
     e->yield = NULL;
     e->yield_context = NULL;

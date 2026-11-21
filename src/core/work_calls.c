@@ -58,19 +58,12 @@ static ah_code existing_call(ah_engine *e, const char *sid, const char *parent, 
     return code;
 }
 
-static ah_code graph_limits(ah_engine *e, const char *sid, const char *parent, ah_error *error) {
-    if (!parent)
-        return AH_OK;
-    core_operation operation;
-    ah_code code = core_get_operation(e, sid, parent, &operation, error);
-    if (code != AH_OK)
-        return code;
-    bool active = !strcmp(operation.status, "executing");
-    core_operation_free(&operation);
-    if (!active)
-        return ah_fail(error, AH_INVALID, "child calls require an executing parent");
+/* Only the owner writes during this transaction. Charge new keys against a
+ * single snapshot of the graph; reusing an existing key costs no capacity. */
+static ah_code graph_capacity(ah_engine *e, const char *sid, const char *parent, int *capacity,
+                              ah_error *error) {
     sqlite3_stmt *row = NULL;
-    code = core_prepare(
+    ah_code code = core_prepare(
         e,
         "WITH RECURSIVE ancestry(id,depth) AS (SELECT ?1,0 UNION ALL "
         "SELECT w.parent_id,a.depth+1 FROM work_calls w JOIN ancestry a "
@@ -78,23 +71,30 @@ static ah_code graph_limits(ah_engine *e, const char *sid, const char *parent, a
         "tree(id) AS (SELECT id FROM ancestry WHERE depth=(SELECT MAX(depth) FROM ancestry) "
         "UNION ALL SELECT w.operation_id FROM work_calls w JOIN tree t ON w.parent_id=t.id) "
         "SELECT (SELECT MAX(depth) FROM ancestry),(SELECT COUNT(*) FROM tree),"
-        "(SELECT COUNT(*) FROM work_calls WHERE parent_id=?1)",
+        "(SELECT COUNT(*) FROM work_calls WHERE parent_id=?1),o.status "
+        "FROM operations o WHERE o.id=?1 AND o.session_id=?2",
         &row, error);
     if (code == AH_OK) {
         sqlite3_bind_text(row, 1, parent, -1, SQLITE_TRANSIENT);
-        if (sqlite3_step(row) != SQLITE_ROW)
-            code = ah_fail(error, AH_IO, "cannot inspect work graph bounds");
-        else if (sqlite3_column_int(row, 0) >= 8 || sqlite3_column_int(row, 1) >= 128 ||
-                 sqlite3_column_int(row, 2) >= 32)
-            code = ah_fail(error, AH_LIMIT, "work graph exceeds depth, tree, or child limit");
+        sqlite3_bind_text(row, 2, sid, -1, SQLITE_STATIC);
+        int step = sqlite3_step(row);
+        if (step != SQLITE_ROW)
+            code = step == SQLITE_DONE ? AH_NOT_FOUND
+                                       : ah_fail(error, AH_IO, "cannot inspect work graph bounds");
+        else if (strcmp((const char *)sqlite3_column_text(row, 3), "executing"))
+            code = ah_fail(error, AH_INVALID, "child calls require an executing parent");
+        else {
+            int tree = 128 - sqlite3_column_int(row, 1), children = 32 - sqlite3_column_int(row, 2);
+            *capacity = sqlite3_column_int(row, 0) >= 8 ? 0 : (tree < children ? tree : children);
+        }
     }
     sqlite3_finalize(row);
     return code;
 }
 
-ah_code core_work_create_call(ah_engine *e, const char *sid, const char *parent, const char *key,
-                              const char *name, const char *args, char id[AH_ID_CAP],
-                              ah_error *error) {
+static ah_code create_call(ah_engine *e, const char *sid, const char *parent, int *capacity,
+                           const char *key, const char *name, const char *args, char id[AH_ID_CAP],
+                           ah_error *error) {
     e->has_work = true;
     size_t complete = 0;
     if (!sid || !key || !*key || strlen(key) > 256 ||
@@ -105,7 +105,17 @@ ah_code core_work_create_call(ah_engine *e, const char *sid, const char *parent,
     ah_code code = existing_call(e, sid, parent, key, name, args, id, error);
     if (code != AH_NOT_FOUND)
         return code;
-    code = graph_limits(e, sid, parent, error);
+    if (parent) {
+        if (*capacity < 0) {
+            code = graph_capacity(e, sid, parent, capacity, error);
+            if (code != AH_OK)
+                return code;
+        }
+        if (*capacity <= 0)
+            return ah_fail(error, AH_LIMIT, "work graph exceeds depth, tree, or child limit");
+        --*capacity;
+    }
+    code = AH_OK;
     core_tool *tool = core_find_tool(e, name);
     const char *schema = tool ? tool->schema : core_builtin_schema(name);
     if (code == AH_OK && !schema)
@@ -174,6 +184,11 @@ ah_code core_work_create_call(ah_engine *e, const char *sid, const char *parent,
     return code;
 }
 
+ah_code core_work_create_root(ah_engine *e, const char *sid, const char *key, const char *tool,
+                              const char *args, char id[AH_ID_CAP], ah_error *error) {
+    return create_call(e, sid, NULL, NULL, key, tool, args, id, error);
+}
+
 ah_code core_work_children(ah_engine *e, const char *sid, const char *parent, uint64_t generation,
                            yyjson_val *calls, ah_error *error) {
     (void)generation; /* Keys belong to the operation, across all generations. */
@@ -183,6 +198,7 @@ ah_code core_work_children(ah_engine *e, const char *sid, const char *parent, ui
         return ah_fail(error, AH_INVALID, "calls must be an array of at most 32 keyed tools");
     size_t index, count;
     yyjson_val *call;
+    int capacity = -1;
     yyjson_arr_foreach(calls, index, count, call) {
         const char *key = yyjson_get_str(yyjson_obj_get(call, "key"));
         const char *tool = yyjson_get_str(yyjson_obj_get(call, "tool"));
@@ -195,7 +211,7 @@ ah_code core_work_children(ah_engine *e, const char *sid, const char *parent, ui
                 return ah_fail(error, AH_INVALID, "duplicate child key in continuation");
         }
         char *json = ah_json_write(args), id[AH_ID_CAP];
-        ah_code code = json ? core_work_create_call(e, sid, parent, key, tool, json, id, error)
+        ah_code code = json ? create_call(e, sid, parent, &capacity, key, tool, json, id, error)
                             : ah_fail(error, AH_IO, "out of memory encoding child arguments");
         free(json);
         if (code != AH_OK)

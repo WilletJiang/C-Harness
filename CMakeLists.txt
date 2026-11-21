@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ah VERSION 0.10.0 LANGUAGES C)
+project(ah VERSION 0.11.0 LANGUAGES C)
 
 set(AH_TOP_LEVEL OFF)
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -53,11 +53,24 @@ add_library(ah_toml STATIC vendor/tomlc17/tomlc17.c)
 target_include_directories(ah_toml PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor/tomlc17>)
 set_target_properties(ah_toml PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Keep the JavaScript engine outside the SDK address space.
+add_executable(ah_flow_vm flow/main.c vendor/quickjs/quickjs.c vendor/quickjs/cutils.c
+  vendor/quickjs/libunicode.c vendor/quickjs/libregexp.c vendor/quickjs/dtoa.c)
+set_target_properties(ah_flow_vm PROPERTIES OUTPUT_NAME ah-flow-vm C_EXTENSIONS ON)
+target_include_directories(ah_flow_vm PRIVATE vendor/quickjs)
+target_compile_definitions(ah_flow_vm PRIVATE _GNU_SOURCE CONFIG_VERSION="2026-06-04")
+# QuickJS's large interpreter frame under -O0 + sanitizer instrumentation
+# consumes its script stack limit during built-in calls. Keep the VM optimized.
+target_compile_options(ah_flow_vm PRIVATE -O2)
+target_link_libraries(ah_flow_vm PRIVATE m Threads::Threads)
+install(TARGETS ah_flow_vm RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 add_library(ah STATIC
+  src/core/flow.c src/core/flow_vm.c src/core/flow_schedule.c src/core/write_batch.c
   src/common.c src/hash.c src/sdk.c
   src/core/content.c src/core/content_codec.c src/core/content_store.c src/core/content_expand.c src/core/tool_content.c src/core/retention.c
   src/core/context_policy.c src/core/context_archive.c src/core/context_recall.c
-  src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/completion.c src/core/mailbox.c src/core/observations.c
+  src/core/context.c src/core/engine.c src/core/workspace.c src/core/workspace_paths.c src/core/workspace_grants.c src/core/workspace_dispatch.c src/core/execute.c src/core/completion.c src/core/mailbox.c src/core/observations.c src/core/retry.c
   src/core/observe.c src/core/work_store.c src/core/work_signal.c src/core/work_dispatch.c
   src/core/work_calls.c src/core/work_join.c src/core/work_host.c src/core/work_cancel.c
   src/core/operations.c src/core/jobs.c src/core/tool_step.c src/core/recovery.c src/core/response.c src/core/request.c
@@ -72,9 +85,11 @@ add_library(ah STATIC
   src/extensions/mcp.c src/extensions/mcp_content.c src/extensions/mcp_config.c src/extensions/mcp_stdio.c src/extensions/mcp_http.c
   src/providers/responses.c src/providers/responses_http.c src/providers/responses_async.c src/providers/responses_metrics.c
   src/providers/stream.c src/providers/stream_items.c
-  src/tools/source.c src/tools/walk.c src/tools/find.c src/tools/changes.c src/tools/edit.c
+  src/tools/source.c src/tools/walk.c src/tools/ignore.c src/tools/find.c src/tools/changes.c src/tools/edit.c
   src/tools/check.c src/tools/check_registry.c src/tools/diagnostics.c
   src/tools/exec.c src/tools/file.c src/tools/file_read.c src/tools/image.c src/tools/local.c src/tools/schema.c)
+add_dependencies(ah ah_flow_vm)
+target_compile_definitions(ah PRIVATE AH_FLOW_INSTALLED="${CMAKE_INSTALL_FULL_BINDIR}/ah-flow-vm")
 add_library(ah::ah ALIAS ah)
 ah_compile_target(ah)
 target_include_directories(ah PUBLIC

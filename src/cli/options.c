@@ -26,7 +26,7 @@ void cli_usage(bool all) {
          "  --auto-context       Archive older exchanges; thresholds follow the context budget\n"
          "  --agents N           Fresh-context subagents, N concurrent model requests\n"
          "  --enable-exec        Allow process execution with approval (not sandboxed)\n"
-         "  --workflows          Add find text search (apply_changes is always available)\n"
+         "  --workflows          Enable host check presets (workspace search is always available)\n"
          "  --coordinate-writes  Require explicit workspace write grants via RPC\n"
          "  --skills             Lazy skill discovery and loading\n"
          "  --mcp                Lazy MCP discovery/calls with approval\n"

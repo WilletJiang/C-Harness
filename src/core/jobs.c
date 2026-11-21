@@ -1,5 +1,6 @@
 #include "core.h"
 #include "ah/jobs.h"
+#include "../tools/local_internal.h"
 #include <time.h>
 
 typedef struct core_job {
@@ -7,6 +8,9 @@ typedef struct core_job {
     core_tool *tool;
     char *session, *operation, *arguments, *checkpoint, *wake;
     ah_tool_call call;
+    const char *phase; /* Borrowed while the worker waits for the owner to commit it. */
+    ah_code phase_code;
+    ah_error phase_error;
     ah_tool_result result;
     ah_error error;
     ah_code executed;
@@ -71,6 +75,49 @@ static ah_code stop_reason(core_job *job) {
         atomic_load_explicit(&job->engine->cancelled, memory_order_relaxed))
         return AH_CANCELLED;
     return ah_now_ms() >= job->call.deadline_ms ? AH_LIMIT : AH_OK;
+}
+
+static ah_code worker_phase(void *context, const char *json, ah_error *error) {
+    core_job *job = context;
+    struct core_jobs *jobs = job->engine->jobs;
+    pthread_mutex_lock(&jobs->mutex);
+    job->phase = json;
+    pthread_cond_broadcast(&jobs->changed);
+    while (job->phase && !atomic_load(&job->cancelled))
+        pthread_cond_wait(&jobs->changed, &jobs->mutex);
+    ah_code code = job->phase ? AH_CANCELLED : job->phase_code;
+    if (error)
+        *error = job->phase_error;
+    job->phase = NULL;
+    pthread_mutex_unlock(&jobs->mutex);
+    return code;
+}
+
+/* The owner is the only thread that removes jobs or commits phase events.
+ * Copy the message under lock so observer-driven cancellation can never
+ * invalidate a borrowed worker pointer during the transaction. */
+static void commit_phases(ah_engine *e, const char *sid) {
+    struct core_jobs *jobs = e->jobs;
+    for (core_job *job = jobs->head; job; job = job->next) {
+        if (strcmp(job->session, sid))
+            continue;
+        pthread_mutex_lock(&jobs->mutex);
+        bool waiting = job->phase != NULL;
+        char *json = waiting ? ah_strdup(job->phase) : NULL;
+        pthread_mutex_unlock(&jobs->mutex);
+        if (!waiting)
+            continue;
+        ah_error error = {0};
+        ah_code code = json ? core_job_checkpoint(e, sid, job->operation, json, &error)
+                            : ah_fail(&error, AH_IO, "Cannot copy file checkpoint");
+        free(json);
+        pthread_mutex_lock(&jobs->mutex);
+        job->phase_code = code;
+        job->phase_error = error;
+        job->phase = NULL;
+        pthread_cond_broadcast(&jobs->changed);
+        pthread_mutex_unlock(&jobs->mutex);
+    }
 }
 
 static bool cancelled(void *context) {
@@ -148,8 +195,8 @@ ah_code core_jobs_start(ah_engine *e, core_session *session, core_operation *ope
         job->call.wake_json = job->wake;
         job->call.cancelled = cancelled;
         job->call.cancel_context = job;
-        job->call.checkpoint = NULL;
-        job->call.checkpoint_context = NULL;
+        job->call.checkpoint = tool->tool.execute == ah_local_apply ? worker_phase : NULL;
+        job->call.checkpoint_context = job->call.checkpoint ? job : NULL;
         job->call.yield = NULL;
         job->call.yield_context = NULL;
         atomic_init(&job->cancelled, false);
@@ -228,7 +275,7 @@ void core_jobs_wait(ah_engine *e, unsigned milliseconds) {
     pthread_mutex_lock(&jobs->mutex);
     bool finished = false;
     for (core_job *job = jobs->head; job; job = job->next)
-        finished |= job->finished;
+        finished |= job->finished || job->phase != NULL;
     if (jobs->head && !finished) {
 #ifdef __APPLE__
         struct timespec delay = {.tv_sec = milliseconds / 1000,
@@ -284,33 +331,46 @@ static ah_code capture_job(ah_engine *e, core_session *session, core_job *job, a
     return code;
 }
 
-ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
+static bool ordinary_read(const core_job *job) {
+    return job->tool->tool.effect == AH_EFFECT_READ && !job->tool->work && !job->scoped_cancel;
+}
+
+static core_job *take_finished(struct core_jobs *jobs, const char *sid, bool reads_only) {
     core_job *finished = NULL, **tail = &finished;
-    if (e->jobs) {
-        struct core_jobs *jobs = e->jobs;
-        pthread_mutex_lock(&jobs->mutex);
-        core_job **slot = &jobs->head;
-        while (*slot) {
-            core_job *job = *slot;
-            if (strcmp(job->session, session->id) || !job->finished) {
-                slot = &job->next;
-                continue;
-            }
-            *slot = job->next;
-            jobs->count--;
-            job->next = NULL;
-            *tail = job;
-            tail = &job->next;
+    pthread_mutex_lock(&jobs->mutex);
+    core_job **slot = &jobs->head;
+    while (*slot) {
+        core_job *job = *slot;
+        if (strcmp(job->session, sid) || !job->finished || (reads_only && !ordinary_read(job))) {
+            slot = &job->next;
+            continue;
         }
-        pthread_mutex_unlock(&jobs->mutex);
+        *slot = job->next;
+        jobs->count--;
+        job->next = NULL;
+        *tail = job;
+        tail = &job->next;
     }
+    pthread_mutex_unlock(&jobs->mutex);
+    return finished;
+}
+
+ah_code core_jobs_advance(ah_engine *e, core_session *session, bool advance, ah_error *error) {
+    if (e->jobs)
+        commit_phases(e, session->id);
+    core_job *finished = e->jobs ? take_finished(e->jobs, session->id, false) : NULL;
     if (!finished)
         return core_publish_ready(e, session, error);
+    /* Preserve the receipt boundary of durable callbacks and effects. Their
+     * completion can cancel a sibling or publish a deferred parent. */
+    bool coalesce = advance && !e->agents_enabled && (!e->has_work || e->flow_cells);
     for (core_job *job = finished; job; job = job->next) {
+        coalesce &= ordinary_read(job);
         pthread_join(job->thread, NULL);
         core_metric(e, session->id, job->operation, "tool", job->began, job->ended,
                     job->result.json ? strlen(job->result.json) : 0, 1, job->executed);
     }
+    core_job *additional = NULL;
     uint64_t after = 0;
     ah_code code = core_begin(e, &after, error), stopped = AH_OK;
     bool uncertain = false;
@@ -325,9 +385,19 @@ ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
             stopped = code;
             code = AH_OK;
         }
+        /* Pick up siblings which finished while these receipts were being
+         * stored. Never wait for a running callback to fill a transaction. */
+        if (!job->next && coalesce && code == AH_OK && !uncertain && stopped == AH_OK &&
+            core_jobs_running(e, session->id)) {
+            job->next = take_finished(e->jobs, session->id, true);
+            if (!additional)
+                additional = job->next;
+        }
     }
     if (code == AH_OK)
         code = core_publish_ready(e, session, error);
+    if (advance && code == AH_OK && !uncertain && stopped == AH_OK)
+        code = core_flow_stage(e, session, NULL, error);
     if (code == AH_OK || code == AH_UNCERTAIN) {
         ah_code committed = core_commit(e, after, error);
         if (committed != AH_OK)
@@ -337,6 +407,12 @@ ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
     while (finished) {
         core_job *job = finished;
         finished = job->next;
+        if (job == additional) {
+            pthread_join(job->thread, NULL);
+            core_metric(e, session->id, job->operation, "tool", job->began, job->ended,
+                        job->result.json ? strlen(job->result.json) : 0, 1, job->executed);
+            additional = job->next;
+        }
         free_job(job);
     }
     if (code != AH_OK && code != AH_UNCERTAIN)
@@ -347,6 +423,10 @@ ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
         code = ah_fail(error, stopped,
                        "tool completed after cancellation or deadline; receipt recorded");
     return code;
+}
+
+ah_code core_jobs_finish(ah_engine *e, core_session *session, ah_error *error) {
+    return core_jobs_advance(e, session, false, error);
 }
 
 void core_jobs_close(ah_engine *e) {
