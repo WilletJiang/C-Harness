@@ -27,7 +27,7 @@ struct ah_work_config {
  * the continuation. Parked invocations retain no worker. Initial checkpoint is
  * "{}"; later callbacks receive stored state and the persisted wake reason.
  * Envelopes are bounded at 64 KiB, signal values at 16 KiB and inboxes at 128
- * single-use keys (including reserved waits). See docs/durable.md for semantics. */
+ * single-use keys (including reserved waits). */
 
 typedef enum {
     AH_SIGNAL_DELIVERED,

@@ -38,8 +38,6 @@ static ah_code model(void *context, const char *request, ah_delta_sink delta, vo
     f->models++;
     if (f->models == f->fail_model)
         return ah_fail(error, AH_NETWORK, "injected model failure");
-    if (f->models == 1 && f->steer)
-        ok(ah_steer(f->engine, f->session, "steer", "Preserve exact counts.", error), error);
     *out = ah_strdup(f->models == 1 ? call : done);
     assert(*out);
     return AH_OK;
@@ -47,9 +45,10 @@ static ah_code model(void *context, const char *request, ah_delta_sink delta, vo
 static ah_code execute(void *context, const ah_tool_call *tool_call, ah_tool_result *result,
                        ah_error *error) {
     (void)tool_call;
-    (void)error;
     fixture *f = context;
     f->executions++;
+    if (f->steer)
+        ok(ah_steer(f->engine, f->session, "steer", "Preserve exact counts.", error), error);
     result->json = malloc(f->result_size + 3);
     assert(result->json);
     result->json[0] = '"';

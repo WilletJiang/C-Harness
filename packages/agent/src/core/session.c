@@ -1,4 +1,5 @@
 #include "content_internal.h"
+#include "prompt.h"
 #include "work.h"
 
 ah_code ah_session_state(ah_engine *e, const char *sid, ah_state *state, ah_error *error) {
@@ -28,9 +29,15 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
-    if (!model || !*model || !instructions || !id || strlen(model) > 256 ||
-        strlen(instructions) > e->config.max_context_bytes)
+    if (!model || !*model || !instructions || !id || strlen(model) > 256)
         return ah_fail(err, AH_INVALID, "bounded model and instructions required");
+    size_t extra_bytes = strlen(instructions);
+    if (extra_bytes > e->config.max_context_bytes)
+        return ah_fail(err, AH_INVALID, "bounded model and instructions required");
+    size_t prefix_bytes = sizeof(session_prompt) - 1 + (*instructions ? 2 : 0);
+    if (prefix_bytes > e->config.max_context_bytes ||
+        extra_bytes > e->config.max_context_bytes - prefix_bytes)
+        return ah_fail(err, AH_LIMIT, "session instructions exceed context byte budget");
     rc = core_id(id, err);
     if (rc != AH_OK)
         return rc;
@@ -38,13 +45,17 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
     rc = core_begin(e, &after, err);
     sqlite3_stmt *s = NULL;
     if (rc == AH_OK)
-        rc = core_prepare(e, "INSERT INTO sessions(id,model,instructions,state) VALUES(?,?,?,?)",
-                          &s, err);
+        rc = core_prepare(
+            e,
+            "INSERT INTO sessions(id,model,instructions,state) "
+            "VALUES(?1,?2,?3 || CASE WHEN ?4='' THEN '' ELSE char(10,10) || ?4 END,?5)",
+            &s, err);
     if (rc == AH_OK) {
         sqlite3_bind_text(s, 1, id, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(s, 2, model, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(s, 3, instructions, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(s, 4, AH_IDLE);
+        sqlite3_bind_text(s, 3, session_prompt, -1, SQLITE_STATIC);
+        sqlite3_bind_text(s, 4, instructions, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(s, 5, AH_IDLE);
         rc = core_done(e, s, err);
     }
     if (rc == AH_OK)

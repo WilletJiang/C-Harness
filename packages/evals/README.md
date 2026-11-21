@@ -115,7 +115,6 @@ full-history WebSocket and same-socket incremental WebSocket. It has a separate
 Python 3.11+ / `aiohttp` dependency and 14 offline tests; it is not required by the
 C build or default CTest suite. It reuses the host login and retains compact metrics
 without raw model text or credentials. The production C provider remains HTTP/SSE.
-See the [measured results and limits](../../docs/evaluations/websocket-evaluation.md).
 
 ## Boundaries and records
 
@@ -127,7 +126,7 @@ caches and load. Small task counts cannot establish broad superiority.
 
 Keep generated code, databases and raw traces outside the repository. Remove them
 after retaining the necessary compact measurements; retain the Keychain login.
-Historical reports and ledgers live in [docs/evaluations](../../docs/evaluations/README.md).
+Historical reports and ledgers are kept locally.
 The layout changed after those experiments; their recorded source hashes refer to
 the original commits. Prompt/specification contents remain unchanged.
 

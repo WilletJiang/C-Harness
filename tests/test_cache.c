@@ -1,4 +1,5 @@
 #include "core/core.h"
+#include "core/prompt.h"
 #include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -99,8 +100,10 @@ int main(void) {
     ah_error error = {0};
     char id[AH_ID_CAP], fork[AH_ID_CAP], second[AH_ID_CAP];
     const char *stable = "Stable instructions";
+    char *expected = sqlite3_mprintf("%s\n\n%s", session_prompt, stable);
+    assert(expected);
     ok(ah_session_create(engine, "gpt-6.2-sol", stable, id, &error), &error);
-    check_layout(engine, id, stable, true, NULL);
+    check_layout(engine, id, expected, true, NULL);
     register_pair(engine, "zebra", "alpha");
     char *before = request(engine, id);
     ah_close(engine);
@@ -112,10 +115,10 @@ int main(void) {
     free(after);
     ok(ah_fork(engine, id, fork, &error), &error);
     assert(strcmp(fork, id));
-    check_layout(engine, fork, stable, true, NULL);
+    check_layout(engine, fork, expected, true, NULL);
     ok(ah_session_create(engine, "mock", "Stable instructions", second, &error), &error);
     assert(strcmp(second, id) && strcmp(second, fork));
-    check_layout(engine, second, stable, false, NULL);
+    check_layout(engine, second, expected, false, NULL);
     ok(ah_submit(engine, id, "command", "Work", &error), &error);
     free(request(engine, id));
     uint64_t cursor;
@@ -123,9 +126,9 @@ int main(void) {
     ok(core_state(engine, id, AH_STOPPED, &error), &error);
     ok(core_commit(engine, cursor, &error), &error);
     ok(ah_compact(engine, id, "Checkpoint", 0, &error), &error);
-    check_layout(engine, id, stable, true, "Checkpoint");
+    check_layout(engine, id, expected, true, "Checkpoint");
     ok(ah_resume(engine, id, &error), &error);
-    check_layout(engine, id, stable, true, "Checkpoint");
+    check_layout(engine, id, expected, true, "Checkpoint");
     const struct {
         const char *model, *instructions;
         bool prefix;
@@ -137,8 +140,22 @@ int main(void) {
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         ok(ah_session_create(engine, cases[i].model, cases[i].instructions, second, &error),
            &error);
-        check_layout(engine, second, cases[i].instructions, cases[i].prefix, NULL);
+        check_layout(engine, second, *cases[i].instructions ? expected : session_prompt,
+                     cases[i].prefix, NULL);
     }
+    size_t budget = engine->config.max_context_bytes;
+    engine->config.max_context_bytes = strlen(expected) - 1;
+    assert(ah_session_create(engine, "mock", stable, second, &error) == AH_LIMIT);
+    engine->config.max_context_bytes++;
+    ok(ah_session_create(engine, "mock", stable, second, &error), &error);
+    engine->config.max_context_bytes = budget;
+    /* Reopening a pre-policy session must replay its original prefix. */
+    ok(core_sql(engine, "UPDATE sessions SET instructions='' WHERE model='gpt-6.2-sol'", &error),
+       &error);
+    ah_close(engine);
+    engine = open_engine(path);
+    check_layout(engine, id, "", true, "Checkpoint");
+    sqlite3_free(expected);
     ah_close(engine);
     assert(unlink(path) == 0);
     char lock_path[80];

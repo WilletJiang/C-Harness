@@ -17,7 +17,7 @@ void cli_usage(bool all) {
          "  --prompt TEXT        Submit user text before run\n"
          "  --command-id ID      Stable idempotency key (required with prompt/content)\n"
          "  --content JSON       Typed text/image/file input; excludes --prompt\n"
-         "  --instructions TEXT  Developer instructions for new session\n"
+         "  --instructions TEXT  Additional developer instructions for a new session\n"
          "  --events             Print structured execution events\n"
          "  --no-web-search      Disable the built-in keyless Keenable web_run tool\n"
          "\nBudgets:\n"
@@ -63,7 +63,8 @@ void cli_usage(bool all) {
              "  --forget-tree        Explicitly delete a complete agent tree from its root");
     else
         puts("\nUse --help-all for advanced tuning and command-specific options.");
-    puts("RPC: bounded JSON lines; method/id/session fields. See docs/protocol.md.\n"
+    puts("RPC: bounded JSON lines; method/id/session fields. Use steer during a run, reply for "
+         "pending input.\n"
          "Credentials: AH_ACCESS_TOKEN or --token-file. OAuth belongs to the host.\n"
          "Secrets are never accepted on the command line.");
 }

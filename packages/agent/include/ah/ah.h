@@ -154,6 +154,8 @@ void ah_config_init(ah_config *config);
 ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *error);
 void ah_close(ah_engine *engine);
 ah_code ah_register_tool(ah_engine *engine, const ah_tool *tool, ah_error *error);
+/* New sessions snapshot the built-in agent instructions followed by this host supplement.
+ * Pass "" to use just the built-in policy. Forks inherit the stored instructions. */
 ah_code ah_session_create(ah_engine *engine, const char *model, const char *instructions,
                           char id[AH_ID_CAP], ah_error *error);
 ah_code ah_submit(ah_engine *engine, const char *session_id, const char *command_id,

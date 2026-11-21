@@ -4,7 +4,8 @@ static void fresh_request(agent_request *r) {
     yyjson_doc *doc = yyjson_read(r->request, strlen(r->request), 0);
     assert(doc);
     yyjson_val *root = yyjson_doc_get_root(doc);
-    assert(yyjson_equals_str(yyjson_obj_get(root, "instructions"), "HOST_INSTRUCTIONS_914"));
+    const char *instructions = yyjson_get_str(yyjson_obj_get(root, "instructions"));
+    assert(instructions && strstr(instructions, "\n\nHOST_INSTRUCTIONS_914"));
     assert(yyjson_equals_str(yyjson_obj_get(root, "model"), "mock"));
     assert(!strstr(r->request, "ROOT_PRIVATE") && !strstr(r->request, "HISTORY_PRIVATE"));
     assert(!strstr(r->request, "ROOT_SUMMARY"));

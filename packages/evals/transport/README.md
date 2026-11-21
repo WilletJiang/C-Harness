@@ -71,5 +71,5 @@ does not expose first-content timing or observed connection-reuse counters. This
 sanity check is not a C-versus-Python performance comparison. Remove the temporary
 build afterward; preserve the subscription login.
 
-The [2026-11-05 report](../../../docs/evaluations/websocket-evaluation.md) includes all
+The local 2026-11-05 report includes all
 measured attempts, the quality failure and the limits on interpreting the results.
