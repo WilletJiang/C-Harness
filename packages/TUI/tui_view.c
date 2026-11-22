@@ -1034,6 +1034,13 @@ void tui_view_destroy(tui_view *v) {
     free(v);
 }
 
+void tui_view_select_picker(tui_view *v, size_t row) {
+    v->pick_filter = 0;
+    v->pick_selected = row;
+    v->pick_scroll = 0;
+    v->was_picker = true;
+}
+
 tui_action tui_view_key(tui_view *v, const tui_view_status *status, tui_key key, const char *text,
                         size_t count) {
     tui_action none = {TUI_NO_ACTION, NULL};
@@ -1043,11 +1050,8 @@ tui_action tui_view_key(tui_view *v, const tui_view_status *status, tui_key key,
         return auth_key(v, status->auth, key, text, count);
     v->was_auth = false;
     if (picker_active(status)) {
-        if (!v->was_picker) {
-            v->pick_filter = 0;
-            v->pick_selected = v->pick_scroll = 0;
-            v->was_picker = true;
-        }
+        if (!v->was_picker)
+            tui_view_select_picker(v, 0);
         return picker_key(v, status->picker, key, text, count);
     }
     v->was_picker = false;
@@ -1245,11 +1249,8 @@ static bool render_detail_line(text_buf *out, const char *s, size_t n, unsigned 
 static bool render_picker(tui_view *v, const tui_view_status *status, unsigned cols, unsigned rows,
                           tui_frame *frame) {
     const tui_picker *p = status->picker;
-    if (!v->was_picker) {
-        v->pick_filter = 0;
-        v->pick_selected = v->pick_scroll = 0;
-        v->was_picker = true;
-    }
+    if (!v->was_picker)
+        tui_view_select_picker(v, 0);
     refresh_picker(v, p);
 
     unsigned width = frame_width(cols);

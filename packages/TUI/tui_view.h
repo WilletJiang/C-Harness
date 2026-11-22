@@ -109,6 +109,7 @@ typedef struct {
 
 tui_view *tui_view_create(void);
 void tui_view_destroy(tui_view *);
+void tui_view_select_picker(tui_view *, size_t row);
 tui_action tui_view_key(tui_view *, const tui_view_status *, tui_key, const char *, size_t);
 // Commit a successful submission or command. A failed action preserves the draft.
 void tui_view_accept(tui_view *, tui_action_kind);

@@ -158,6 +158,9 @@ ah_code ah_register_tool(ah_engine *engine, const ah_tool *tool, ah_error *error
  * Pass "" to use just the built-in policy. Forks inherit the stored instructions. */
 ah_code ah_session_create(ah_engine *engine, const char *model, const char *instructions,
                           char id[AH_ID_CAP], ah_error *error);
+/* Create the session and its initial effort in one transaction. */
+ah_code ah_session_create_with_reasoning(ah_engine *, const char *model, const char *instructions,
+                                         const char *effort, char id[AH_ID_CAP], ah_error *);
 /* Set effort between turns; an empty string uses the provider default. */
 ah_code ah_session_set_reasoning(ah_engine *, const char *session, const char *effort, ah_error *);
 /* The effort is malloc-owned, including an empty string for the provider default. */

@@ -24,9 +24,12 @@ The API profile lives in `$XDG_CONFIG_HOME/ah/tui.json` or
 `~/.config/ah/tui.json` with mode 0600. Endpoint changes require a key for the
 new endpoint.
 
-`/model` lists available models and opens a new session with the selection.
-Enter a model ID in `/config` if the provider has no model catalog.
-`/effort` changes reasoning effort for the next turn in the current session.
+`/model` opens the model list, then the selected model's reasoning effort.
+Press Esc at the effort step to return to the model list. Selecting the current
+model between turns updates its effort for the next turn. Selecting a different
+model, or selecting a model while the current turn is paused, opens a new
+session after confirmation. Enter a model ID in `/config` if the provider has no
+model catalog.
 Each session saves its instructions at creation. Start a new session to use
 updated built-in instructions.
 

@@ -55,18 +55,32 @@ static yyjson_doc *catalog_summary(yyjson_val *entries, bool chatgpt) {
     return result;
 }
 
-static void open_picker(tui_app *app, tui_pick_kind kind, const char *title, const char *subtitle) {
+static yyjson_val *model_entry(tui_app *app, const char *id) {
+    yyjson_val *entry;
+    size_t i, n;
+    yyjson_arr_foreach(model_entries(app), i, n, entry) {
+        if (!strcmp(model_id(entry, app->chatgpt), id))
+            return entry;
+    }
+    return NULL;
+}
+
+static void open_picker(tui_app *app, tui_pick_kind kind, const char *title, const char *subtitle,
+                        size_t selected) {
     app->pick_kind = kind;
     app->picker = (tui_picker){.open = true, .title = title, .subtitle = subtitle,
                               .can_open = true, .items = app->pick_items, .count = app->pick_count};
+    tui_view_select_picker(app->view, selected);
 }
 
-static ah_code model_picker(tui_app *app, ah_error *error) {
+static ah_code model_picker(tui_app *app, const char *focus, ah_error *error) {
     yyjson_val *entries = model_entries(app), *entry;
-    size_t i, n, count = yyjson_arr_size(entries);
-    if (!count)
+    size_t i, n, selected = 0, count = yyjson_arr_size(entries);
+    const char *current = app->model[0] ? app->model : app->default_model;
+    bool add_current = *current && !model_entry(app, current);
+    if (!count && !add_current)
         return ah_fail(error, AH_NOT_FOUND, "No models listed. Enter a model ID in /config.");
-    if (!tui_picker_alloc(app, count))
+    if (!tui_picker_alloc(app, count + (size_t)add_current))
         return ah_fail(error, AH_IO, "Cannot allocate model picker");
     yyjson_arr_foreach(entries, i, n, entry) {
         const char *id = model_id(entry, app->chatgpt);
@@ -74,32 +88,38 @@ static ah_code model_picker(tui_app *app, ah_error *error) {
         const char *level = field(entry, "default_reasoning_level", 16);
         tui_picker_set(app, i, id, name ? name : id, NULL, level, id, 0,
                        !strcmp(id, app->model), false, false);
+        if (!strcmp(id, focus))
+            selected = i;
     }
-    open_picker(app, TUI_PICK_MODELS, "Model", "Enter starts a new session");
+    if (add_current) {
+        tui_picker_set(app, count, current, current, NULL, NULL, NULL, 0, true, false, false);
+        if (!strcmp(current, focus))
+            selected = count;
+    }
+    open_picker(app, TUI_PICK_MODELS, "Model",
+                count ? "Enter to choose effort" : "Set other model IDs in /config", selected);
     return AH_OK;
 }
 
-static ah_code effort_picker(tui_app *app, ah_error *error) {
-    yyjson_val *entries = model_entries(app), *entry, *levels = NULL;
-    const char *default_level = NULL;
+static bool updates_current(const tui_app *app, const char *model) {
+    return !strcmp(model, app->model) &&
+           (!strcmp(app->state, "idle") || !strcmp(app->state, "completed"));
+}
+
+static ah_code effort_picker(tui_app *app, const char *model, ah_error *error) {
+    yyjson_val *entry = model_entry(app, model);
+    yyjson_val *levels = yyjson_obj_get(entry, "supported_reasoning_levels"), *level;
+    const char *default_level = field(entry, "default_reasoning_level", 16);
     size_t i, n;
-    yyjson_arr_foreach(entries, i, n, entry) {
-        const char *id = model_id(entry, app->chatgpt);
-        if (id && !strcmp(id, app->model)) {
-            levels = yyjson_obj_get(entry, "supported_reasoning_levels");
-            default_level = field(entry, "default_reasoning_level", 16);
-            break;
-        }
-    }
     static const char *const fallback[] = {"none", "minimal", "low", "medium", "high", "xhigh", "max"};
     const char *ids[EFFORT_ROWS], *details[EFFORT_ROWS];
     size_t count = 0;
-    yyjson_arr_foreach(levels, i, n, entry) {
-        const char *id = field(entry, "effort", 16);
+    yyjson_arr_foreach(levels, i, n, level) {
+        const char *id = field(level, "effort", 16);
         if (!id || !strcmp(id, "default"))
             continue;
         ids[count] = id;
-        details[count++] = field(entry, "description", 512);
+        details[count++] = field(level, "description", 512);
         if (count == EFFORT_ROWS)
             break;
     }
@@ -109,21 +129,23 @@ static ah_code effort_picker(tui_app *app, ah_error *error) {
             details[count++] = "Availability depends on the provider.";
         }
     }
-    char *effort = NULL;
-    ah_code code = ah_session_reasoning(app->cli->engine, app->session, &effort, error);
-    if (code != AH_OK)
-        return code;
-    if (!tui_picker_alloc(app, count + 1)) {
-        ah_free(effort);
+    bool current = updates_current(app, model);
+    const char *effort = current ? app->effort : "";
+    if (!tui_picker_alloc(app, count + 1))
         return ah_fail(error, AH_IO, "Cannot allocate reasoning picker");
-    }
     tui_picker_set(app, 0, "default", "Provider default", NULL, default_level, NULL, 0,
                    !*effort, false, false);
-    for (i = 0; i < count; i++)
-        tui_picker_set(app, i + 1, ids[i], ids[i], NULL, NULL, details[i], 0,
-                       !strcmp(effort, ids[i]), false, false);
-    ah_free(effort);
-    open_picker(app, TUI_PICK_EFFORT, "Reasoning effort", "Applies from the next turn");
+    size_t selected = 0;
+    for (i = 0; i < count; i++) {
+        bool active = !strcmp(effort, ids[i]);
+        tui_picker_set(app, i + 1, ids[i], ids[i], NULL, NULL, details[i], 0, active, false, false);
+        if (active)
+            selected = i + 1;
+    }
+    snprintf(app->chosen_model, sizeof(app->chosen_model), "%s", model);
+    snprintf(app->model_picker_subtitle, sizeof(app->model_picker_subtitle), "%s · %s", model,
+             current ? "Applies next turn" : "Enter starts a new session");
+    open_picker(app, TUI_PICK_EFFORT, "Reasoning effort", app->model_picker_subtitle, selected);
     return AH_OK;
 }
 
@@ -161,12 +183,9 @@ static void *load_catalog(void *context) {
     return NULL;
 }
 
-ah_code tui_models_open(tui_app *app, bool effort, ah_error *error) {
-    if (effort && app->catalog)
-        return effort_picker(app, error);
+ah_code tui_models_open(tui_app *app, ah_error *error) {
     yyjson_doc_free(app->catalog);
     app->catalog = NULL;
-    app->catalog_for_effort = effort;
     atomic_store(&app->worker_done, false);
     if (pthread_create(&app->worker, NULL, load_catalog, app))
         return ah_fail(error, AH_IO, "Cannot start model catalog request");
@@ -181,21 +200,26 @@ void tui_models_ready(tui_app *app) {
     app->catalog_loading = false;
     app->notice[0] = 0;
     ah_error error = {0};
-    if (!app->catalog_for_effort && app->run_code != AH_OK) {
-        ah_fail(&error, app->run_code, "%.400s. Enter a model ID in /config.", app->run_error.message);
-        tui_show_error(app, error.code, &error);
-        return;
-    }
-    ah_code code = app->catalog_for_effort ? effort_picker(app, &error) : model_picker(app, &error);
+    ah_code code = model_picker(app, app->model, &error);
+    if (code == AH_NOT_FOUND && app->run_code != AH_OK)
+        code = ah_fail(&error, app->run_code, "%.400s. Enter a model ID in /config.",
+                       app->run_error.message);
     if (code != AH_OK)
         tui_show_error(app, code, &error);
+}
+
+ah_code tui_models_back(tui_app *app, ah_error *error) {
+    return model_picker(app, app->chosen_model, error);
 }
 
 ah_code tui_models_choose(tui_app *app, const char *id, ah_error *error) {
     if (!id || !*id)
         return ah_fail(error, AH_INVALID, "Choose an item");
-    if (app->pick_kind == TUI_PICK_EFFORT) {
-        const char *effort = !strcmp(id, "default") ? "" : id;
+    if (app->pick_kind == TUI_PICK_MODELS)
+        return effort_picker(app, id, error);
+    const char *model = app->chosen_model;
+    const char *effort = !strcmp(id, "default") ? "" : id;
+    if (updates_current(app, model)) {
         ah_code code = ah_session_set_reasoning(app->cli->engine, app->session, effort, error);
         if (code == AH_OK) {
             snprintf(app->effort, sizeof(app->effort), "%s", effort);
@@ -205,9 +229,9 @@ ah_code tui_models_choose(tui_app *app, const char *id, ah_error *error) {
         }
         return code;
     }
-    char model[257], session[AH_ID_CAP];
-    snprintf(model, sizeof(model), "%s", id);
-    ah_code code = ah_session_create(app->cli->engine, model, app->instructions, session, error);
+    char session[AH_ID_CAP];
+    ah_code code = ah_session_create_with_reasoning(app->cli->engine, model, app->instructions,
+                                                    effort, session, error);
     if (code == AH_OK)
         code = tui_switch_session(app, session, error);
     if (code == AH_OK && !tui_config_save_model(app, model)) {

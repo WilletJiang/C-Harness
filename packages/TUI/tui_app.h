@@ -31,6 +31,7 @@ typedef struct {
     unsigned cols, rows, turn;
     char session[AH_ID_CAP], pending_session[AH_ID_CAP], operation[AH_ID_CAP];
     char model[257], default_model[257], endpoint[512], cwd[256], branch[128];
+    char chosen_model[257], model_picker_subtitle[320];
     char effort[16], model_label[280];
     char config_path[512], config_display[256];
     char token_source[16], auth_error[256];
@@ -46,7 +47,7 @@ typedef struct {
     atomic_bool worker_done, journal_dirty;
     ah_error run_error;
     ah_code run_code;
-    bool catalog_loading, catalog_for_effort;
+    bool catalog_loading;
     yyjson_doc *catalog;
     tui_stream *streams;
     uint64_t stream_attempt, stream_active;
@@ -89,10 +90,11 @@ bool tui_picker_alloc(tui_app *, size_t count);
 void tui_picker_set(tui_app *, size_t, const char *, const char *, const char *, const char *,
                     const char *, unsigned, bool, bool, bool);
 ah_code tui_switch_session(tui_app *, const char *, ah_error *);
-ah_code tui_models_open(tui_app *, bool effort, ah_error *);
+ah_code tui_models_open(tui_app *, ah_error *);
 void tui_models_ready(tui_app *);
 void tui_models_sync(tui_app *);
 ah_code tui_models_choose(tui_app *, const char *, ah_error *);
+ah_code tui_models_back(tui_app *, ah_error *);
 void tui_auth_open(tui_app *, bool onboarding);
 void tui_auth_close(tui_app *);
 void tui_config_init_paths(tui_app *);

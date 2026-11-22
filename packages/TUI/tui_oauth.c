@@ -160,7 +160,7 @@ void tui_oauth_read(tui_app *app) {
     tui_oauth_cancel(app);
     if (error.code != AH_OK)
         snprintf(app->auth_error, sizeof(app->auth_error), "%.255s", error.message);
-    else if (choose_model && tui_models_open(app, false, &error) != AH_OK)
+    else if (choose_model && tui_models_open(app, &error) != AH_OK)
         tui_show_error(app, error.code, &error);
 }
 

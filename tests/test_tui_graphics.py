@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -194,20 +195,25 @@ def exercise_stream_and_model_options(binary):
         try:
             receive(master, b"Ask ah anything")
             os.write(master, b"/model\r")
-            receive(master, b"Enter starts a new session")
+            receive(master, b"Enter to choose effort")
             os.write(master, b"\x1b[B\r")
-            assert b"picked-model" in receive(master, b"Ask ah anything")
-            os.write(master, b"/effort\r")
-            receive(master, b"Applies from the next turn")
+            assert b"picked-model" in receive(master, b"Enter starts a new session")
+            with sqlite3.connect((root / "test.db").as_uri() + "?mode=ro", uri=True) as db:
+                assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (1,)
+            os.write(master, b"\x1b")
+            receive(master, b"Enter to choose effort")
+            os.write(master, b"\r")
+            assert b"picked-model" in receive(master, b"Enter starts a new session")
             os.write(master, b"\x1b[B\x1b[B\r")
-            receive(master, b"Reasoning effort: high")
+            assert b"picked-model" in receive(master, b"Ask ah anything")
             os.write(master, b"Check the workspace\r")
             early = receive(master, b"scrollback-block-16")
             assert b"scrollback-block-00" in early
             assert b"**scrollback-block-00" not in early
             assert len(server.requests) == 1
             server.release.set()
-            final = receive(master, b"Final answer after the tool")
+            final = receive(master, b"Worked for")
+            assert b"Final answer after the tool" in final
             assert b"scrollback-block-00" not in final
             assert final.index(b"Before the tool") < final.index(b"find")
             assert len(server.requests) == 2
@@ -216,6 +222,17 @@ def exercise_stream_and_model_options(binary):
                 assert body["reasoning"] == {"effort": "high"}
             assert any(item.get("type") == "function_call_output"
                        for item in server.requests[1]["input"])
+            os.write(master, b"/model\r")
+            receive(master, b"Enter to choose effort")
+            os.write(master, b"\r")
+            receive(master, b"Applies next turn")
+            os.write(master, b"\x1b[A\r")
+            receive(master, b"Reasoning effort: low")
+            os.write(master, b"Follow up\r")
+            receive(master, b"Worked for")
+            assert server.requests[2]["reasoning"] == {"effort": "low"}
+            with sqlite3.connect((root / "test.db").as_uri() + "?mode=ro", uri=True) as db:
+                assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (2,)
         finally:
             server.release.set()
             process.kill()

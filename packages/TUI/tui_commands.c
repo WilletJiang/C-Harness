@@ -11,8 +11,7 @@
 static const tui_command commands[] = {
     {"login", "Configure API key, endpoint, and default model"},
     {"config", "Open API & account configuration page"},
-    {"model", "Choose a model for a new session"},
-    {"effort", "Choose reasoning effort for this session"},
+    {"model", "Choose model and reasoning effort"},
     {"sessions", "Open Command Center to switch or create sessions"},
     {"agents", "Open interactive agent tree inspector"},
     {"pending", "Review and approve or deny pending operation"},
@@ -385,8 +384,8 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
     char *json = NULL;
     if (!strcmp(name, "sessions"))
         return open_sessions_picker(app, error);
-    if (!strcmp(name, "model") || !strcmp(name, "effort"))
-        return tui_models_open(app, !strcmp(name, "effort"), error);
+    if (!strcmp(name, "model"))
+        return tui_models_open(app, error);
     if (!strcmp(name, "agents"))
         return open_agents_picker(app, error);
     if (!strcmp(name, "login") || !strcmp(name, "config")) {
@@ -439,7 +438,13 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
     case TUI_COMMAND: code = command(app, action.text, &error); break;
     case TUI_CANCEL: code = command(app, "cancel", &error); break;
     case TUI_QUIT: code = command(app, "quit", &error); break;
-    case TUI_PICK_CLOSE: tui_picker_close(app); return;
+    case TUI_PICK_CLOSE:
+        if (app->pick_kind == TUI_PICK_EFFORT) {
+            code = tui_models_back(app, &error);
+            break;
+        }
+        tui_picker_close(app);
+        return;
     case TUI_PICK_OPEN:
         code = app->pick_kind == TUI_PICK_MODELS || app->pick_kind == TUI_PICK_EFFORT
                    ? tui_models_choose(app, action.text, &error)

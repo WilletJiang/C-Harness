@@ -24,13 +24,38 @@ ah_code ah_session_state(ah_engine *e, const char *sid, ah_state *state, ah_erro
     return code;
 }
 
-ah_code ah_session_create(ah_engine *e, const char *model, const char *instructions,
-                          char id[AH_ID_CAP], ah_error *err) {
+static bool valid_effort(const char *effort) {
+    static const char *const levels[] = {
+        "", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+    };
+    if (!effort)
+        return false;
+    for (size_t i = 0; i < sizeof(levels) / sizeof(*levels); i++)
+        if (!strcmp(effort, levels[i]))
+            return true;
+    return false;
+}
+
+static ah_code save_effort(ah_engine *e, const char *sid, const char *effort, ah_error *err) {
+    sqlite3_stmt *s = NULL;
+    ah_code rc = core_prepare(e, "INSERT INTO session_reasoning(session_id,effort) VALUES(?,?) "
+                         "ON CONFLICT(session_id) DO UPDATE SET effort=excluded.effort", &s, err);
+    if (rc != AH_OK)
+        return rc;
+    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 2, effort, -1, SQLITE_TRANSIENT);
+    return core_done(e, s, err);
+}
+
+ah_code ah_session_create_with_reasoning(ah_engine *e, const char *model, const char *instructions,
+                                         const char *effort, char id[AH_ID_CAP], ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
     if (!model || !*model || !instructions || !id || strlen(model) > 256)
         return ah_fail(err, AH_INVALID, "bounded model and instructions required");
+    if (!valid_effort(effort))
+        return ah_fail(err, AH_INVALID, "invalid reasoning effort");
     size_t extra_bytes = strlen(instructions);
     if (extra_bytes > e->config.max_context_bytes)
         return ah_fail(err, AH_INVALID, "bounded model and instructions required");
@@ -58,6 +83,8 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
         sqlite3_bind_int(s, 5, AH_IDLE);
         rc = core_done(e, s, err);
     }
+    if (rc == AH_OK && *effort)
+        rc = save_effort(e, id, effort, err);
     if (rc == AH_OK)
         rc = core_event(e, id, NULL, "session.created", "{}", err);
     if (rc == AH_OK)
@@ -67,15 +94,16 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
     return rc;
 }
 
+ah_code ah_session_create(ah_engine *e, const char *model, const char *instructions,
+                          char id[AH_ID_CAP], ah_error *err) {
+    return ah_session_create_with_reasoning(e, model, instructions, "", id, err);
+}
+
 ah_code ah_session_set_reasoning(ah_engine *e, const char *sid, const char *effort, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
-    static const char *const levels[] = {"", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"};
-    size_t i = 0;
-    while (effort && i < sizeof(levels) / sizeof(*levels) && strcmp(effort, levels[i]))
-        ++i;
-    if (!sid || !*sid || !effort || i == sizeof(levels) / sizeof(*levels))
+    if (!sid || !*sid || !valid_effort(effort))
         return ah_fail(err, AH_INVALID, "invalid session or reasoning effort");
     ah_state state;
     rc = ah_session_state(e, sid, &state, err);
@@ -83,14 +111,7 @@ ah_code ah_session_set_reasoning(ah_engine *e, const char *sid, const char *effo
         return rc;
     if (state != AH_IDLE && state != AH_COMPLETED)
         return ah_fail(err, AH_BUSY, "reasoning effort can change between turns");
-    sqlite3_stmt *s = NULL;
-    rc = core_prepare(e, "INSERT INTO session_reasoning(session_id,effort) VALUES(?,?) "
-                         "ON CONFLICT(session_id) DO UPDATE SET effort=excluded.effort", &s, err);
-    if (rc != AH_OK)
-        return rc;
-    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(s, 2, effort, -1, SQLITE_TRANSIENT);
-    return core_done(e, s, err);
+    return save_effort(e, sid, effort, err);
 }
 
 ah_code ah_session_reasoning(ah_engine *e, const char *sid, char **effort, ah_error *err) {
