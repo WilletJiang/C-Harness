@@ -2,7 +2,7 @@
 #include "ah/jobs.h"
 #include "ah/task.h"
 #include "ah/work.h"
-#include <time.h>
+#include "core/core.h"
 
 typedef struct {
     durable_fixture fixture;
@@ -11,10 +11,10 @@ typedef struct {
     unsigned expected_signals;
 } step_fixture;
 
-static uint64_t wall_ms(void) {
-    struct timespec value;
-    assert(clock_gettime(CLOCK_REALTIME, &value) == 0);
-    return (uint64_t)value.tv_sec * 1000 + (uint64_t)value.tv_nsec / 1000000;
+static atomic_uint_fast64_t timer_now_ms = 1000;
+
+static uint64_t timer_clock(void) {
+    return atomic_load(&timer_now_ms);
 }
 
 static ah_code step(void *context, const ah_tool_call *call, ah_tool_result *result,
@@ -59,7 +59,7 @@ static ah_code step(void *context, const ah_tool_call *call, ah_tool_result *res
             const char *reason = yyjson_get_str(yyjson_obj_get(root, "reason"));
             assert(reason);
             if (state->timer && !state->early_signal)
-                assert(!strcmp(reason, "timer") && wall_ms() >= state->until_ms);
+                assert(!strcmp(reason, "timer") && timer_clock() >= state->until_ms);
             else {
                 assert(!strcmp(reason, "signal"));
                 yyjson_val *signal = yyjson_obj_get(root, "signal");
@@ -78,6 +78,8 @@ static ah_code step(void *context, const ah_tool_call *call, ah_tool_result *res
 }
 
 static void register_step(step_fixture *state, unsigned version, unsigned restarts) {
+    if (state->timer)
+        state->fixture.engine->work_clock_ms = timer_clock;
     ah_work_config work = {.version = version, .replay = AH_REPLAY_SAFE, .max_restarts = restarts};
     ah_tool tool = {.name = "durable",
                     .description = "Durable test phases",
@@ -178,7 +180,7 @@ static void early_signal_and_idempotency(void) {
 }
 
 static void signal_capacity(bool timeout) {
-    step_fixture state = {.timer = timeout, .timed_signal = timeout, .until_ms = wall_ms() + 300};
+    step_fixture state = {.timer = timeout, .timed_signal = timeout, .until_ms = timer_clock() + 300};
     durable_fixture *f = &state.fixture;
     df_open(f, ":memory:", 1);
     register_step(&state, 1, 0);
@@ -198,8 +200,7 @@ static void signal_capacity(bool timeout) {
     assert(ah_signal(f->engine, session, operation, "overflow", "true", &delivery, &error) ==
            AH_LIMIT);
     if (timeout) {
-        while (wall_ms() < state.until_ms)
-            df_sleep(5);
+        atomic_store(&timer_now_ms, state.until_ms);
         signal_work(&state, session, operation, "{\"value\":7}", AH_SIGNAL_CLOSED);
     } else
         signal_work(&state, session, operation, "{\"value\":7}", AH_SIGNAL_DELIVERED);
@@ -214,7 +215,7 @@ static void timer_reopen(unsigned signal_mode) {
     step_fixture state = {.timer = true,
                           .timed_signal = signal_mode != 0,
                           .early_signal = signal_mode == 2,
-                          .until_ms = wall_ms() + 150};
+                          .until_ms = timer_clock() + 150};
     durable_fixture *f = &state.fixture;
     df_open(f, database, 1);
     register_step(&state, 1, 0);
@@ -231,8 +232,7 @@ static void timer_reopen(unsigned signal_mode) {
     if (signal_mode == 2)
         signal_work(&state, session, operation, "{\"value\":7}", AH_SIGNAL_DELIVERED);
     ah_close(f->engine);
-    while (wall_ms() < state.until_ms)
-        df_sleep(5);
+    atomic_store(&timer_now_ms, state.until_ms);
     df_open(f, database, 1);
     register_step(&state, 1, 0);
     if (signal_mode == 1)
@@ -294,9 +294,10 @@ static ah_code second_wait(void *context, const ah_tool_call *call, ah_tool_resu
 }
 
 static void expired_signal_stays_closed(void) {
-    step_fixture state = {.until_ms = wall_ms() + 100};
+    step_fixture state = {.until_ms = timer_clock() + 100};
     durable_fixture *f = &state.fixture;
     df_open(f, ":memory:", 1);
+    f->engine->work_clock_ms = timer_clock;
     ah_work_config work = {.version = 1, .replay = AH_REPLAY_SAFE};
     ah_tool tool = {.name = "durable",
                     .description = "Two independent signal waits",
@@ -311,8 +312,7 @@ static void expired_signal_stays_closed(void) {
     df_ok(ah_session_create(f->engine, "mock", "", session, &error), &error);
     df_ok(ah_work_start(f->engine, session, "root", "durable", "{}", operation, &error), &error);
     df_ok(ah_work_run(f->engine, session, &error), &error);
-    while (wall_ms() < state.until_ms)
-        df_sleep(5);
+    atomic_store(&timer_now_ms, state.until_ms);
     df_ok(ah_work_run(f->engine, session, &error), &error);
     assert(atomic_load(&f->calls) == 2);
     ah_signal_result delivery;

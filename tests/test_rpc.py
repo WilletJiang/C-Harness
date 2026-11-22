@@ -40,13 +40,13 @@ class Service(http.server.BaseHTTPRequestHandler):
 
 
 class Client:
-    def __init__(self, db, endpoint, token=True):
+    def __init__(self, db, endpoint, token=True, extra=()):
         env = dict(os.environ)
         env.pop("AH_ACCESS_TOKEN", None)
         if token:
             env["AH_ACCESS_TOKEN"] = SECRET
         self.process = subprocess.Popen(
-            [CLI, "rpc", "--db", str(db), "--endpoint", endpoint, "--allow-http-loopback"],
+            [CLI, "rpc", "--db", str(db), "--endpoint", endpoint, "--allow-http-loopback", *extra],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, env=env)
         self.messages = queue.Queue()

@@ -62,6 +62,26 @@ def find(**args):
     return [("find", args)]
 
 
+def repeated_pages(ws):
+    args = dict(mode="files", path="build", glob="*.o", include_ignored=True, max_results=24)
+    (first,) = yield find(**args)
+    page = first["result"]
+    assert len(page["results"]) == 24 and page["truncated"]
+    (second,) = yield find(**args)
+    ref = second["result"]
+    assert ref["reused"] and "results" not in ref and ref["retrieval_tool"] == "read_result"
+    for field in ("snapshot", "next_offset", "total_files", "scan_truncated", "truncated"):
+        assert ref[field] == page[field]
+    (saved,) = yield [("read_result", {"operation_id": ref["operation_id"]})]
+    assert json.loads(saved["result"]["content"]) == page
+    (forced,) = yield find(**args, force=True)
+    assert forced == first
+    (ws / "build" / "000-new.o").touch()
+    (changed,) = yield find(**args)
+    assert changed["result"]["snapshot"] != page["snapshot"]
+    assert {"path": "build/000-new.o"} in changed["result"]["results"]
+
+
 def discovery(ws):
     args = {"mode": "files", "glob": "*.c", "max_results": 1}
     (first,) = yield find(**args)
@@ -212,7 +232,8 @@ def main(cli):
 
         try:
             sid = run("new", "--model", "fixture")["id"]
-            for i, case in enumerate((discovery(ws), attempts(ws), new_turn(), edit_conflicts(ws))):
+            cases = (discovery(ws), attempts(ws), new_turn(), edit_conflicts(ws), repeated_pages(ws))
+            for i, case in enumerate(cases):
                 server.pending = []
                 server.case = case
                 state = run("run", "--session", sid, "--command-id", str(i), "--prompt", "check")

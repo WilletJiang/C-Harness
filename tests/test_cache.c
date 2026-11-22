@@ -1,4 +1,5 @@
 #include "core/core.h"
+#include "core/prompt.h"
 #include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -31,6 +32,25 @@ static ah_engine *open_engine(const char *path) {
     ok(ah_open(&config, &engine, &error), &error);
     return engine;
 }
+static ah_code unused_tool(void *ctx, const ah_tool_call *call, ah_tool_result *out,
+                           ah_error *err) {
+    (void)ctx;
+    (void)call;
+    (void)out;
+    (void)err;
+    abort();
+}
+static void register_pair(ah_engine *e, const char *first, const char *second) {
+    ah_error error = {0};
+    ah_tool tool = {.name = first,
+                    .description = "fixture",
+                    .parameters_json = "{\"type\":\"object\"}",
+                    .effect = AH_EFFECT_READ,
+                    .execute = unused_tool};
+    ok(ah_register_tool(e, &tool, &error), &error);
+    tool.name = second;
+    ok(ah_register_tool(e, &tool, &error), &error);
+}
 static char *request(ah_engine *engine, const char *id) {
     core_session session;
     ah_error error = {0};
@@ -45,6 +65,32 @@ static char *request(ah_engine *engine, const char *id) {
     yyjson_doc_free(doc);
     return json;
 }
+
+static void check_layout(ah_engine *engine, const char *id, const char *instructions, bool prefix,
+                         const char *summary) {
+    char *json = request(engine, id);
+    yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    yyjson_val *input = yyjson_obj_get(root, "input");
+    yyjson_val *top = yyjson_obj_get(root, "instructions");
+    assert(prefix ? !top : yyjson_equals_str(top, instructions));
+    size_t first_history = prefix && *instructions ? 1 : 0;
+    if (first_history) {
+        yyjson_val *first = yyjson_arr_get_first(input);
+        assert(yyjson_equals_str(yyjson_obj_get(first, "role"), "developer"));
+        assert(yyjson_equals_str(yyjson_obj_get(first, "content"), instructions));
+    }
+    if (summary) {
+        yyjson_val *item = yyjson_arr_get(input, first_history);
+        assert(yyjson_equals_str(yyjson_obj_get(item, "role"), "user"));
+        assert(yyjson_equals_str(yyjson_obj_get(item, "content"), summary));
+    } else {
+        assert(yyjson_arr_size(input) == first_history);
+    }
+    yyjson_doc_free(doc);
+    free(json);
+}
+
 int main(void) {
     char path[] = "/tmp/ah-cache-XXXXXX";
     int fd = mkstemp(path);
@@ -53,20 +99,26 @@ int main(void) {
     ah_engine *engine = open_engine(path);
     ah_error error = {0};
     char id[AH_ID_CAP], fork[AH_ID_CAP], second[AH_ID_CAP];
-    ok(ah_session_create(engine, "mock", "Stable instructions", id, &error), &error);
+    const char *stable = "Stable instructions";
+    char *expected = sqlite3_mprintf("%s\n\n%s", session_prompt, stable);
+    assert(expected);
+    ok(ah_session_create(engine, "gpt-6.2-sol", stable, id, &error), &error);
+    check_layout(engine, id, expected, true, NULL);
+    register_pair(engine, "zebra", "alpha");
     char *before = request(engine, id);
     ah_close(engine);
     engine = open_engine(path);
+    register_pair(engine, "alpha", "zebra");
     char *after = request(engine, id);
     assert(!strcmp(before, after));
     free(before);
     free(after);
     ok(ah_fork(engine, id, fork, &error), &error);
     assert(strcmp(fork, id));
-    free(request(engine, fork));
+    check_layout(engine, fork, expected, true, NULL);
     ok(ah_session_create(engine, "mock", "Stable instructions", second, &error), &error);
     assert(strcmp(second, id) && strcmp(second, fork));
-    free(request(engine, second));
+    check_layout(engine, second, expected, false, NULL);
     ok(ah_submit(engine, id, "command", "Work", &error), &error);
     free(request(engine, id));
     uint64_t cursor;
@@ -74,9 +126,36 @@ int main(void) {
     ok(core_state(engine, id, AH_STOPPED, &error), &error);
     ok(core_commit(engine, cursor, &error), &error);
     ok(ah_compact(engine, id, "Checkpoint", 0, &error), &error);
-    free(request(engine, id));
+    check_layout(engine, id, expected, true, "Checkpoint");
     ok(ah_resume(engine, id, &error), &error);
-    free(request(engine, id));
+    check_layout(engine, id, expected, true, "Checkpoint");
+    const struct {
+        const char *model, *instructions;
+        bool prefix;
+    } cases[] = {{"gpt-6.2-astra", stable, true},
+                 {"gpt-6.2-sol-2026-11-01", stable, true},
+                 {"gpt-6.2", "", true},
+                 {"gpt-6.1-sol", stable, false},
+                 {"gpt-6.20-custom", stable, false}};
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ok(ah_session_create(engine, cases[i].model, cases[i].instructions, second, &error),
+           &error);
+        check_layout(engine, second, *cases[i].instructions ? expected : session_prompt,
+                     cases[i].prefix, NULL);
+    }
+    size_t budget = engine->config.max_context_bytes;
+    engine->config.max_context_bytes = strlen(expected) - 1;
+    assert(ah_session_create(engine, "mock", stable, second, &error) == AH_LIMIT);
+    engine->config.max_context_bytes++;
+    ok(ah_session_create(engine, "mock", stable, second, &error), &error);
+    engine->config.max_context_bytes = budget;
+    /* Reopening a pre-policy session must replay its original prefix. */
+    ok(core_sql(engine, "UPDATE sessions SET instructions='' WHERE model='gpt-6.2-sol'", &error),
+       &error);
+    ah_close(engine);
+    engine = open_engine(path);
+    check_layout(engine, id, "", true, "Checkpoint");
+    sqlite3_free(expected);
     ah_close(engine);
     assert(unlink(path) == 0);
     char lock_path[80];

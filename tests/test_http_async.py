@@ -125,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
         assert self.headers.get("session-id") == session
         assert self.headers.get("Authorization") == "Bearer local-test-token"
         assert body["model"] == "cli-agents" and body["store"] is False and body["stream"] is True
-        assert body["instructions"] == "inherited-cli-instructions"
+        assert body["instructions"].endswith("\n\ninherited-cli-instructions")
         names = {tool["name"] for tool in body["tools"][0]["tools"]}
         assert names >= {"spawn", "send", "join", "stop", "agents"}
         with state.lock:

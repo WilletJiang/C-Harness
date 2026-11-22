@@ -172,7 +172,9 @@ static void bounded_loop(bool enabled) {
         assert(f.calls == 8 && f.executions == 6);
         assert(scalar(e, "SELECT COUNT(*) FROM context_checkpoints") > 0);
         assert(strstr(f.last_request, "first turn") && strstr(f.last_request, "keep-4839"));
-        assert(strstr(f.last_request, "Keep user choice exactly?"));
+        const char *note = strstr(f.last_request, "Latest checkpoint");
+        const char *choice = strstr(f.last_request, "Keep user choice exactly?");
+        assert(note && choice && strstr(f.last_request, "first turn") < note && choice < note);
         assert(strstr(f.last_request, "large_6") && !strstr(f.last_request, "large_1"));
         complete_exchanges(f.last_request);
         char fork[AH_ID_CAP];
@@ -188,7 +190,8 @@ static void bounded_loop(bool enabled) {
         char *request = NULL;
         ok(core_request(e, &view, &request, &error), &error);
         assert(strstr(request, "keep-4839") && strstr(request, "Keep user choice exactly?"));
-        assert(strstr(request, "first turn"));
+        assert(strstr(request, "first turn") && strstr(request, "Latest checkpoint"));
+        assert(strstr(request, "first turn") < strstr(request, "Latest checkpoint"));
         complete_exchanges(request);
         free(request);
         core_session_free(&view);
@@ -200,6 +203,8 @@ static void bounded_loop(bool enabled) {
         ok(core_load(e, sid, &view, &error), &error);
         ok(core_request(e, &view, &request, &error), &error);
         assert(strstr(request, "\"name\":\"recall\"") && strstr(request, "Latest checkpoint"));
+        assert(strstr(request, "first turn") &&
+               strstr(request, "first turn") < strstr(request, "Latest checkpoint"));
         free(request);
         core_session_free(&view);
         ok(ah_context_enable(e, &policy, &error), &error);

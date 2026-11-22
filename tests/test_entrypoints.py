@@ -33,7 +33,7 @@ class PackageChecks(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="standalone C Harness ") as tmp:
             for package in ("host", "evals"):
                 shutil.copytree(
-                    ROOT / package, Path(tmp) / package,
+                    ROOT / "packages" / package, Path(tmp) / package,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
                 )
             for module in (
@@ -58,15 +58,15 @@ class PackageChecks(unittest.TestCase):
 
     def test_frozen_grader_executes_as_a_package(self):
         # Run the grader outside the model workspace, just like a real trial.
-        from evals.endurance.run import grade
-        from evals.endurance.task import prepare, protected_hashes
+        from packages.evals.endurance.run import grade
+        from packages.evals.endurance.task import prepare, protected_hashes
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             criteria = root / "criteria"
             criteria.mkdir()
             for name in ("__init__.py", "checks.py", "store_checks.py"):
-                shutil.copy2(ROOT / "evals/endurance" / name, criteria / name)
+                shutil.copy2(ROOT / "packages/evals/endurance" / name, criteria / name)
             run = root / "trial"
             prepare(run / "workspace")
             result = asyncio.run(

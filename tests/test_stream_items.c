@@ -1,4 +1,4 @@
-#include "../src/providers/stream.h"
+#include "providers/stream.h"
 #include "internal.h"
 #include <assert.h>
 #include <stdio.h>

@@ -1,4 +1,5 @@
 /build*/
+/docs/
 *.db
 *.db-journal
 *.db-wal
@@ -7,3 +8,4 @@
 .env*
 
 __pycache__/
+.DS_Store
