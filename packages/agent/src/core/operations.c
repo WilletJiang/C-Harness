@@ -201,6 +201,53 @@ ah_code core_receipt(ah_engine *e, const char *sid, const core_operation *op, co
     return code;
 }
 
+static ah_code close_interrupted_tool(ah_engine *e, const char *sid, core_operation *op,
+                                      ah_error *error) {
+    bool late = !strcmp(op->status, "received_late");
+    if (op->result && (late || !strcmp(op->status, "received") || !strcmp(op->status, "resolved")))
+        return core_receipt(e, sid, op, op->result, op->is_error,
+                            late ? "tool.late_result" : "tool.completed", error);
+
+    bool uncertain = !strcmp(op->status, "unknown") || op->durable ||
+                     (!strcmp(op->status, "executing") && op->effect != AH_EFFECT_READ);
+    const char *result = uncertain
+        ? "{\"error\":\"Tool result unconfirmed. Verify any prior effects before retrying.\","
+          "\"outcome_unknown\":true}"
+        : "{\"error\":\"Tool call cancelled when the previous turn was closed.\"}";
+    op->result_format = AH_TOOL_RESULT_JSON;
+    return core_receipt(e, sid, op, result, true, "tool.abandoned", error);
+}
+
+ah_code core_close_interrupted_tools(ah_engine *e, const char *sid, ah_error *error) {
+    if (core_jobs_running(e, sid))
+        return ah_fail(error, AH_BUSY, "tool execution is still settling");
+    sqlite3_stmt *next = NULL;
+    ah_code code = core_prepare(e, "SELECT id FROM operations WHERE session_id=? "
+                                   "AND status!='done' ORDER BY seq LIMIT 1", &next, error);
+    if (code != AH_OK)
+        return code;
+    sqlite3_bind_text(next, 1, sid, -1, SQLITE_TRANSIENT);
+    /* The caller owns the submit transaction. Close every old call before
+     * adding the new user item, including hidden children of durable tools. */
+    while (code == AH_OK) {
+        int step = sqlite3_step(next);
+        if (step == SQLITE_DONE)
+            break;
+        if (step != SQLITE_ROW) {
+            code = ah_fail(error, AH_IO, "cannot read interrupted tool calls");
+            break;
+        }
+        core_operation op;
+        code = core_get_operation(e, sid, (const char *)sqlite3_column_text(next, 0), &op, error);
+        sqlite3_reset(next);
+        if (code == AH_OK)
+            code = close_interrupted_tool(e, sid, &op, error);
+        core_operation_free(&op);
+    }
+    sqlite3_finalize(next);
+    return code;
+}
+
 static ah_code deny_operation(ah_engine *e, const char *sid, core_operation *op, ah_error *error) {
     const char *denied = "{\"error\":\"approval denied\"}";
     if (!op->hidden) {

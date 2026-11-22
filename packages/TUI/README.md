@@ -37,10 +37,9 @@ For CLI-supplied credentials use `AH_ACCESS_TOKEN` or `--token-file`, with
 `--endpoint` for a custom endpoint. The default model applies to new sessions.
 `/sessions` opens the session picker, `/history` reads the preceding event page,
 and `/pending` opens the operation targeted by a reply or approval.
-If a tool outcome is unknown, `/pending` shows any saved evidence. Choose
-`Record failed or interrupted` or `Record succeeded` after verifying the
-result, describe it, and press Enter. Use `/resume` once all outcomes have
-been recorded.
+If a tool stops without a confirmed result, send a new message in the same
+session. The next turn sees an error result for that call, and the journal
+keeps the original evidence.
 
 `tui_view.h` is the keyboard and frame contract. The terminal thread owns the
 TTY and independent journal reader. The execution thread owns the active run.

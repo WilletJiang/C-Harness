@@ -187,8 +187,7 @@ static void journal(void *context, const ah_event *event) {
         transcript(app, event, true);
     }
     if (event->session_id && event->operation_id &&
-        (type_is(event, "approval.requested") || type_is(event, "input.requested") ||
-         type_is(event, "tool.outcome_unknown"))) {
+        (type_is(event, "approval.requested") || type_is(event, "input.requested"))) {
         snprintf(app->pending_session, sizeof(app->pending_session), "%s", event->session_id);
         snprintf(app->operation, sizeof(app->operation), "%s", event->operation_id);
         app->status.notice_error = false;
@@ -225,7 +224,7 @@ ah_code tui_snapshot(tui_app *app, const char *session, bool set_cursor, ah_erro
         app->cursor = yyjson_get_uint(yyjson_obj_get(root, "cursor"));
     yyjson_val *pending = yyjson_obj_get(root, "pending");
     const char *status = field(pending, "status");
-    if (!strcmp(status, "approval") || !strcmp(status, "input") || !strcmp(status, "unknown")) {
+    if (!strcmp(status, "approval") || !strcmp(status, "input")) {
         snprintf(app->pending_session, sizeof(app->pending_session), "%s", session);
         snprintf(app->operation, sizeof(app->operation), "%s", field(pending, "operation_id"));
         snprintf(app->pending_status, sizeof(app->pending_status), "%s", status);

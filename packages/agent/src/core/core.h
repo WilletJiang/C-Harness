@@ -105,6 +105,7 @@ ah_code core_context_recall(void *, const ah_tool_call *, ah_tool_result *, ah_e
 ah_code core_context_native(ah_engine *, const char *, sqlite3_int64, ah_error *);
 ah_code core_pending_operation(ah_engine *, const char *, ah_state, core_operation *, ah_error *);
 ah_code core_next_operation(ah_engine *, const char *, core_operation *, ah_error *);
+ah_code core_close_interrupted_tools(ah_engine *, const char *, ah_error *);
 ah_code core_get_operation(ah_engine *, const char *, const char *, core_operation *, ah_error *);
 void core_operation_free(core_operation *);
 ah_code core_normalize_result(ah_engine *, const char *, core_operation *, ah_tool_result *,

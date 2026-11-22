@@ -29,7 +29,7 @@ add_custom_target(ah_tui_math_build DEPENDS "${math_lib}")
 add_dependencies(ah_cli ah_tui_math_build)
 target_compile_definitions(ah_cli PRIVATE AH_BUILD_TUI=1)
 target_sources(ah_cli PRIVATE tui.c tui_auth.c tui_oauth.c tui_commands.c tui_events.c tui_terminal.c
-                              tui_models.c tui_outcome.c tui_stream.c
+                              tui_models.c tui_stream.c
                               tui_view.c tui_graphics.c tui_markdown.c tui_markdown_math.c
                               tui_markdown_table.c tui_markup_columns.c tui_markup_output.c)
 target_include_directories(ah_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"

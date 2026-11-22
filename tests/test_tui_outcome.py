@@ -1,4 +1,4 @@
-"""Reconcile a real interrupted tool run from the TUI after reopening it."""
+"""Accept a new TUI message after an interrupted tool run."""
 import fcntl
 import http.server
 import json
@@ -28,7 +28,9 @@ class Provider(http.server.BaseHTTPRequestHandler):
                        "content": [{"type": "output_text", "text": "Recovered turn."}]}]
         else:
             output = [{"type": "function_call", "name": "test",
-                       "call_id": "test-once", "arguments": "{}"}]
+                       "call_id": "test-once", "arguments": "{}"},
+                      {"type": "function_call", "name": "write_file",
+                       "call_id": "old-write", "arguments": '{"path":"old.txt","content":"old"}'}]
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
@@ -80,27 +82,23 @@ def exercise(binary, root, db, env, opts):
     process = subprocess.Popen([binary, "tui", *opts, *scope], cwd=root, env=env, stdin=slave,
                                stdout=slave, stderr=slave, start_new_session=True)
     try:
-        receive(master, b"outcome_unknown")
-        os.write(master, b"/pending\r")
-        receive(master, b"Review saved evidence first")
-        os.write(master, b"\r")
-        receive(master, b'"signal": 15')
-        os.write(master, b"/pending\r")
-        receive(master, b"Review saved evidence first")
-        os.write(master, b"\x1b[B\r")
-        receive(master, b"Describe the failure or interruption")
-        with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
-            assert conn.execute("SELECT status FROM operations").fetchone() == ("unknown",)
-        os.write(master, b"Interrupted before the suite finished.\r")
-        receive(master, b"Outcome recorded. Use /resume to continue.")
-        with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
-            status, error, result = conn.execute("SELECT status,is_error,result FROM operations").fetchone()
-            assert (status, error) == ("resolved", 1)
-            assert json.loads(result) == {"ok": False, "summary": "Interrupted before the suite finished."}
-        os.write(master, b"/resume\r")
+        receive(master, b"Tool result unconfirmed. Send a new message.")
+        os.write(master, b"Continue with the next question.\r")
         receive(master, b"Recovered turn.")
         with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
             assert conn.execute("SELECT COUNT(*) FROM events WHERE type='tool.started'").fetchone() == (1,)
+            assert conn.execute("SELECT id,turn FROM sessions").fetchall() == [(session, 2)]
+            assert conn.execute("SELECT COUNT(*) FROM events WHERE type='tool.outcome_unknown'").fetchone() == (1,)
+            assert conn.execute("SELECT COUNT(*) FROM events WHERE type='tool.abandoned'").fetchone() == (2,)
+            results = conn.execute("SELECT status,is_error,result FROM operations ORDER BY seq").fetchall()
+            assert [(status, error) for status, error, _ in results] == [("done", 1), ("done", 1)]
+            assert json.loads(results[0][2])["outcome_unknown"] is True
+            assert "cancelled" in json.loads(results[1][2])["error"]
+            items = [json.loads(raw) for raw, in conn.execute("SELECT json FROM items ORDER BY seq")]
+            new_input = next(i for i, item in enumerate(items)
+                             if item.get("content") == "Continue with the next question.")
+            assert [item["call_id"] for item in items[new_input-2:new_input]] == ["test-once", "old-write"]
+        assert not (root / "old.txt").exists()
     finally:
         process.kill()
         process.wait()

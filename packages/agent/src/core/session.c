@@ -136,7 +136,8 @@ ah_code ah_session_reasoning(ah_engine *e, const char *sid, char **effort, ah_er
     return AH_OK;
 }
 ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, const char *identity,
-                         int kind, const core_content *content, ah_error *err) {
+                         int kind, bool allow_interruption, const core_content *content,
+                         ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -167,18 +168,20 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     rc = core_load(e, sid, &session, err);
     if (rc != AH_OK)
         return rc;
-    core_operation op;
-    ah_code pending = core_next_operation(e, sid, &op, err);
-    if (pending == AH_OK) {
-        core_operation_free(&op);
-        core_session_free(&session);
-        return ah_fail(err, AH_BUSY, "finish pending tool exchange before submitting");
+    bool close_previous = allow_interruption && session.state == AH_OUTCOME_UNKNOWN;
+    if (!close_previous) {
+        core_operation op;
+        ah_code pending = core_next_operation(e, sid, &op, err);
+        if (pending == AH_OK) {
+            core_operation_free(&op);
+            pending = ah_fail(err, AH_BUSY, "finish pending tool exchange before submitting");
+        }
+        if (pending != AH_NOT_FOUND) {
+            core_session_free(&session);
+            return pending;
+        }
     }
-    if (pending != AH_NOT_FOUND) {
-        core_session_free(&session);
-        return pending;
-    }
-    if (session.state == AH_RUNNING || session.state == AH_OUTCOME_UNKNOWN) {
+    if (session.state == AH_RUNNING || (!close_previous && session.state == AH_OUTCOME_UNKNOWN)) {
         core_session_free(&session);
         return ah_fail(err, AH_BUSY, "session cannot accept input in current state");
     }
@@ -186,6 +189,8 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
     uint64_t after = 0;
     rc = core_begin(e, &after, err);
+    if (rc == AH_OK && close_previous)
+        rc = core_close_interrupted_tools(e, sid, err);
     if (rc == AH_OK)
         rc = core_prepare(e, "INSERT INTO commands(session_id,id,text,kind) VALUES(?,?,?,?)", &s,
                           err);
@@ -220,8 +225,8 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     core_session_free(&session);
     return rc;
 }
-ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char *text,
-                  ah_error *err) {
+static ah_code submit_text(ah_engine *e, const char *sid, const char *command, const char *text,
+                           bool allow_interruption, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -238,10 +243,20 @@ ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char
     yyjson_mut_obj_add_strcpy(d, item, "content", text);
     core_content content = {.json = ah_mut_write(d)};
     ah_mut_doc_free(d);
-    rc = content.json ? core_submit_item(e, sid, command, text, 0, &content, err)
+    rc = content.json ? core_submit_item(e, sid, command, text, 0, allow_interruption, &content, err)
                       : ah_fail(err, AH_IO, "out of memory");
     core_content_free(&content);
     return rc;
+}
+
+ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char *text,
+                  ah_error *err) {
+    return submit_text(e, sid, command, text, false, err);
+}
+
+ah_code ah_submit_after_interruption(ah_engine *e, const char *sid, const char *command,
+                                     const char *text, ah_error *err) {
+    return submit_text(e, sid, command, text, true, err);
 }
 ah_code ah_resume(ah_engine *e, const char *sid, ah_error *err) {
     ah_code rc = core_guard(e, err);

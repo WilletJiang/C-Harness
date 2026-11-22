@@ -212,7 +212,7 @@ ah_code ah_submit_content(ah_engine *e, const char *sid, const char *command, co
     core_content content;
     rc = core_content_prepare(e, sid, json, &content, err);
     if (rc == AH_OK)
-        rc = core_submit_item(e, sid, command, content.json, 1, &content, err);
+        rc = core_submit_item(e, sid, command, content.json, 1, false, &content, err);
     core_content_free(&content);
     return rc;
 }

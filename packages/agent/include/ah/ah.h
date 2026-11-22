@@ -167,6 +167,10 @@ ah_code ah_session_set_reasoning(ah_engine *, const char *session, const char *e
 ah_code ah_session_reasoning(ah_engine *, const char *session, char **effort, ah_error *);
 ah_code ah_submit(ah_engine *engine, const char *session_id, const char *command_id,
                   const char *text, ah_error *error);
+/* Like ah_submit, but a session paused on an uncertain tool outcome may start
+ * a new turn. The old exchange is closed without replaying its calls. */
+ah_code ah_submit_after_interruption(ah_engine *engine, const char *session_id,
+                                     const char *command_id, const char *text, ah_error *error);
 ah_code ah_run(ah_engine *engine, const char *session_id, ah_error *error);
 /* Cross-thread operations. Engine must remain alive until the owner joins. */
 void ah_cancel(ah_engine *engine);

@@ -81,8 +81,8 @@ static void sync_status(tui_app *app) {
     app->status.cwd = app->cwd;
     app->status.branch = app->branch;
     app->status.turn = app->turn;
-    app->status.notice = !app->notice[0] && !app->running && !strcmp(app->pending_status, "unknown")
-                             ? "Use /pending to record the tool outcome" : app->notice;
+    app->status.notice = !app->notice[0] && !app->running && !strcmp(app->state, "outcome_unknown")
+                             ? "Tool result unconfirmed. Send a new message." : app->notice;
     app->status.has_pending = app->pending_status[0] != 0;
     app->status.picker = app->picker.open ? &app->picker : NULL;
     app->auth.has_token = app->has_token;
@@ -139,6 +139,9 @@ static void finish_run(tui_app *app) {
         app->has_token = false;
         tui_auth_open(app, false);
         snprintf(app->auth_error, sizeof(app->auth_error), "%.255s", app->run_error.message);
+    } else if (app->run_code == AH_UNCERTAIN && !strcmp(app->state, "outcome_unknown")) {
+        app->status.notice_error = false;
+        app->notice[0] = 0;
     } else if (app->run_code != AH_OK)
         tui_show_error(app, app->run_code, &app->run_error);
     else if (code != AH_OK)
