@@ -100,6 +100,36 @@ ah_code ah_reader_open_with_writer(const char *path, ah_reader **out, ah_error *
 #endif
 }
 
+ah_code ah_reader_unknown_json(ah_reader *reader, const char *sid, const char *operation,
+                               char **json, ah_error *error) {
+    if (json)
+        *json = NULL;
+    ah_code code = reader_guard(reader, error);
+    if (code != AH_OK)
+        return code;
+    if (!sid || !*sid || !operation || !*operation || !json)
+        return ah_fail(error, AH_INVALID, "session, operation and JSON output required");
+    sqlite3_stmt *row = NULL;
+    code = core_prepare(&reader->view,
+                        "SELECT json FROM events WHERE session_id=? AND operation_id=? "
+                        "AND type='tool.outcome_unknown' ORDER BY seq DESC LIMIT 1", &row, error);
+    if (code != AH_OK)
+        return reader_error(reader, error, "cannot prepare tool evidence");
+    sqlite3_bind_text(row, 1, sid, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(row, 2, operation, -1, SQLITE_TRANSIENT);
+    int step = sqlite3_step(row);
+    if (step == SQLITE_DONE)
+        code = ah_fail(error, AH_NOT_FOUND, "no recorded tool evidence");
+    else if (step != SQLITE_ROW)
+        code = reader_error(reader, error, "cannot read tool evidence");
+    else if (sqlite3_column_bytes(row, 0) > READER_BYTES)
+        code = ah_fail(error, AH_LIMIT, "recorded tool evidence exceeds reader limit");
+    else if (!(*json = ah_strdup((const char *)sqlite3_column_text(row, 0))))
+        code = ah_fail(error, AH_IO, "cannot copy tool evidence");
+    sqlite3_finalize(row);
+    return code;
+}
+
 static ah_code snapshot_cursor(ah_reader *reader, char **json, ah_error *error) {
     sqlite3_stmt *row = NULL;
     ah_code code =

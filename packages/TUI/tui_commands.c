@@ -14,7 +14,7 @@ static const tui_command commands[] = {
     {"model", "Choose model and reasoning effort"},
     {"sessions", "Open Command Center to switch or create sessions"},
     {"agents", "Open interactive agent tree inspector"},
-    {"pending", "Review and approve or deny pending operation"},
+    {"pending", "Review an operation or record its outcome"},
     {"approve", "Allow the pending operation"},
     {"deny", "Deny the pending operation"},
     {"cancel", "Stop the active run"},
@@ -222,6 +222,11 @@ static ah_code open_pending_picker(tui_app *app, ah_error *error) {
     }
     const char *op_id = jstr(pending, "operation_id");
     const char *name = jstr(pending, "name");
+    if (!strcmp(st, "unknown")) {
+        code = tui_outcome_open(app, session, op_id, name, error);
+        yyjson_doc_free(doc);
+        return code;
+    }
     bool approval = !strcmp(st, "approval");
     const char *subtitle = approval ? "Press a to approve or d to deny"
                            : !strcmp(st, "input") ? "Awaiting input" : "Review required";
@@ -288,6 +293,8 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
         snprintf(error->message, sizeof(error->message), "Loading model catalog");
         return AH_BUSY;
     }
+    if (app->recording_outcome)
+        return tui_outcome_record(app, text, error);
     char id[80];
     command_id(id);
     ah_engine *engine = app->cli->engine;
@@ -298,6 +305,10 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
             snprintf(app->notice, sizeof(app->notice), "Steering queued");
         }
         return code;
+    }
+    if (!strcmp(app->pending_status, "unknown")) {
+        snprintf(error->message, sizeof(error->message), "Use /pending to record the tool outcome");
+        return AH_UNCERTAIN;
     }
     ah_code code;
     if (!strcmp(app->pending_status, "input")) {
@@ -347,6 +358,10 @@ static ah_code decide_pending(tui_app *app, bool approve, ah_error *error) {
 }
 
 static ah_code command(tui_app *app, const char *name, ah_error *error) {
+    if (app->recording_outcome) {
+        app->recording_outcome = false;
+        app->notice[0] = 0;
+    }
     if (!strcmp(name, "quit")) {
         if (app->running) {
             snprintf(error->message, sizeof(error->message), "Use /cancel before exiting");
@@ -425,6 +440,12 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
     if (app->quit)
         return;
     tui_restore_history(app);
+    if (key == TUI_ESCAPE && app->recording_outcome) {
+        app->recording_outcome = false;
+        app->status.notice_error = false;
+        snprintf(app->notice, sizeof(app->notice), "Use /pending to record the tool outcome");
+        return;
+    }
     if (key == TUI_PASTE && !text) {
         app->status.notice_error = true;
         snprintf(app->notice, sizeof(app->notice), "Paste exceeded input limit");
@@ -446,9 +467,12 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
         tui_picker_close(app);
         return;
     case TUI_PICK_OPEN:
-        code = app->pick_kind == TUI_PICK_MODELS || app->pick_kind == TUI_PICK_EFFORT
-                   ? tui_models_choose(app, action.text, &error)
-                   : tui_switch_session(app, action.text, &error);
+        if (app->pick_kind == TUI_PICK_OUTCOME)
+            code = tui_outcome_choose(app, action.text, &error);
+        else if (app->pick_kind == TUI_PICK_MODELS || app->pick_kind == TUI_PICK_EFFORT)
+            code = tui_models_choose(app, action.text, &error);
+        else
+            code = tui_switch_session(app, action.text, &error);
         break;
     case TUI_PICK_APPROVE:
     case TUI_PICK_DENY:

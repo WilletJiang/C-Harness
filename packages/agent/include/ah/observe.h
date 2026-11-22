@@ -22,6 +22,9 @@ ah_code ah_reader_set_busy_timeout(ah_reader *, unsigned milliseconds, ah_error 
 /* Consistent session snapshot plus "cursor", the last global event sequence in
  * that same read transaction. Read events after cursor to continue without gaps. */
 ah_code ah_reader_session_json(ah_reader *, const char *session_id, char **json, ah_error *);
+/* Return the latest recorded evidence for an uncertain operation as owned JSON. */
+ah_code ah_reader_unknown_json(ah_reader *, const char *session_id, const char *operation_id,
+                               char **json, ah_error *);
 /* Copies at most limit (1..256) durable events and 4 MiB before invoking callbacks,
  * releasing SQLite read locks first. NULL session reads across all sessions.
  * last_seq starts at after_seq and advances only for delivered events. A first
