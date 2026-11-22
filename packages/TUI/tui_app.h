@@ -10,7 +10,7 @@ enum { PREVIEW_BYTES = 4096, LIVE_PAGE = 24, HISTORY_PAGE = 48 };
 
 typedef enum {
     TUI_PICK_NONE, TUI_PICK_SESSIONS, TUI_PICK_AGENTS, TUI_PICK_PENDING,
-    TUI_PICK_MODELS, TUI_PICK_EFFORT
+    TUI_PICK_MODELS, TUI_PICK_EFFORT, TUI_PICK_ASK
 } tui_pick_kind;
 
 typedef struct {
@@ -30,6 +30,9 @@ typedef struct {
     tui_view_status status;
     unsigned cols, rows, turn;
     char session[AH_ID_CAP], pending_session[AH_ID_CAP], operation[AH_ID_CAP];
+    char ask_seen[AH_ID_CAP];
+    bool pending_ask;
+    char *ask_prompt;
     char model[257], default_model[257], endpoint[512], cwd[256], branch[128];
     char chosen_model[257], model_picker_subtitle[320];
     char effort[16], model_label[288];
@@ -95,6 +98,10 @@ void tui_models_ready(tui_app *);
 void tui_models_sync(tui_app *);
 ah_code tui_models_choose(tui_app *, const char *, ah_error *);
 ah_code tui_models_back(tui_app *, ah_error *);
+bool tui_ask_has_options(yyjson_val *arguments);
+ah_code tui_ask_picker(tui_app *, const char *operation, yyjson_val *arguments, ah_error *);
+void tui_ask_maybe_open(tui_app *);
+ah_code tui_open_pending_picker(tui_app *, ah_error *);
 void tui_auth_open(tui_app *, bool onboarding);
 void tui_auth_close(tui_app *);
 void tui_config_init_paths(tui_app *);

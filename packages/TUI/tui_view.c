@@ -737,10 +737,14 @@ static tui_action picker_key(tui_view *v, const tui_picker *p, tui_key key, cons
             v->pick_selected = v->pick_count - 1;
         break;
     case TUI_TAB:
+        if (p->question)
+            break;
         v->pick_filter = (v->pick_filter + 1) % FILTER_COUNT;
         v->pick_selected = v->pick_scroll = 0;
         break;
     case TUI_SHIFT_TAB:
+        if (p->question)
+            break;
         v->pick_filter = (v->pick_filter + FILTER_COUNT - 1) % FILTER_COUNT;
         v->pick_selected = v->pick_scroll = 0;
         break;
@@ -1246,12 +1250,85 @@ static bool render_detail_line(text_buf *out, const char *s, size_t n, unsigned 
     return emit_padded(out, s, n, max) && buf_puts(out, S_RST);
 }
 
+static bool render_ask_picker(tui_view *v, const tui_picker *p, unsigned cols, unsigned rows,
+                              tui_frame *frame) {
+    unsigned width = frame_width(cols), budget = rows > 2 ? rows - 2 : 1;
+    unsigned inner = width > 4 ? width - 4 : 1;
+    text_buf *out = &v->out;
+    out->len = 0;
+    if (!buf_reserve(out, 256))
+        return false;
+    out->data[0] = 0;
+    unsigned lines = 0;
+    if (budget > 1 && (!newline(out, &lines) ||
+        !buf_puts(out, S_ACCENT S_BOLD) ||
+        !emit_line(out, p->title, strlen(p->title), width, NULL) || !buf_puts(out, S_RST)))
+        return false;
+
+    text_row *rows_data = NULL;
+    size_t count = 0, capacity = 0;
+    bool ok = wrap(p->question, strlen(p->question), inner, &rows_data, &count, &capacity);
+    unsigned question_rows = budget > 4 ? (budget - 3) / 2 : 0;
+    for (size_t i = 0; ok && i < count && i < question_rows; i++)
+        ok = newline(out, &lines) && buf_puts(out, "  " S_TEXT) &&
+             emit_line(out, p->question + rows_data[i].start, rows_data[i].end - rows_data[i].start,
+                       inner, NULL) && buf_puts(out, S_RST);
+    if (!ok)
+        goto done;
+    if (!v->pick_count)
+        goto frame;
+
+    const char *selected = p->items[v->pick_idx[v->pick_selected]].title;
+    count = 0;
+    if (selected)
+        ok = wrap(selected, strlen(selected), inner, &rows_data, &count, &capacity);
+    if (!ok)
+        goto done;
+    unsigned available = budget - lines;
+    bool footer = available > 1;
+    if (footer)
+        --available;
+    size_t selected_rows = count ? (count < available ? count : available) : 1;
+    size_t visible = available - selected_rows + 1;
+    if (v->pick_scroll > v->pick_selected)
+        v->pick_scroll = v->pick_selected;
+    if (v->pick_selected >= v->pick_scroll + visible)
+        v->pick_scroll = v->pick_selected + 1 - visible;
+    if (v->pick_count - v->pick_scroll < visible)
+        v->pick_scroll = v->pick_count > visible ? v->pick_count - visible : 0;
+    for (size_t i = v->pick_scroll; ok && i < v->pick_count && i - v->pick_scroll < visible; i++) {
+        const char *label = p->items[v->pick_idx[i]].title;
+        bool active = i == v->pick_selected;
+        size_t steps = active ? selected_rows : 1;
+        for (size_t j = 0; ok && j < steps; j++) {
+            size_t start = active && count ? rows_data[j].start : 0;
+            size_t length = active && count ? rows_data[j].end - start : label ? strlen(label) : 0;
+            ok = newline(out, &lines) && buf_puts(out, active && !j ? S_ACCENT "  › " : "    ") &&
+                 (!length || emit_line(out, label + start, length, inner, NULL)) && buf_puts(out, S_RST);
+        }
+    }
+    if (ok && footer && lines < budget) {
+        static const char help[] = "↑↓ choose · Enter reply · Esc type";
+        ok = newline(out, &lines) && buf_puts(out, "  " S_DIM) &&
+             emit_line(out, help, sizeof(help) - 1, inner, NULL) && buf_puts(out, S_RST);
+    }
+frame:
+    if (ok)
+        *frame = (tui_frame){.text = out->data, .lines = lines ? lines : 1,
+                            .cursor_row = lines ? lines - 1 : 0, .hide_cursor = true};
+done:
+    free(rows_data);
+    return ok;
+}
+
 static bool render_picker(tui_view *v, const tui_view_status *status, unsigned cols, unsigned rows,
                           tui_frame *frame) {
     const tui_picker *p = status->picker;
     if (!v->was_picker)
         tui_view_select_picker(v, 0);
     refresh_picker(v, p);
+    if (p->question)
+        return render_ask_picker(v, p, cols, rows, frame);
 
     unsigned width = frame_width(cols);
     unsigned budget = rows > 2 ? rows - 2 : 1;

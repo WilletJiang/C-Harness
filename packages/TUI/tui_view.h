@@ -60,6 +60,7 @@ typedef struct {
     bool open;
     const char *title;
     const char *subtitle;
+    const char *question; /* Optional prompt for a choice-only picker. */
     bool can_open;
     bool can_approve;
     bool can_new;

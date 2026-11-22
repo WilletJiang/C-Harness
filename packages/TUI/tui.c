@@ -181,6 +181,7 @@ static bool terminal_loop(tui_app *app) {
         if (history_wait < 0)
             tui_restore_history(app);
         tui_stream_render(app);
+        tui_ask_maybe_open(app);
         sync_status(app);
         tui_frame frame;
         if (!tui_view_frame(app->view, &app->status, app->cols, app->rows, now, &frame))

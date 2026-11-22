@@ -40,6 +40,8 @@ under `--db` (default `./harness.db`). Reopen the same database to find the
 sessions you previously used.
 `/sessions` opens the session picker, `/history` reads the preceding event page,
 and `/pending` opens the operation targeted by a reply or approval.
+When `ask` supplies choices, use the arrow keys and Enter to reply. Press Esc
+or select `Type a reply` to use the composer. `/pending` reopens the choices.
 If a tool stops without a confirmed result, send a new message in the same
 session. The next turn sees an error result for that call, and the journal
 keeps the original evidence.

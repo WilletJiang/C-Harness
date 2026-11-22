@@ -29,7 +29,7 @@ add_custom_target(ah_tui_math_build DEPENDS "${math_lib}")
 add_dependencies(ah_cli ah_tui_math_build)
 target_compile_definitions(ah_cli PRIVATE AH_BUILD_TUI=1)
 target_sources(ah_cli PRIVATE tui.c tui_auth.c tui_oauth.c tui_commands.c tui_events.c tui_terminal.c
-                              tui_models.c tui_stream.c
+                              tui_ask.c tui_models.c tui_stream.c
                               tui_view.c tui_graphics.c tui_markdown.c tui_markdown_math.c
                               tui_markdown_table.c tui_markup_columns.c tui_markup_output.c)
 target_include_directories(ah_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -50,5 +50,7 @@ if(AH_TESTS_ENABLED)
       "${PROJECT_SOURCE_DIR}/tests/test_tui_outcome.py" $<TARGET_FILE:ah_cli>)
   add_test(NAME tui_approval COMMAND "${Python3_EXECUTABLE}" -B
       "${PROJECT_SOURCE_DIR}/tests/test_tui_approval.py" $<TARGET_FILE:ah_cli>)
-  set_tests_properties(tui_graphics tui_outcome tui_approval PROPERTIES TIMEOUT 60)
+  add_test(NAME tui_ask COMMAND "${Python3_EXECUTABLE}" -B
+      "${PROJECT_SOURCE_DIR}/tests/test_tui_ask.py" $<TARGET_FILE:ah_cli>)
+  set_tests_properties(tui_graphics tui_outcome tui_approval tui_ask PROPERTIES TIMEOUT 60)
 endif()

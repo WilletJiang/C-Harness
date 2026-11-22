@@ -228,11 +228,14 @@ ah_code tui_snapshot(tui_app *app, const char *session, bool set_cursor, ah_erro
         snprintf(app->pending_session, sizeof(app->pending_session), "%s", session);
         snprintf(app->operation, sizeof(app->operation), "%s", field(pending, "operation_id"));
         snprintf(app->pending_status, sizeof(app->pending_status), "%s", status);
+        app->pending_ask = !strcmp(status, "input") &&
+                           tui_ask_has_options(yyjson_obj_get(pending, "arguments"));
         const char *question = field(yyjson_obj_get(pending, "arguments"), "question");
         app->status.notice_error = false;
         snprintf(app->notice, sizeof(app->notice), "Pending %s  \xc2\xb7  %s%s%.560s  (/pending)",
                  status, field(pending, "name"), *question ? ": " : "", question);
     } else if (!strcmp(session, app->pending_session)) {
+        app->pending_ask = false;
         app->operation[0] = app->pending_status[0] = app->pending_session[0] = 0;
     }
     yyjson_doc_free(doc);

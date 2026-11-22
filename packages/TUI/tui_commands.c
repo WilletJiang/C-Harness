@@ -50,6 +50,8 @@ static const char *jstr(yyjson_val *obj, const char *key) {
 }
 
 void tui_picker_close(tui_app *app) {
+    free(app->ask_prompt);
+    app->ask_prompt = NULL;
     for (size_t i = 0; i < app->pick_count; ++i) {
         free(app->pick_strings[i].id);
         free(app->pick_strings[i].title);
@@ -204,7 +206,7 @@ static ah_code open_agents_picker(tui_app *app, ah_error *error) {
     return AH_OK;
 }
 
-static ah_code open_pending_picker(tui_app *app, ah_error *error) {
+ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
     const char *session = app->pending_session[0] ? app->pending_session : app->session;
     char *json = NULL;
     ah_code code = ah_reader_session_json(app->reader, session, &json, error);
@@ -233,6 +235,11 @@ static ah_code open_pending_picker(tui_app *app, ah_error *error) {
     const char *subtitle = approval ? "Press a to approve or d to deny"
                            : !strcmp(st, "input") ? "Awaiting input" : "Review required";
     yyjson_val *args = yyjson_obj_get(pending, "arguments");
+    if (!strcmp(st, "input") && tui_ask_has_options(args)) {
+        code = tui_ask_picker(app, op_id, args, error);
+        yyjson_doc_free(doc);
+        return code;
+    }
     char *args_pretty = args ? yyjson_val_write(args, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL) : NULL;
     if (!tui_picker_alloc(app, 1)) {
         free(args_pretty);
@@ -269,6 +276,8 @@ ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
         return AH_OK;
     }
     strcpy(app->session, target);
+    app->ask_seen[0] = 0;
+    app->pending_ask = false;
     app->pending_session[0] = app->operation[0] = app->pending_status[0] = 0;
     app->notice[0] = 0;
     app->status.notice_error = false;
@@ -318,6 +327,7 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
         yyjson_mut_doc_free(doc);
         if (code == AH_OK) {
             app->pending_status[0] = app->operation[0] = app->pending_session[0] = 0;
+            app->pending_ask = false;
             tui_line(app, "> ", text);
         }
     } else {
@@ -373,7 +383,7 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
     if (!strcmp(name, "history"))
         return app->history ? tui_history_page(app, app->history, error) : AH_OK;
     if (!strcmp(name, "pending"))
-        return open_pending_picker(app, error);
+        return tui_open_pending_picker(app, error);
     if (!strcmp(name, "inspect")) {
         char *json = NULL;
         ah_code code = ah_reader_session_json(app->reader, app->session, &json, error);
@@ -465,6 +475,20 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
         tui_picker_close(app);
         return;
     case TUI_PICK_OPEN:
+        if (app->pick_kind == TUI_PICK_ASK) {
+            if (app->running || app->catalog_loading || !action.text ||
+                strcmp(app->pending_status, "input") ||
+                strcmp(app->ask_seen, app->operation)) {
+                snprintf(error.message, sizeof(error.message), "Pending question changed");
+                code = AH_BUSY;
+            } else {
+                if (*action.text)
+                    code = submit(app, action.text, &error);
+                if (code == AH_OK)
+                    tui_picker_close(app);
+            }
+            break;
+        }
         code = app->pick_kind == TUI_PICK_MODELS || app->pick_kind == TUI_PICK_EFFORT
                    ? tui_models_choose(app, action.text, &error)
                    : tui_switch_session(app, action.text, &error);
