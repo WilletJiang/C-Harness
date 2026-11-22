@@ -59,7 +59,7 @@ ah_code core_work_wake(ah_engine *e, const char *sid, const char *id, const core
         rc = ah_fail(err, AH_IO, "out of memory");
     if (rc == AH_OK)
         rc = core_work_children_ready(e, sid, id, wait, &child_ready, out, &children, err);
-    bool timer = work->wake_at_ms && work->wake_at_ms <= core_wall_ms();
+    bool timer = work->wake_at_ms && work->wake_at_ms <= e->work_clock_ms();
     *ready = rc == AH_OK && (signal || child_ready || timer);
     if (*ready && wake) {
         yyjson_mut_val *root = yyjson_mut_obj(out);
@@ -149,7 +149,7 @@ static ah_code signal_status(ah_engine *e, const char *sid, const char *id, cons
         bool open = !strcmp(status, "pending") || !strcmp(status, "approved") ||
                     !strcmp(status, "approval") || !strcmp(status, "executing") ||
                     !strcmp(status, "parked") || !strcmp(status, "work_ready");
-        if (open && wait && until && until <= core_wall_ms()) {
+        if (open && wait && until && until <= e->work_clock_ms()) {
             yyjson_doc *doc = yyjson_read(wait, strlen(wait), 0);
             const char *wanted = yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "signal"));
             if (wanted && !strcmp(wanted, key))

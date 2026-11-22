@@ -48,6 +48,7 @@ struct ah_engine {
     bool running;
     bool observing;
     uint64_t deadline;
+    uint64_t (*work_clock_ms)(void); /* Wall time for persisted work deadlines. */
     pthread_mutex_t mailbox_lock;
     bool mailbox_initialized;
     char active_session[AH_ID_CAP];

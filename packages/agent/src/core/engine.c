@@ -38,6 +38,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     if (!e)
         return ah_fail(err, AH_IO, "out of memory");
     e->config = *config;
+    e->work_clock_ms = core_wall_ms;
     e->config.search = (ah_search_config){0};
     e->lock_fd = -1;
     if (config->flow_runner_path) {

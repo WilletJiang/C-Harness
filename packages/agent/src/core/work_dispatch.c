@@ -225,7 +225,7 @@ ah_code core_work_select(ah_engine *e, const char *sid, core_operation *op, bool
         return code;
     sqlite3_bind_text(row, 1, sid, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(row, 2, op->id, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(row, 3, (sqlite3_int64)core_wall_ms());
+    sqlite3_bind_int64(row, 3, (sqlite3_int64)e->work_clock_ms());
     int step = SQLITE_DONE;
     while ((step = sqlite3_step(row)) == SQLITE_ROW) {
         if (core_cancelled(e)) {
