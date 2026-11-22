@@ -5,6 +5,7 @@
 *.db-wal
 *.db-shm
 *.lock
+!/packages/TUI/Cargo.lock
 .env*
 
 __pycache__/

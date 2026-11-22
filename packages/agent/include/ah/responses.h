@@ -65,6 +65,13 @@ ah_async_provider ah_responses_async_provider(ah_responses *provider);
 /* Owner-thread only, copies token; host handles OAuth and refresh in its vault.
  * Returns AH_BUSY until every request handle has been released. */
 ah_code ah_responses_set_token(ah_responses *provider, const char *token, ah_error *error);
+/* Owner-thread only, validates and updates the Responses endpoint URL.
+ * Returns AH_BUSY until every request handle has been released. */
+ah_code ah_responses_set_endpoint(ah_responses *provider, const char *endpoint, ah_error *error);
+/* Replace the endpoint and bearer together on an idle provider. NULL bearer
+ * keeps the current bearer. Validation or allocation failure leaves both intact. */
+ah_code ah_responses_set_connection(ah_responses *provider, const char *endpoint,
+                                    const char *bearer, ah_error *error);
 #ifdef __cplusplus
 }
 #endif

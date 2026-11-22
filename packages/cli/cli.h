@@ -9,6 +9,8 @@ typedef struct {
     pthread_mutex_t output;
     bool json_events;
     bool rpc;
+    ah_observer event_sink;
+    void *event_context;
 } cli_context;
 void cli_usage(bool all);
 bool cli_option_number(const char *, const char *, uintmax_t, uintmax_t, uintmax_t *);

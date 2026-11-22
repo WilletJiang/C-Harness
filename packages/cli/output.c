@@ -12,6 +12,8 @@ void cli_print(cli_context *cli, const char *json) {
 }
 void cli_observe(void *context, const ah_event *event) {
     cli_context *cli = context;
+    if (cli->event_sink)
+        cli->event_sink(cli->event_context, event);
     if (!cli->json_events && !cli->rpc)
         return;
     yyjson_mut_doc *doc = ah_mut_doc_new();

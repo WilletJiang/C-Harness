@@ -10,6 +10,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef AH_BUILD_TUI
+#include "tui_internal.h"
+#include <unistd.h>
+#endif
 
 int main(int argc, char **argv) {
     if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help") ||
@@ -25,6 +29,9 @@ int main(int argc, char **argv) {
     const char *model = NULL, *instructions = "", *session = NULL, *prompt = NULL;
     const char *command_id = NULL, *operation = NULL, *value = NULL, *summary = NULL;
     const char *endpoint = "https://api.openai.com/v1/responses", *token_file = NULL;
+#ifdef AH_BUILD_TUI
+    bool endpoint_explicit = false;
+#endif
     bool exec_enabled = false, events = false, allow_http = false, workflows = false;
     ah_search_config search = {0};
     uintmax_t tool_timeout_ms = 0;
@@ -97,9 +104,12 @@ int main(int argc, char **argv) {
             value = v;
         else if (!strcmp(arg, "--summary"))
             summary = v;
-        else if (!strcmp(arg, "--endpoint"))
+        else if (!strcmp(arg, "--endpoint")) {
             endpoint = v;
-        else if (!strcmp(arg, "--search-endpoint"))
+#ifdef AH_BUILD_TUI
+            endpoint_explicit = true;
+#endif
+        } else if (!strcmp(arg, "--search-endpoint"))
             search.endpoint = v;
         else if (!strcmp(arg, "--tool-timeout-ms")) {
             if (!cli_option_number(arg, v, 1, UINT32_MAX, &tool_timeout_ms))
@@ -157,6 +167,19 @@ int main(int argc, char **argv) {
                               "resolve", "inspect", "list",   "events",  "fork", "compact",
                               "agents",  "send",    "stop",   "rpc"};
     bool known = cli_content_command(command) || cli_policy_command(command);
+    bool tui = false;
+#ifdef AH_BUILD_TUI
+    tui = !strcmp(command, "tui");
+    if (tui && (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO) || (model && session))) {
+        fputs("ah tui needs a terminal and at most one of --model or --session\n", stderr);
+        return 2;
+    }
+    if (tui && (events || prompt)) {
+        fputs("Use ah run or ah rpc for --prompt or --events\n", stderr);
+        return 2;
+    }
+#endif
+    known |= tui;
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++)
         if (!strcmp(command, commands[i]))
             known = true;
@@ -170,12 +193,20 @@ int main(int argc, char **argv) {
     }
     bool standalone = !strcmp(command, "new") || !strcmp(command, "list") ||
                       !strcmp(command, "rpc") || !strcmp(command, "vacuum") ||
-                      !strcmp(command, "workspace");
+                      !strcmp(command, "workspace") || tui;
     if (!standalone && !session) {
         fputs("--session is required\n", stderr);
         return 2;
     }
     char *token = cli_load_token(token_file);
+#ifdef AH_BUILD_TUI
+    if (tui && token && !*token && !token_file) {
+        free(token);
+        token = NULL;
+    }
+    bool has_cli_token = token != NULL;
+    const char *token_source = token_file ? "file" : has_cli_token ? "env" : "none";
+#endif
     if (token_file && !token) {
         fputs("Cannot read private token file (regular, owner-only permissions required)\n",
               stderr);
@@ -251,7 +282,12 @@ int main(int argc, char **argv) {
     }
     char id[AH_ID_CAP] = {0};
     char *json = NULL;
-    if (code == AH_OK) {
+#ifdef AH_BUILD_TUI
+    if (code == AH_OK && tui)
+        code = cli_tui(&cli, responses, db, session, model, instructions, endpoint,
+                       endpoint_explicit, has_cli_token, token_source, allow_http, &error);
+#endif
+    if (code == AH_OK && !tui) {
         if (cli.rpc) {
             int rc = cli_rpc(&cli);
             if (rc)

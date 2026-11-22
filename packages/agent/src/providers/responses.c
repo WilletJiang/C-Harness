@@ -21,24 +21,64 @@ void ah_responses_config_init(ah_responses_config *config) {
                                     .max_retries = 2};
 }
 
-ah_code ah_responses_set_token(ah_responses *provider, const char *token, ah_error *error) {
+static ah_code set_connection(ah_responses *provider, const char *endpoint, const char *token,
+                              ah_error *error) {
     ah_error_clear(error);
-    if (!provider || !token || !*token || strlen(token) > 16384)
-        return ah_fail(error, AH_INVALID, "invalid bearer token");
+    if (!provider)
+        return ah_fail(error, AH_INVALID, "Responses provider is required");
     if (provider->requests || provider->dispatching)
         return ah_fail(error, AH_BUSY, "provider is running");
-    for (const unsigned char *p = (const unsigned char *)token; *p; p++)
-        if (*p < 0x21 || *p > 0x7e)
+    if (token) {
+        if (!*token || strlen(token) > 16384)
             return ah_fail(error, AH_INVALID, "invalid bearer token");
-    char *copy = ah_strdup(token);
-    if (!copy)
-        return ah_fail(error, AH_IO, "token allocation failed");
-    if (!provider->token || strcmp(provider->token, copy))
+        for (const unsigned char *p = (const unsigned char *)token; *p; p++)
+            if (*p < 0x21 || *p > 0x7e)
+                return ah_fail(error, AH_INVALID, "invalid bearer token");
+    }
+    bool loopback = false;
+    if (endpoint && !ah_http_endpoint(endpoint, provider->config.allow_loopback_http, &loopback))
+        return ah_fail(error, AH_INVALID,
+                       "endpoint must be HTTPS without credentials, query, or fragment");
+    char *url = endpoint ? ah_strdup(endpoint) : NULL;
+    char *bearer = token ? ah_strdup(token) : NULL;
+    if ((endpoint && !url) || (token && !bearer)) {
+        free(url);
+        responses_wipe(bearer);
+        free(bearer);
+        return ah_fail(error, AH_IO, "cannot allocate Responses connection");
+    }
+    if ((url && strcmp(provider->endpoint, url)) ||
+        (bearer && (!provider->token || strcmp(provider->token, bearer))))
         responses_routes_clear(provider);
-    responses_wipe(provider->token);
-    free(provider->token);
-    provider->token = copy;
+    if (url) {
+        free(provider->endpoint);
+        provider->endpoint = url;
+        provider->config.endpoint = url;
+        provider->loopback = loopback;
+    }
+    if (bearer) {
+        responses_wipe(provider->token);
+        free(provider->token);
+        provider->token = bearer;
+    }
     return AH_OK;
+}
+
+ah_code ah_responses_set_token(ah_responses *provider, const char *token, ah_error *error) {
+    if (!token)
+        return ah_fail(error, AH_INVALID, "invalid bearer token");
+    return set_connection(provider, NULL, token, error);
+}
+
+ah_code ah_responses_set_endpoint(ah_responses *provider, const char *endpoint, ah_error *error) {
+    return ah_responses_set_connection(provider, endpoint, NULL, error);
+}
+
+ah_code ah_responses_set_connection(ah_responses *provider, const char *endpoint,
+                                    const char *bearer, ah_error *error) {
+    if (!endpoint || !*endpoint)
+        return ah_fail(error, AH_INVALID, "invalid Responses endpoint");
+    return set_connection(provider, endpoint, bearer, error);
 }
 
 ah_code ah_responses_open(const ah_responses_config *config, ah_responses **out, ah_error *error) {

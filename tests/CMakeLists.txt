@@ -62,7 +62,7 @@ if(AH_TESTS_ENABLED)
   add_test(NAME embed COMMAND ah_embed)
   add_test(NAME durable_embed COMMAND ah_durable)
   add_test(NAME host_auth COMMAND ${Python3_EXECUTABLE} -B -m unittest
-    packages.host.tests.test_session packages.host.tests.test_login)
+    packages.host.tests.test_session packages.host.tests.test_login packages.host.tests.test_tui_auth)
   add_test(NAME python_entrypoints COMMAND ${Python3_EXECUTABLE} -B -m unittest tests.test_entrypoints)
   set_tests_properties(host_auth python_entrypoints PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} TIMEOUT 30)

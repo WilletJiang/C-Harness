@@ -9,6 +9,9 @@ void cli_usage(bool all) {
          "Commands: new run resume approve deny reply resolve inspect list events fork compact\n"
          "          agents send stop rpc submit-content artifact-import artifacts forget vacuum\n"
          "          context workspace\n"
+#ifdef AH_BUILD_TUI
+         "          tui                Interactive terminal and account setup\n"
+#endif
          "\nSession and input:\n"
          "  --model NAME         Model for new session (required by new)\n"
          "  --workspace PATH     Register bounded local file tools\n"

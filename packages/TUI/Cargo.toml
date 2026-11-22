@@ -1,0 +1,21 @@
+[package]
+name = "ah-tui-math"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "tui_math.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+latex-rust = { version = "=2.1.1", features = ["png"] }
+pulldown-latex = "=0.7.1"
+rust-latex-parser = "=0.1.1"
+term-maths = { version = "=1.0.0", default-features = false }
+unicode-width = "=0.2.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = "symbols"
