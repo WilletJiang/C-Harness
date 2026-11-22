@@ -76,6 +76,7 @@ add_library(ah STATIC
   src/providers/stream.c
   src/providers/stream_items.c
 
+  src/tools/approval.c
   src/tools/changes.c
   src/tools/check.c
   src/tools/check_registry.c

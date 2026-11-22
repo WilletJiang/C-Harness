@@ -15,6 +15,9 @@ typedef struct {
 ah_code ah_local_tools_open(const ah_local_tools_config *config, ah_local_tools **out,
                             ah_error *error);
 ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_error *error);
+/* Change between runs. Only eligible, revision-guarded local edits are approved. */
+void ah_local_tools_set_auto_approve(ah_local_tools *, bool enabled);
+bool ah_local_tools_auto_approve(const ah_local_tools *);
 /* Host-defined commands; models select names and cannot change argv or inputs.
  * Configure before register(). argv_json is an array, inputs_json a nonempty
  * array of workspace-relative regular files (each <=1 MiB) or directories

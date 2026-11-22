@@ -265,6 +265,8 @@ int main(int argc, char **argv) {
         code = ah_local_tools_open(&tc, &tools, &error);
         if (code == AH_OK)
             code = ah_local_tools_register(tools, cli.engine, &error);
+        if (code == AH_OK)
+            cli.local_tools = tools;
     }
     if (code == AH_OK && agents) {
         ah_agents_config ac;

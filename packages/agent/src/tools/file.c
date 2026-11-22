@@ -19,6 +19,8 @@ ah_code ah_local_replace(int parent, const char *leaf, const char *content, size
         (original && (exists || !ah_local_same_file(original, &st))) || (expect_absent && !exists))
         return ah_local_error(call, result, error, AH_INVALID,
                               "Write target is not regular or changed during edit");
+    if (call->auto_approved && !exists && (!length || !ah_local_auto_approve_target(&st)))
+        return ah_local_error(call, result, error, AH_AUTH, "Edit no longer qualifies for automatic approval");
     mode_t mode = exists ? 0600 : st.st_mode & 07777;
     char temporary[96];
     int fd = -1;
@@ -56,6 +58,8 @@ ah_code ah_local_replace(int parent, const char *leaf, const char *content, size
             (original && (exists || !ah_local_same_file(original, &st))) ||
             (expect_absent && !exists))
             code = AH_INVALID;
+        else if (call->auto_approved && !exists && (!length || !ah_local_auto_approve_target(&st)))
+            code = AH_AUTH;
     }
     bool committed = false;
     if (code == AH_OK) {

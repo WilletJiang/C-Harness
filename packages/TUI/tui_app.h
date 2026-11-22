@@ -32,7 +32,7 @@ typedef struct {
     char session[AH_ID_CAP], pending_session[AH_ID_CAP], operation[AH_ID_CAP];
     char model[257], default_model[257], endpoint[512], cwd[256], branch[128];
     char chosen_model[257], model_picker_subtitle[320];
-    char effort[16], model_label[280];
+    char effort[16], model_label[288];
     char config_path[512], config_display[256];
     char token_source[16], auth_error[256];
     bool has_token, endpoint_explicit, allow_loopback_http, chatgpt;

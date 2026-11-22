@@ -1,11 +1,13 @@
 #ifndef AH_CLI_H
 #define AH_CLI_H
 #include "ah/ah.h"
+#include "ah/tools.h"
 #include "yyjson.h"
 #include <pthread.h>
 typedef enum { CLI_OPTION_UNHANDLED, CLI_OPTION_HANDLED, CLI_OPTION_INVALID } cli_option_status;
 typedef struct {
     ah_engine *engine;
+    ah_local_tools *local_tools;
     pthread_mutex_t output;
     bool json_events;
     bool rpc;

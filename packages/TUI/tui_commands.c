@@ -11,6 +11,7 @@
 static const tui_command commands[] = {
     {"login", "Configure API key, endpoint, and default model"},
     {"config", "Open API & account configuration page"},
+    {"auto-approve", "Toggle automatic approval for ordinary workspace edits"},
     {"model", "Choose model and reasoning effort"},
     {"sessions", "Open Command Center to switch or create sessions"},
     {"agents", "Open interactive agent tree inspector"},
@@ -392,6 +393,18 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
         return open_sessions_picker(app, error);
     if (!strcmp(name, "model"))
         return tui_models_open(app, error);
+    if (!strcmp(name, "auto-approve")) {
+        ah_local_tools *tools = app->cli->local_tools;
+        if (!tools) {
+            snprintf(error->message, sizeof(error->message), "Start with --workspace to enable auto-approve");
+            return AH_INVALID;
+        }
+        bool enabled = !ah_local_tools_auto_approve(tools);
+        ah_local_tools_set_auto_approve(tools, enabled);
+        app->status.notice_error = false;
+        snprintf(app->notice, sizeof(app->notice), "Auto-approve %s", enabled ? "on" : "off");
+        return AH_OK;
+    }
     if (!strcmp(name, "agents"))
         return open_agents_picker(app, error);
     if (!strcmp(name, "login") || !strcmp(name, "config")) {

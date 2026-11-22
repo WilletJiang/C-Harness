@@ -73,6 +73,7 @@ typedef struct {
     ah_tool_result_format result_format;
     uint64_t generation;
     bool hidden;
+    bool auto_approved;
     bool durable;
 } core_operation;
 
@@ -147,6 +148,7 @@ void core_jobs_close(ah_engine *);
 ah_code core_tools_step(ah_engine *, core_session *, bool *, ah_error *);
 ah_code core_write_batch(ah_engine *, core_session *, const core_operation *, bool *, ah_error *);
 ah_code core_pause_approval(ah_engine *, core_session *, core_operation *, ah_error *);
+bool core_auto_approve(core_tool *, core_operation *);
 ah_code core_job_checkpoint(ah_engine *, const char *, const char *, const char *, ah_error *);
 bool core_independent_read(ah_engine *, const core_operation *);
 ah_code core_collect_reads(ah_engine *, const char *, const char *, const char *, core_operation *,

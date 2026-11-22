@@ -18,6 +18,7 @@ struct ah_local_tools {
     int workspace_fd;
     bool enable_exec;
     bool approve_writes;
+    bool auto_approve;
     bool enable_workflows;
     bool registered;
     ah_local_check checks[16];
@@ -96,6 +97,8 @@ ah_code ah_local_read_file(void *context, const ah_tool_call *call, ah_tool_resu
                            ah_error *error);
 ah_code ah_local_write_file(void *context, const ah_tool_call *call, ah_tool_result *result,
                             ah_error *error);
+bool ah_local_auto_approve_call(const ah_tool *, const char *arguments);
+bool ah_local_auto_approve_target(const struct stat *);
 extern const char ah_read_schema[], ah_write_schema[], ah_exec_schema[];
 extern const char ah_image_schema[];
 ah_code ah_local_view_image(void *, const ah_tool_call *, ah_tool_result *, ah_error *);

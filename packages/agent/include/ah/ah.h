@@ -92,6 +92,7 @@ typedef struct {
     /* Owner-authorized coordinated writes must supply an observed revision or
      * explicit absent expectation; immutable through background dispatch. */
     bool require_revision;
+    bool auto_approved; /* Host policy approved this particular local edit. */
     /* Durable tools only: borrowed state and wake reason for this invocation.
      * generation fences late completions; operation_id remains stable. */
     const char *checkpoint_json;

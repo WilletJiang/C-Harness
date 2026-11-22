@@ -1,6 +1,7 @@
 #include "core.h"
 #include "work.h"
 #include "../agents/agents_internal.h"
+#include "../tools/local_internal.h"
 
 static ah_code count_calls(ah_engine *, const char *, unsigned, ah_error *);
 
@@ -91,6 +92,12 @@ ah_code core_pause_approval(ah_engine *e, core_session *session, core_operation 
                             ah_error *error) {
     return set_pause(e, session, op, "approval", AH_WAITING_APPROVAL, "approval.requested", error);
 }
+bool core_auto_approve(core_tool *tool, core_operation *op) {
+    op->auto_approved = tool && !tool->work && !strcmp(op->status, "pending") &&
+                        ah_local_auto_approve_call(&tool->tool, op->arguments);
+    return op->auto_approved;
+}
+
 static ah_code count_calls(ah_engine *e, const char *sid, unsigned count, ah_error *err) {
     sqlite3_stmt *s = NULL;
     ah_code rc =
@@ -229,7 +236,7 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                             validation.message[0] ? validation.message
                                                   : "tool arguments failed schema validation",
                             ARGUMENTS_REJECTED, err);
-    if (op->approval && op->decision != 1)
+    if (op->approval && op->decision != 1 && !core_auto_approve(registered, op))
         return core_pause_approval(e, session, op, err);
     if (builtin && strcmp(op->name, "read_result") && strcmp(op->name, "recall")) {
         uint64_t after = 0;
@@ -283,6 +290,9 @@ ah_code core_record_intents(ah_engine *e, core_session *session, core_operation 
             rc = core_work_claim(e, session->id, op, err);
         else
             rc = core_set_operation(e, session->id, op->id, "executing", err);
+        if (rc == AH_OK && op->auto_approved)
+            rc = core_event(e, session->id, op->id, "approval.auto",
+                            "{\"policy\":\"workspace_edit\"}", err);
         if (rc == AH_OK)
             rc = core_event(e, session->id, op->id, "tool.started", op->arguments, err);
     }
@@ -350,7 +360,8 @@ ah_code core_dispatch_tool(ah_engine *e, core_session *session, core_operation *
                          .checkpoint_context = &checkpoints,
                          .yield = e->yield,
                          .yield_context = e->yield_context,
-                         .require_revision = coordinated,
+                         .require_revision = coordinated || op->auto_approved,
+                         .auto_approved = op->auto_approved,
                          .checkpoint_json =
                              registered && registered->work
                                  ? (work.checkpoint_json ? work.checkpoint_json : "{}")

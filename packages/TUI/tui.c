@@ -72,8 +72,10 @@ static void detect_workspace(tui_app *app) {
 
 static void sync_status(tui_app *app) {
     app->status.model = app->model;
-    if (app->effort[0]) {
-        snprintf(app->model_label, sizeof(app->model_label), "%s · %s", app->model, app->effort);
+    bool auto_approve = ah_local_tools_auto_approve(app->cli->local_tools);
+    if (app->effort[0] || auto_approve) {
+        snprintf(app->model_label, sizeof(app->model_label), "%s%s%s%s", app->model,
+                 app->effort[0] ? " · " : "", app->effort, auto_approve ? " · auto" : "");
         app->status.model = app->model_label;
     }
     app->status.session = app->session;

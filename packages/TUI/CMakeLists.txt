@@ -48,5 +48,7 @@ if(AH_TESTS_ENABLED)
       "${PROJECT_SOURCE_DIR}/tests/test_tui_graphics.py" $<TARGET_FILE:ah_cli>)
   add_test(NAME tui_outcome COMMAND "${Python3_EXECUTABLE}" -B
       "${PROJECT_SOURCE_DIR}/tests/test_tui_outcome.py" $<TARGET_FILE:ah_cli>)
-  set_tests_properties(tui_graphics tui_outcome PROPERTIES TIMEOUT 60)
+  add_test(NAME tui_approval COMMAND "${Python3_EXECUTABLE}" -B
+      "${PROJECT_SOURCE_DIR}/tests/test_tui_approval.py" $<TARGET_FILE:ah_cli>)
+  set_tests_properties(tui_graphics tui_outcome tui_approval PROPERTIES TIMEOUT 60)
 endif()
