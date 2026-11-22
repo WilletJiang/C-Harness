@@ -87,34 +87,8 @@ void tui_print_worked(tui_app *app, uint64_t elapsed_ms) {
 void tui_observe(void *context, const ah_event *event) {
     tui_app *app = context;
     bool root = event->session_id && !strcmp(event->session_id, app->session);
-    if (root && (type_is(event, "model.delta") || type_is(event, "model.started") ||
-                 type_is(event, "model.completed") || type_is(event, "model.interrupted"))) {
-        pthread_mutex_lock(&app->preview_lock);
-        if (type_is(event, "model.delta") && event->json) {
-            yyjson_doc *doc = yyjson_read(event->json, strlen(event->json), 0);
-            yyjson_val *text = yyjson_obj_get(yyjson_doc_get_root(doc), "text");
-            size_t length = yyjson_get_len(text);
-            const char *data = yyjson_get_str(text);
-            if (data && length) {
-                size_t kept = sizeof(app->stream) - 1;
-                if (length >= kept) {
-                    app->stream_size = 0;
-                    data += length - kept;
-                    length = kept;
-                } else if (app->stream_size > kept - length) {
-                    size_t drop = app->stream_size - (kept - length);
-                    memmove(app->stream, app->stream + drop, app->stream_size - drop);
-                    app->stream_size -= drop;
-                }
-                memcpy(app->stream + app->stream_size, data, length);
-                app->stream_size += length;
-            }
-            yyjson_doc_free(doc);
-        } else {
-            app->stream_size = 0;
-        }
-        pthread_mutex_unlock(&app->preview_lock);
-    }
+    if (root)
+        tui_stream_observe(app, event);
     if (event->seq)
         atomic_store(&app->journal_dirty, true);
     if (event->seq || (root && type_is(event, "model.delta")))
@@ -178,8 +152,7 @@ void tui_show_json(tui_app *app, const char *json) {
     yyjson_doc_free(doc);
 }
 
-static void transcript(void *context, const ah_event *event) {
-    tui_app *app = context;
+static void transcript(tui_app *app, const ah_event *event, bool live) {
     bool response = type_is(event, "model.completed");
     bool input = type_is(event, "input.submitted");
     bool tool = type_is(event, "tool.intent");
@@ -194,35 +167,25 @@ static void transcript(void *context, const ah_event *event) {
     } else if (tool) {
         tui_line(app, "+ ", field(root, "name"));
     } else {
-        yyjson_val *output = yyjson_obj_get(root, "output"), *item;
-        size_t i, count;
-        yyjson_arr_foreach(output, i, count, item) {
-            if (strcmp(field(item, "type"), "message") || strcmp(field(item, "role"), "assistant"))
-                continue;
-            yyjson_val *parts = yyjson_obj_get(item, "content"), *part;
-            size_t j, n;
-            yyjson_arr_foreach(parts, j, n, part) {
-                yyjson_val *value = yyjson_obj_get(part, "text");
-                if (!strcmp(field(part, "type"), "refusal"))
-                    value = yyjson_obj_get(part, "refusal");
-                const char *text = yyjson_get_str(value);
-                if (text) {
-                    tui_terminal_clear(&app->tty);
-                    fputs(T_ACCENT " \xe2\x80\xa2" T_RST "\n", stdout);
-                    tui_markdown_graphics(stdout, text, yyjson_get_len(value), app->cols,
-                                          &app->graphics);
-                }
-            }
-        }
+        tui_stream_commit(app, yyjson_obj_get(root, "output"), live);
     }
     yyjson_doc_free(doc);
+}
+
+static void history(void *context, const ah_event *event) {
+    transcript(context, event, false);
 }
 
 static void journal(void *context, const ah_event *event) {
     tui_app *app = context;
     bool root = event->session_id && !strcmp(event->session_id, app->session);
-    if (root)
-        transcript(app, event);
+    if (root) {
+        if (type_is(event, "model.started"))
+            app->stream_active = event->seq;
+        else if (type_is(event, "model.interrupted"))
+            tui_stream_abort(app, "Response interrupted by steering");
+        transcript(app, event, true);
+    }
     if (event->session_id && event->operation_id &&
         (type_is(event, "approval.requested") || type_is(event, "input.requested") ||
          type_is(event, "tool.outcome_unknown"))) {
@@ -280,7 +243,7 @@ ah_code tui_snapshot(tui_app *app, const char *session, bool set_cursor, ah_erro
 ah_code tui_history_page(tui_app *app, uint64_t boundary, ah_error *error) {
     uint64_t first = 0;
     ah_code code = ah_reader_recent_events(app->reader, app->session, boundary, HISTORY_PAGE,
-                                           transcript, app, &first, error);
+                                           history, app, &first, error);
     if (code == AH_OK)
         app->history = first;
     return code;

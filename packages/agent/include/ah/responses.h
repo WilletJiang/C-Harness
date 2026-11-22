@@ -72,6 +72,9 @@ ah_code ah_responses_set_endpoint(ah_responses *provider, const char *endpoint, 
  * keeps the current bearer. Validation or allocation failure leaves both intact. */
 ah_code ah_responses_set_connection(ah_responses *provider, const char *endpoint,
                                     const char *bearer, ah_error *error);
+/* Load the sibling /models endpoint with the current authentication. Blocking,
+ * bounded to twenty seconds. The caller owns the returned JSON. */
+ah_code ah_responses_models(ah_responses *provider, char **json, ah_error *error);
 #ifdef __cplusplus
 }
 #endif

@@ -168,8 +168,9 @@ ah_code core_load(ah_engine *e, const char *sid, core_session *out, ah_error *er
     sqlite3_stmt *s = NULL;
     ah_code rc =
         core_prepare(e,
-                     "SELECT id,model,instructions,summary,state,turn,model_calls,tool_calls FROM "
-                     "sessions WHERE id=?",
+                     "SELECT id,model,instructions,summary,state,turn,model_calls,tool_calls,"
+                     "COALESCE(r.effort,'') FROM sessions s "
+                     "LEFT JOIN session_reasoning r ON r.session_id=s.id WHERE s.id=?",
                      &s, err);
     if (rc != AH_OK)
         return rc;
@@ -187,6 +188,9 @@ ah_code core_load(ah_engine *e, const char *sid, core_session *out, ah_error *er
     out->turn = (unsigned)sqlite3_column_int(s, 5);
     out->model_calls = (unsigned)sqlite3_column_int(s, 6);
     out->tool_calls = (unsigned)sqlite3_column_int(s, 7);
+    const char *reasoning = (const char *)sqlite3_column_text(s, 8);
+    if (reasoning)
+        snprintf(out->reasoning, sizeof(out->reasoning), "%s", reasoning);
     sqlite3_finalize(s);
     if (!out->id || !out->model || !out->instructions || !out->summary) {
         core_session_free(out);

@@ -72,6 +72,10 @@ static void detect_workspace(tui_app *app) {
 
 static void sync_status(tui_app *app) {
     app->status.model = app->model;
+    if (app->effort[0]) {
+        snprintf(app->model_label, sizeof(app->model_label), "%s · %s", app->model, app->effort);
+        app->status.model = app->model_label;
+    }
     app->status.session = app->session;
     app->status.state = app->state;
     app->status.cwd = app->cwd;
@@ -118,9 +122,8 @@ static void finish_run(tui_app *app) {
     pthread_join(app->worker, NULL);
     uint64_t elapsed = ah_now_ms() - app->run_started_ms;
     app->running = app->status.busy = app->status.steering = false;
-    pthread_mutex_lock(&app->preview_lock);
-    app->stream_size = 0;
-    pthread_mutex_unlock(&app->preview_lock);
+    tui_stream_abort(app, "Response interrupted");
+    tui_stream_free(app);
     ah_error error = {0};
     char pending[AH_ID_CAP];
     memcpy(pending, app->pending_session, sizeof(pending));
@@ -128,7 +131,7 @@ static void finish_run(tui_app *app) {
     if (code == AH_OK && pending[0] && strcmp(pending, app->session) &&
         (!app->operation[0] || strcmp(app->pending_session, app->session)))
         code = tui_snapshot(app, pending, false, &error);
-    if (app->run_code == AH_OK)
+    if (app->run_code == AH_OK && !app->pending_status[0])
         tui_print_worked(app, elapsed);
     if (app->run_code == AH_AUTH && app->chatgpt) {
         app->has_token = false;
@@ -170,14 +173,7 @@ static bool terminal_loop(tui_app *app) {
         int history_wait = app->restore_history ? tui_graphics_wait(&app->graphics, now) : -1;
         if (history_wait < 0)
             tui_restore_history(app);
-        pthread_mutex_lock(&app->preview_lock);
-        size_t start = 0;
-        while (start < app->stream_size && ((unsigned char)app->stream[start] & 0xc0) == 0x80)
-            ++start;
-        size_t size = app->stream_size - start;
-        memcpy(app->preview, app->stream + start, size);
-        app->preview[size] = 0;
-        pthread_mutex_unlock(&app->preview_lock);
+        tui_stream_render(app);
         sync_status(app);
         tui_frame frame;
         if (!tui_view_frame(app->view, &app->status, app->cols, app->rows, now, &frame))
@@ -207,6 +203,8 @@ static bool terminal_loop(tui_app *app) {
         }
         if (app->refresh_events)
             tui_refresh(app);
+        if (app->catalog_loading && atomic_load(&app->worker_done))
+            tui_models_ready(app);
         if (app->running && !app->refresh_events && atomic_load(&app->worker_done))
             finish_run(app);
         now = ah_now_ms();
@@ -308,6 +306,8 @@ ah_code cli_tui(cli_context *cli, ah_responses *responses, const char *database,
             goto done;
         tui_print_banner(&app);
     }
+    if (app.session[0])
+        tui_models_sync(&app);
     resize_fd = app.wake[1];
     watching = sigaction(SIGWINCH, &on_resize, &previous) == 0;
     if (!watching) {
@@ -328,6 +328,9 @@ ah_code cli_tui(cli_context *cli, ah_responses *responses, const char *database,
     if (code == AH_IO)
         snprintf(error->message, sizeof(error->message), "Terminal input or output failed");
 done:
+    if (app.catalog_loading)
+        pthread_join(app.worker, NULL);
+    yyjson_doc_free(app.catalog);
     tui_oauth_cancel(&app);
     tui_auth_close(&app);
     tui_picker_close(&app);
@@ -343,6 +346,7 @@ done:
         }
         pthread_join(app.worker, NULL);
     }
+    tui_stream_free(&app);
     cli->event_sink = NULL;
     cli->event_context = NULL;
     resize_fd = -1;

@@ -137,3 +137,91 @@ void ah_responses_close(ah_responses *provider) {
 ah_provider ah_responses_provider(ah_responses *provider) {
     return (ah_provider){.complete = responses_complete, .context = provider};
 }
+
+typedef struct {
+    char *data;
+    size_t used, capacity;
+} model_catalog;
+
+static size_t catalog_append(char *data, size_t size, size_t count, void *context) {
+    model_catalog *catalog = context;
+    const size_t limit = 2 * 1024 * 1024;
+    if (size && count > (limit - catalog->used) / size)
+        return 0;
+    size_t bytes = size * count, needed = catalog->used + bytes + 1;
+    if (needed > catalog->capacity) {
+        size_t capacity = catalog->capacity ? catalog->capacity * 2 : 4096;
+        if (capacity < needed)
+            capacity = needed;
+        if (capacity > limit + 1)
+            capacity = limit + 1;
+        char *next = realloc(catalog->data, capacity);
+        if (!next)
+            return 0;
+        catalog->data = next;
+        catalog->capacity = capacity;
+    }
+    memcpy(catalog->data + catalog->used, data, bytes);
+    catalog->used += bytes;
+    catalog->data[catalog->used] = 0;
+    return bytes;
+}
+
+ah_code ah_responses_models(ah_responses *provider, char **json, ah_error *error) {
+    if (!json)
+        return ah_fail(error, AH_INVALID, "model catalog output required");
+    *json = NULL;
+    if (!provider || !provider->token)
+        return ah_fail(error, AH_AUTH, "model catalog requires a connection");
+    if (provider->requests || provider->dispatching)
+        return ah_fail(error, AH_BUSY, "provider is running");
+    const char *path = strchr(strstr(provider->endpoint, "://") + 3, '/');
+    const char *tail = path ? strrchr(path, '/') : NULL;
+    if (!tail || strcmp(tail, "/responses"))
+        return ah_fail(error, AH_NOT_FOUND, "connection URL has no sibling model catalog");
+    char url[8193];
+    snprintf(url, sizeof(url), "%.*s/models", (int)(tail - provider->endpoint), provider->endpoint);
+    CURL *easy = curl_easy_init();
+    if (!easy)
+        return ah_fail(error, AH_IO, "cannot start model catalog request");
+    model_catalog catalog = {0};
+    long status = 0;
+    ah_code code = AH_IO;
+    CURLcode result = CURLE_OK;
+#define SET(option, value) \
+    do { if (curl_easy_setopt(easy, option, value) != CURLE_OK) goto done; } while (0)
+    SET(CURLOPT_URL, url);
+    SET(CURLOPT_FOLLOWLOCATION, 0L);
+    SET(CURLOPT_NOSIGNAL, 1L);
+    SET(CURLOPT_TIMEOUT_MS, 20000L);
+    SET(CURLOPT_ACCEPT_ENCODING, "");
+    SET(CURLOPT_HTTPAUTH, (long)CURLAUTH_BEARER);
+    SET(CURLOPT_XOAUTH2_BEARER, provider->token);
+    SET(CURLOPT_WRITEFUNCTION, catalog_append);
+    SET(CURLOPT_WRITEDATA, &catalog);
+    if (provider->loopback)
+        SET(CURLOPT_PROXY, "");
+#undef SET
+    result = curl_easy_perform(easy);
+    if (result == CURLE_OK &&
+        curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &status) == CURLE_OK) {
+        if (status == 200 && catalog.used && !memchr(catalog.data, 0, catalog.used)) {
+            *json = catalog.data;
+            catalog.data = NULL;
+            code = AH_OK;
+        } else {
+            code = status == 401 || status == 403 ? AH_AUTH : status == 404 ? AH_NOT_FOUND : AH_PROTOCOL;
+        }
+    } else {
+        code = AH_NETWORK;
+    }
+done:
+    curl_easy_cleanup(easy);
+    free(catalog.data);
+    if (result != CURLE_OK)
+        return ah_fail(error, code, "cannot load model catalog: %s", curl_easy_strerror(result));
+    if (code != AH_OK)
+        return ah_fail(error, code, "cannot load model catalog (HTTP %ld)", status);
+    ah_error_clear(error);
+    return AH_OK;
+}

@@ -40,6 +40,14 @@ static ah_code build_request(ah_engine *e, const core_session *session, char **j
         yyjson_mut_obj_add_strcpy(d, root, "instructions", session->instructions);
     yyjson_mut_obj_add_bool(d, root, "store", false);
     yyjson_mut_obj_add_bool(d, root, "stream", true);
+    if (session->reasoning[0]) {
+        yyjson_mut_val *reasoning = yyjson_mut_obj(d);
+        if (!yyjson_mut_obj_add_strcpy(d, reasoning, "effort", session->reasoning) ||
+            !yyjson_mut_obj_add_val(d, root, "reasoning", reasoning)) {
+            yyjson_mut_doc_free(d);
+            return ah_fail(err, AH_IO, "cannot encode reasoning effort");
+        }
+    }
     if (e->context_enabled && e->context_policy.compact_threshold_tokens) {
         yyjson_mut_val *management = yyjson_mut_arr(d), *policy = yyjson_mut_obj(d);
         yyjson_mut_obj_add_str(d, policy, "type", "compaction");

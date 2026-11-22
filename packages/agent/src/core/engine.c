@@ -127,6 +127,8 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             "NULL,instructions TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',state INTEGER NOT "
             "NULL,turn INTEGER NOT NULL DEFAULT 0,model_calls INTEGER NOT NULL DEFAULT "
             "0,tool_calls INTEGER NOT NULL DEFAULT 0);"
+            "CREATE TABLE IF NOT EXISTS session_reasoning(session_id TEXT PRIMARY KEY "
+            "REFERENCES sessions(id) ON DELETE CASCADE,effort TEXT NOT NULL);"
             "CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id "
             "TEXT NOT NULL REFERENCES sessions(id),operation_id TEXT,type TEXT NOT NULL,json TEXT "
             "NOT NULL);"

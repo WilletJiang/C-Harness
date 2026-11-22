@@ -11,6 +11,8 @@
 static const tui_command commands[] = {
     {"login", "Configure API key, endpoint, and default model"},
     {"config", "Open API & account configuration page"},
+    {"model", "Choose a model for a new session"},
+    {"effort", "Choose reasoning effort for this session"},
     {"sessions", "Open Command Center to switch or create sessions"},
     {"agents", "Open interactive agent tree inspector"},
     {"pending", "Review and approve or deny pending operation"},
@@ -64,7 +66,7 @@ void tui_picker_close(tui_app *app) {
     memset(&app->picker, 0, sizeof(app->picker));
 }
 
-static bool picker_alloc(tui_app *app, size_t count) {
+bool tui_picker_alloc(tui_app *app, size_t count) {
     tui_picker_close(app);
     if (!count)
         return true;
@@ -78,7 +80,7 @@ static bool picker_alloc(tui_app *app, size_t count) {
     return true;
 }
 
-static void picker_set(tui_app *app, size_t i, const char *id, const char *title,
+void tui_picker_set(tui_app *app, size_t i, const char *id, const char *title,
                        const char *status, const char *meta, const char *detail, unsigned indent,
                        bool active, bool attention, bool working) {
     tui_pick_strings *s = &app->pick_strings[i];
@@ -115,7 +117,7 @@ static ah_code open_sessions_picker(tui_app *app, ah_error *error) {
     ah_free(json);
     yyjson_val *root = yyjson_doc_get_root(doc);
     size_t count = yyjson_is_arr(root) ? yyjson_arr_size(root) : 0;
-    if (!picker_alloc(app, count)) {
+    if (!tui_picker_alloc(app, count)) {
         yyjson_doc_free(doc);
         return AH_IO;
     }
@@ -135,7 +137,7 @@ static ah_code open_sessions_picker(tui_app *app, ah_error *error) {
                  "Session: %s\nStatus: %s%s\nModel: %s\nTurn: %llu\nModel calls: %llu\nTool calls: %llu",
                  id, st, active ? " (current)" : "", *mdl ? mdl : "-",
                  (unsigned long long)turn, (unsigned long long)mcalls, (unsigned long long)tcalls);
-        picker_set(app, idx, id, id, st, meta, detail, 0, active, state_needs_attention(st),
+        tui_picker_set(app, idx, id, id, st, meta, detail, 0, active, state_needs_attention(st),
                    !strcmp(st, "running"));
     }
     yyjson_doc_free(doc);
@@ -162,7 +164,7 @@ static ah_code open_agents_picker(tui_app *app, ah_error *error) {
     yyjson_val *root = yyjson_doc_get_root(doc);
     yyjson_val *arr = yyjson_obj_get(root, "agents");
     size_t count = yyjson_is_arr(arr) ? yyjson_arr_size(arr) : 0;
-    if (!picker_alloc(app, count)) {
+    if (!tui_picker_alloc(app, count)) {
         yyjson_doc_free(doc);
         return AH_IO;
     }
@@ -186,7 +188,7 @@ static ah_code open_agents_picker(tui_app *app, ah_error *error) {
                  *name ? name : "root", id, *parent ? parent : "-", depth, st,
                  active ? " (current)" : "", (unsigned long long)turn,
                  (unsigned long long)in_tok, (unsigned long long)out_tok);
-        picker_set(app, idx, id, *name ? name : id, st, meta, detail, depth, active,
+        tui_picker_set(app, idx, id, *name ? name : id, st, meta, detail, depth, active,
                    state_needs_attention(st), !strcmp(st, "running"));
     }
     yyjson_doc_free(doc);
@@ -226,7 +228,7 @@ static ah_code open_pending_picker(tui_app *app, ah_error *error) {
                            : !strcmp(st, "input") ? "Awaiting input" : "Review required";
     yyjson_val *args = yyjson_obj_get(pending, "arguments");
     char *args_pretty = args ? yyjson_val_write(args, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL) : NULL;
-    if (!picker_alloc(app, 1)) {
+    if (!tui_picker_alloc(app, 1)) {
         free(args_pretty);
         yyjson_doc_free(doc);
         return AH_IO;
@@ -237,7 +239,7 @@ static ah_code open_pending_picker(tui_app *app, ah_error *error) {
              st, *name ? name : "-", *op_id ? op_id : "-", session,
              args_pretty ? args_pretty : "{}");
     free(args_pretty);
-    picker_set(app, 0, op_id, *name ? name : st, st, session, detail, 0, true, true, false);
+    tui_picker_set(app, 0, op_id, *name ? name : st, st, session, detail, 0, true, true, false);
     yyjson_doc_free(doc);
     app->pick_kind = TUI_PICK_PENDING;
     app->picker = (tui_picker){
@@ -251,7 +253,7 @@ static ah_code open_pending_picker(tui_app *app, ah_error *error) {
     return AH_OK;
 }
 
-static ah_code switch_session(tui_app *app, const char *target, ah_error *error) {
+ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
     if (!target || !*target || strlen(target) >= sizeof(app->session)) {
         snprintf(error->message, sizeof(error->message), "Invalid session ID");
         return AH_INVALID;
@@ -267,6 +269,7 @@ static ah_code switch_session(tui_app *app, const char *target, ah_error *error)
     ah_code code = tui_snapshot(app, app->session, true, error);
     if (code != AH_OK)
         return code;
+    tui_models_sync(app);
     tui_picker_close(app);
     tui_print_banner(app);
     (void)tui_history_page(app, app->cursor + 1, error);
@@ -282,6 +285,10 @@ static void command_id(char id[80]) {
 }
 
 static ah_code submit(tui_app *app, const char *text, ah_error *error) {
+    if (app->catalog_loading) {
+        snprintf(error->message, sizeof(error->message), "Loading model catalog");
+        return AH_BUSY;
+    }
     char id[80];
     command_id(id);
     ah_engine *engine = app->cli->engine;
@@ -320,7 +327,7 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
 }
 
 static ah_code decide_pending(tui_app *app, bool approve, ah_error *error) {
-    if (app->running) {
+    if (app->running || app->catalog_loading) {
         snprintf(error->message, sizeof(error->message), "Available when execution pauses");
         return AH_BUSY;
     }
@@ -369,7 +376,7 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
         ah_free(json);
         return code;
     }
-    if (app->running) {
+    if (app->running || app->catalog_loading) {
         snprintf(error->message, sizeof(error->message), "Available when execution pauses");
         return AH_BUSY;
     }
@@ -378,6 +385,8 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
     char *json = NULL;
     if (!strcmp(name, "sessions"))
         return open_sessions_picker(app, error);
+    if (!strcmp(name, "model") || !strcmp(name, "effort"))
+        return tui_models_open(app, !strcmp(name, "effort"), error);
     if (!strcmp(name, "agents"))
         return open_agents_picker(app, error);
     if (!strcmp(name, "login") || !strcmp(name, "config")) {
@@ -431,7 +440,11 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
     case TUI_CANCEL: code = command(app, "cancel", &error); break;
     case TUI_QUIT: code = command(app, "quit", &error); break;
     case TUI_PICK_CLOSE: tui_picker_close(app); return;
-    case TUI_PICK_OPEN: code = switch_session(app, action.text, &error); break;
+    case TUI_PICK_OPEN:
+        code = app->pick_kind == TUI_PICK_MODELS || app->pick_kind == TUI_PICK_EFFORT
+                   ? tui_models_choose(app, action.text, &error)
+                   : tui_switch_session(app, action.text, &error);
+        break;
     case TUI_PICK_APPROVE:
     case TUI_PICK_DENY:
         if (!action.text || strcmp(action.text, app->operation)) {
@@ -446,7 +459,7 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
         code = ah_session_create(app->cli->engine, app->default_model,
                                  app->instructions, id, &error);
         if (code == AH_OK)
-            code = switch_session(app, id, &error);
+            code = tui_switch_session(app, id, &error);
         break;
     }
     case TUI_AUTH_CANCEL:

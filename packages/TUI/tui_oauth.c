@@ -150,6 +150,7 @@ void tui_oauth_read(tui_app *app) {
         return;
     ah_error error = {0};
     const char *token = read_token(app->oauth_reply, app->oauth_used, &error);
+    bool choose_model = token && app->auth.onboarding && !app->default_model[0];
     if (token)
         (void)tui_config_chatgpt(app, token, app->oauth_model, &error);
     if (n == 0) {
@@ -159,6 +160,8 @@ void tui_oauth_read(tui_app *app) {
     tui_oauth_cancel(app);
     if (error.code != AH_OK)
         snprintf(app->auth_error, sizeof(app->auth_error), "%.255s", error.message);
+    else if (choose_model && tui_models_open(app, false, &error) != AH_OK)
+        tui_show_error(app, error.code, &error);
 }
 
 ah_code tui_oauth_refresh(ah_responses *responses, ah_error *error) {

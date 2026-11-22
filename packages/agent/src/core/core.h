@@ -58,6 +58,7 @@ struct ah_engine {
 };
 typedef struct {
     char *id, *model, *instructions, *summary;
+    char reasoning[16];
     ah_state state;
     unsigned turn, model_calls, tool_calls;
     bool completion_committed;

@@ -186,6 +186,14 @@ static bool write_profile(const tui_app *app, const char *url, const char *token
     return ok;
 }
 
+bool tui_config_save_model(tui_app *app, const char *model) {
+    snprintf(app->default_model, sizeof(app->default_model), "%s", model);
+    if (!app->chatgpt && (app->endpoint_explicit || !strcmp(app->token_source, "env") ||
+                         !strcmp(app->token_source, "file")))
+        return true;
+    return write_profile(app, app->endpoint, NULL, model, app->chatgpt);
+}
+
 void tui_auth_open(tui_app *app, bool onboarding) {
     tui_picker_close(app);
     app->auth_error[0] = 0;
@@ -242,6 +250,8 @@ static ah_code apply_connection(tui_app *app, const char *url, const char *token
     ah_code code = ah_responses_set_connection(app->responses, url, token, error);
     if (code != AH_OK)
         return code;
+    yyjson_doc_free(app->catalog);
+    app->catalog = NULL;
     strcpy(app->endpoint, url);
     strcpy(app->default_model, model);
     app->chatgpt = chatgpt;

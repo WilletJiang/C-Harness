@@ -7,7 +7,7 @@ lockfile for the statically linked math renderer.
 ```sh
 cmake -S . -B build-tui -DAH_BUILD_TUI=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-tui --parallel
-./build-tui/ah tui
+./build-tui/ah tui --workspace .
 ./build-tui/ah tui --model MODEL --workspace .
 ./build-tui/ah tui --session SESSION_ID --db harness.db --workspace .
 ```
@@ -24,6 +24,12 @@ The API profile lives in `$XDG_CONFIG_HOME/ah/tui.json` or
 `~/.config/ah/tui.json` with mode 0600. Endpoint changes require a key for the
 new endpoint.
 
+`/model` lists available models and opens a new session with the selection.
+Enter a model ID in `/config` if the provider has no model catalog.
+`/effort` changes reasoning effort for the next turn in the current session.
+Each session saves its instructions at creation. Start a new session to use
+updated built-in instructions.
+
 For CLI-supplied credentials use `AH_ACCESS_TOKEN` or `--token-file`, with
 `--endpoint` for a custom endpoint. The default model applies to new sessions.
 `/sessions` opens the session picker, `/history` reads the preceding event page,
@@ -31,8 +37,9 @@ and `/pending` opens the operation targeted by a reply or approval.
 
 `tui_view.h` is the keyboard and frame contract. The terminal thread owns the
 TTY and independent journal reader. The execution thread owns the active run.
-Provisional text uses a bounded buffer. Durable events are read through sequence
-cursors following commit notification.
+Completed Markdown blocks enter terminal scrollback while the model streams.
+The active fragment redraws above the composer. Durable events are read through
+sequence cursors following commit notification.
 
 Markdown tables have framed columns and wrap long cells. When the terminal
 cannot fit the minimum column widths, they display labeled records.

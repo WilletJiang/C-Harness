@@ -8,11 +8,16 @@
 enum { PREVIEW_BYTES = 4096, LIVE_PAGE = 24, HISTORY_PAGE = 48 };
 #define TUI_CHATGPT_ENDPOINT "https://api.openai.com/v1/responses"
 
-typedef enum { TUI_PICK_NONE, TUI_PICK_SESSIONS, TUI_PICK_AGENTS, TUI_PICK_PENDING } tui_pick_kind;
+typedef enum {
+    TUI_PICK_NONE, TUI_PICK_SESSIONS, TUI_PICK_AGENTS, TUI_PICK_PENDING,
+    TUI_PICK_MODELS, TUI_PICK_EFFORT
+} tui_pick_kind;
 
 typedef struct {
     char *id, *title, *status, *meta, *detail;
 } tui_pick_strings;
+
+typedef struct tui_stream tui_stream;
 
 typedef struct {
     cli_context *cli;
@@ -26,6 +31,7 @@ typedef struct {
     unsigned cols, rows, turn;
     char session[AH_ID_CAP], pending_session[AH_ID_CAP], operation[AH_ID_CAP];
     char model[257], default_model[257], endpoint[512], cwd[256], branch[128];
+    char effort[16], model_label[280];
     char config_path[512], config_display[256];
     char token_source[16], auth_error[256];
     bool has_token, endpoint_explicit, allow_loopback_http, chatgpt;
@@ -40,8 +46,11 @@ typedef struct {
     atomic_bool worker_done, journal_dirty;
     ah_error run_error;
     ah_code run_code;
-    size_t stream_size;
-    char stream[PREVIEW_BYTES];
+    bool catalog_loading, catalog_for_effort;
+    yyjson_doc *catalog;
+    tui_stream *streams;
+    uint64_t stream_attempt, stream_active;
+    size_t stream_bytes;
     // Interactive Command Center / picker backing store
     tui_pick_kind pick_kind;
     tui_picker picker;
@@ -60,6 +69,11 @@ typedef struct {
 const tui_command *tui_commands(size_t *count);
 void tui_notify(int fd);
 void tui_observe(void *, const ah_event *);
+void tui_stream_observe(tui_app *, const ah_event *);
+void tui_stream_render(tui_app *);
+void tui_stream_commit(tui_app *, yyjson_val *output, bool live);
+void tui_stream_abort(tui_app *, const char *reason);
+void tui_stream_free(tui_app *);
 void tui_show_error(tui_app *, ah_code, const ah_error *);
 void tui_line(tui_app *, const char *prefix, const char *text);
 void tui_print_banner(tui_app *);
@@ -71,10 +85,19 @@ void tui_restore_history(tui_app *);
 void tui_refresh(tui_app *);
 bool tui_start_run(tui_app *, ah_error *);
 void tui_picker_close(tui_app *);
+bool tui_picker_alloc(tui_app *, size_t count);
+void tui_picker_set(tui_app *, size_t, const char *, const char *, const char *, const char *,
+                    const char *, unsigned, bool, bool, bool);
+ah_code tui_switch_session(tui_app *, const char *, ah_error *);
+ah_code tui_models_open(tui_app *, bool effort, ah_error *);
+void tui_models_ready(tui_app *);
+void tui_models_sync(tui_app *);
+ah_code tui_models_choose(tui_app *, const char *, ah_error *);
 void tui_auth_open(tui_app *, bool onboarding);
 void tui_auth_close(tui_app *);
 void tui_config_init_paths(tui_app *);
 void tui_config_load(tui_app *);
+bool tui_config_save_model(tui_app *, const char *);
 ah_code tui_config_apply(tui_app *, const char *endpoint, const char *token, const char *model,
                          ah_error *);
 ah_code tui_config_chatgpt(tui_app *, const char *token, const char *model, ah_error *);

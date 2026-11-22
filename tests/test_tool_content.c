@@ -1,4 +1,5 @@
 #include "core/content_internal.h"
+#include "core/prompt.h"
 #include "ah/jobs.h"
 #include <assert.h>
 #include <stdio.h>
@@ -141,8 +142,9 @@ static void native_and_legacy(bool worker, bool native) {
                  .format = native ? AH_TOOL_RESULT_CONTENT : AH_TOOL_RESULT_JSON,
                  .error = true};
     ah_engine *e = open_engine(&f, ":memory:", AH_EFFECT_READ, worker);
-    e->config.max_context_bytes =
-        4096; /* Large raw text fits output, then shrinks for the model. */
+    /* Reserve a fixed envelope around the prompt. Large raw text still exceeds
+     * this budget until the receipt is reduced for the model. */
+    e->config.max_context_bytes = sizeof(session_prompt) + 3584;
     assert(strlen(f.payload) > e->config.max_context_bytes);
     ah_error error = {0};
     char sid[AH_ID_CAP];

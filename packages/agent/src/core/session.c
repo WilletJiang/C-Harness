@@ -66,6 +66,54 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
         core_rollback(e);
     return rc;
 }
+
+ah_code ah_session_set_reasoning(ah_engine *e, const char *sid, const char *effort, ah_error *err) {
+    ah_code rc = core_guard(e, err);
+    if (rc != AH_OK)
+        return rc;
+    static const char *const levels[] = {"", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"};
+    size_t i = 0;
+    while (effort && i < sizeof(levels) / sizeof(*levels) && strcmp(effort, levels[i]))
+        ++i;
+    if (!sid || !*sid || !effort || i == sizeof(levels) / sizeof(*levels))
+        return ah_fail(err, AH_INVALID, "invalid session or reasoning effort");
+    ah_state state;
+    rc = ah_session_state(e, sid, &state, err);
+    if (rc != AH_OK)
+        return rc;
+    if (state != AH_IDLE && state != AH_COMPLETED)
+        return ah_fail(err, AH_BUSY, "reasoning effort can change between turns");
+    sqlite3_stmt *s = NULL;
+    rc = core_prepare(e, "INSERT INTO session_reasoning(session_id,effort) VALUES(?,?) "
+                         "ON CONFLICT(session_id) DO UPDATE SET effort=excluded.effort", &s, err);
+    if (rc != AH_OK)
+        return rc;
+    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 2, effort, -1, SQLITE_TRANSIENT);
+    return core_done(e, s, err);
+}
+
+ah_code ah_session_reasoning(ah_engine *e, const char *sid, char **effort, ah_error *err) {
+    if (!effort)
+        return ah_fail(err, AH_INVALID, "reasoning effort output required");
+    *effort = NULL;
+    if (!e || !sid || !*sid)
+        return ah_fail(err, AH_INVALID, "engine and session required");
+    sqlite3_stmt *s = NULL;
+    ah_code rc = core_prepare(e, "SELECT COALESCE(r.effort,'') FROM sessions s "
+                                 "LEFT JOIN session_reasoning r ON r.session_id=s.id WHERE s.id=?", &s, err);
+    if (rc != AH_OK)
+        return rc;
+    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    int step = sqlite3_step(s);
+    if (step == SQLITE_ROW)
+        *effort = ah_strdup((const char *)sqlite3_column_text(s, 0));
+    sqlite3_finalize(s);
+    if (!*effort)
+        return ah_fail(err, step == SQLITE_DONE ? AH_NOT_FOUND : AH_IO, "reasoning effort unavailable");
+    ah_error_clear(err);
+    return AH_OK;
+}
 ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, const char *identity,
                          int kind, const core_content *content, ah_error *err) {
     ah_code rc = core_guard(e, err);
