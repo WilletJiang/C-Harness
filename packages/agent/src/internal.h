@@ -2,7 +2,10 @@
 #define AH_INTERNAL_H
 #include "ah/ah.h"
 #include "yyjson.h"
+#include <limits.h>
 #include <stdarg.h>
+
+bool ah_executable_path(char path[PATH_MAX]);
 #include <stdlib.h>
 #include <string.h>
 ah_code ah_fail(ah_error *error, ah_code code, const char *format, ...);

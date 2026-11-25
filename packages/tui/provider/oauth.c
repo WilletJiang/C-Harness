@@ -37,6 +37,19 @@ static ah_code start_helper(const char *mode, const char *fingerprint, pid_t *pi
     (void)read_fd;
     return ah_fail(error, AH_AUTH, "ChatGPT sign-in requires the optional host adapter");
 #else
+    char installed[PATH_MAX];
+    const char *host_root = AH_TUI_HOST_ROOT;
+    if (ah_executable_path(installed)) {
+        const char suffix[] = "/../share/ah/host";
+        char *slash = strrchr(installed, '/');
+        if (slash && (size_t)(slash - installed) + sizeof(suffix) <= sizeof(installed)) {
+            memcpy(slash, suffix, sizeof(suffix));
+            if (access(installed, R_OK | X_OK) == 0)
+                host_root = installed;
+        }
+    }
+    if (!*host_root)
+        return ah_fail(error, AH_AUTH, "The ChatGPT host adapter is missing from this installation");
     int fd[2];
     if (pipe(fd))
         return ah_fail(error, AH_IO, "Cannot open the ChatGPT credential channel");
@@ -56,13 +69,13 @@ static ah_code start_helper(const char *mode, const char *fingerprint, pid_t *pi
         static char bootstrap[] =
             "import sys; sys.path.insert(0, sys.argv.pop(1)); "
             "from packages.host.tui_auth import main; raise SystemExit(main())";
-        char *argv[] = {AH_TUI_PYTHON, "-I", "-B", "-c", bootstrap, AH_TUI_HOST_ROOT,
+        char *argv[] = {AH_TUI_PYTHON, "-I", "-B", "-c", bootstrap, (char *)host_root,
                        (char *)mode, "3", (char *)fingerprint, NULL};
         rc = posix_spawn_file_actions_adddup2(&actions, fd[1], 3);
         for (int i = 0; !rc && i < 3; ++i)
             rc = posix_spawn_file_actions_addopen(&actions, i, "/dev/null", O_RDWR, 0);
         if (!rc)
-            rc = posix_spawn(pid, AH_TUI_PYTHON, &actions, NULL, argv, environ);
+            rc = posix_spawnp(pid, AH_TUI_PYTHON, &actions, NULL, argv, environ);
         posix_spawn_file_actions_destroy(&actions);
     }
     close(fd[1]);
