@@ -541,11 +541,16 @@ static void refresh_active_tool_label(tui_app *app) {
     }
     if (latest) {
         const char *verb = tool_verb(latest->name);
-        if (latest->summary[0])
-            snprintf(app->active_tool, sizeof(app->active_tool), "%-6s  %s", verb,
-                     latest->summary);
-        else
+        if (latest->summary[0]) {
+            int used = snprintf(app->active_tool, sizeof(app->active_tool), "%-6s", verb);
+            if (used >= 0 && (size_t)used + 2 < sizeof(app->active_tool)) {
+                size_t remaining = sizeof(app->active_tool) - (size_t)used;
+                snprintf(app->active_tool + used, remaining, "  %.*s",
+                         (int)remaining - 3, latest->summary);
+            }
+        } else {
             snprintf(app->active_tool, sizeof(app->active_tool), "%s", verb);
+        }
     }
 }
 
