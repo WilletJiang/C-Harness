@@ -66,22 +66,22 @@ class Service(BaseHTTPRequestHandler):
         if mode in ("stale-tool", "stale-open"):
             stale = call("ask", "must-not-commit", {"question": "Stale output"})
             if mode == "stale-open":
-                return self.output(200, stale, pieces=[b": heartbeat\n\n"] * 10)
+                return self.output(200, stale, parked=True)
             return self.output(200, stale, incomplete=True)
         if mode == "early-eof" and attempt == 1:
             return self.output(200, b": heartbeat\n\n")
         if mode == "first-output":
-            return self.output(200, b"", pieces=[b": heartbeat\n\n"] * 10)
+            return self.output(200, b": heartbeat\n\n", parked=True)
         if mode == "healthy":
-            return self.output(200, DELTA, pieces=[b": heartbeat\n\n"] * 4 + [EMPTY_TERMINAL])
+            return self.output(200, DELTA, pieces=[b": heartbeat\n\n"] * 4 + [EMPTY_TERMINAL], pause=0.2)
         if mode == "idle":
-            return self.output(200, DELTA, pieces=[EMPTY_TERMINAL], pause=0.3)
+            return self.output(200, DELTA, parked=True)
         self.output(200, EMPTY_TERMINAL)
 
-    def output(self, status, data, retry_after=None, incomplete=False, pieces=(), pause=0.035):
+    def output(self, status, data, retry_after=None, incomplete=False, pieces=(), pause=0.035, parked=False):
         self.send_response(status)
         self.send_header("Content-Type", "text/event-stream" if status == 200 else "application/json")
-        self.send_header("Content-Length", str(len(data) + sum(map(len, pieces)) + (128 if incomplete else 0)))
+        self.send_header("Content-Length", str(len(data) + sum(map(len, pieces)) + (128 if incomplete or parked else 0)))
         if retry_after is not None:
             self.send_header("Retry-After", retry_after)
         self.end_headers()
@@ -91,8 +91,14 @@ class Service(BaseHTTPRequestHandler):
             time.sleep(pause)
             self.wfile.write(piece)
             self.wfile.flush()
-        if incomplete:
+        if incomplete or parked:
             self.close_connection = True
+        if parked:
+            self.connection.settimeout(4)
+            try:
+                self.rfile.read(1)
+            except TimeoutError:
+                pass
 
 
 class UnresponsiveTLS(socketserver.BaseRequestHandler):
@@ -234,12 +240,15 @@ def exercise(server, root):
         if count == 2:
             assert requests[0][0] == requests[1][0], requests
 
-    phase_options = ("--first-output-timeout-ms", "115", "--stream-idle-timeout-ms", "105",
-                     "--request-timeout-ms", "270")
+    phase_options = ("--first-output-timeout-ms", "650", "--stream-idle-timeout-ms", "650",
+                     "--request-timeout-ms", "4500")
     for mode, reason in (("first-output", "first_output_timeout"), ("idle", "stream_idle_timeout"),
                          ("healthy", ""), ("stale-tool", "transport"), ("stale-open", "drain_timeout")):
         _, states = run(server, root, mode, options=phase_options)
-        assert states[-1]["reason"] == reason and len(server.requests["/" + mode]) == 1, states
+        attempts = 3 if mode == "first-output" else 1
+        assert len(server.requests["/" + mode]) == attempts, (mode, states)
+        terminal = [s["reason"] for s in states if s["phase"] in ("backoff", "failed", "completed")]
+        assert terminal == [reason] * attempts, (mode, states)
         if mode in ("stale-tool", "stale-open", "healthy"):
             assert any(s["phase"] == "draining" for s in states), states
     result, states = run(server, root, "early-eof")

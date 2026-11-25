@@ -1,15 +1,21 @@
 #include "extensions/extensions_internal.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
-#include <stdatomic.h>
 #include <time.h>
 
 /* Link the real extension wrapper to a deterministic transport boundary. */
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t changed;
+    unsigned arrived;
+    bool released;
+} transport_gate;
+
 struct mcp_client {
     char *reply;
     unsigned requests;
-    bool slow;
-    atomic_uint active, peak;
+    transport_gate *gate;
 };
 
 ah_code mcp_client_open(const char *config, size_t limit, bool loopback, mcp_client **out,
@@ -29,14 +35,14 @@ ah_code mcp_client_request(mcp_client *client, const char *method, const char *p
            !strcmp(method, "resources/templates/list") || !strcmp(method, "tools/call"));
     assert(ah_json_valid(params) && client->reply);
     client->requests++;
-    if (client->slow) {
-        unsigned active = atomic_fetch_add(&client->active, 1) + 1;
-        unsigned peak = atomic_load(&client->peak);
-        while (active > peak && !atomic_compare_exchange_weak(&client->peak, &peak, active)) {
-        }
-        struct timespec pause = {.tv_nsec = 80000000};
-        nanosleep(&pause, NULL);
-        atomic_fetch_sub(&client->active, 1);
+    transport_gate *gate = client->gate;
+    if (gate) {
+        assert(pthread_mutex_lock(&gate->mutex) == 0);
+        gate->arrived++;
+        assert(pthread_cond_broadcast(&gate->changed) == 0);
+        while (!gate->released)
+            assert(pthread_cond_wait(&gate->changed, &gate->mutex) == 0);
+        assert(pthread_mutex_unlock(&gate->mutex) == 0);
     }
     *result = ah_strdup(client->reply);
     assert(*result);
@@ -208,7 +214,7 @@ static void resource_templates(void) {
 typedef struct {
     ah_extensions *extensions;
     const char *server;
-    uint64_t deadline;
+    uint64_t timeout;
     bool failed;
 } concurrent_call;
 
@@ -217,7 +223,7 @@ static void *invoke(void *context) {
     char args[128];
     snprintf(args, sizeof(args), "{\"server\":\"%s\",\"name\":\"slow\",\"arguments\":{}}",
              request->server);
-    ah_tool_call call = {.arguments_json = args, .deadline_ms = request->deadline};
+    ah_tool_call call = {.arguments_json = args, .deadline_ms = ah_now_ms() + request->timeout};
     ah_tool_result result = {0};
     ah_error error = {0};
     assert(ext_mcp_call(request->extensions, &call, &result, &error) == AH_OK);
@@ -226,7 +232,17 @@ static void *invoke(void *context) {
     return NULL;
 }
 
-static uint64_t concurrent_requests(bool same_server, bool cancel_waiter) {
+static void wait_for_transports(transport_gate *gate, unsigned count) {
+    struct timespec deadline;
+    assert(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+    deadline.tv_sec += 3;
+    assert(pthread_mutex_lock(&gate->mutex) == 0);
+    while (gate->arrived < count)
+        assert(pthread_cond_timedwait(&gate->changed, &gate->mutex, &deadline) == 0);
+    assert(pthread_mutex_unlock(&gate->mutex) == 0);
+}
+
+static void concurrent_requests(bool same_server, bool cancel_waiter) {
     ah_extensions *extensions = fixture(8192), *other = fixture(8192);
     ext_server *second = other->servers;
     other->servers = NULL;
@@ -235,37 +251,41 @@ static uint64_t concurrent_requests(bool same_server, bool cancel_waiter) {
     second->id = ah_strdup("second");
     extensions->servers->next = second;
     extensions->server_count++;
+    transport_gate gate = {.mutex = PTHREAD_MUTEX_INITIALIZER, .changed = PTHREAD_COND_INITIALIZER};
     for (ext_server *server = extensions->servers; server; server = server->next) {
-        server->client->slow = true;
+        server->client->gate = &gate;
         server->client->reply = ah_strdup("{\"content\":[]}");
-        atomic_init(&server->client->active, 0);
-        atomic_init(&server->client->peak, 0);
     }
-    concurrent_call calls[] = {{extensions, "fixture", ah_now_ms() + 1000, false},
+    concurrent_call calls[] = {{extensions, "fixture", 5000, false},
                                {extensions, same_server ? "fixture" : "second",
-                                ah_now_ms() + (cancel_waiter ? 10 : 1000), cancel_waiter}};
+                                cancel_waiter ? 30 : 5000, cancel_waiter}};
     pthread_t threads[2];
-    uint64_t began = ah_now_ms();
     assert(pthread_create(&threads[0], NULL, invoke, &calls[0]) == 0);
-    struct timespec pause = {.tv_nsec = 1000000};
-    while (!atomic_load(&extensions->servers->client->active))
-        nanosleep(&pause, NULL);
+    wait_for_transports(&gate, 1);
+    assert(pthread_mutex_trylock(&extensions->servers->request_mutex) == EBUSY);
     assert(pthread_create(&threads[1], NULL, invoke, &calls[1]) == 0);
-    for (unsigned i = 0; i < 2; i++)
-        assert(pthread_join(threads[i], NULL) == 0);
-    uint64_t elapsed = ah_now_ms() - began;
+    if (!same_server)
+        wait_for_transports(&gate, 2);
+    if (cancel_waiter)
+        assert(pthread_join(threads[1], NULL) == 0);
+    assert(pthread_mutex_lock(&gate.mutex) == 0);
+    gate.released = true;
+    assert(pthread_cond_broadcast(&gate.changed) == 0);
+    assert(pthread_mutex_unlock(&gate.mutex) == 0);
+    assert(pthread_join(threads[0], NULL) == 0);
+    if (!cancel_waiter)
+        assert(pthread_join(threads[1], NULL) == 0);
     assert(extensions->servers->client->requests == (same_server && !cancel_waiter ? 2U : 1U));
-    assert(atomic_load(&extensions->servers->client->peak) == 1);
     assert(second->client->requests == (same_server ? 0U : 1U));
     ext_close(extensions);
-    return elapsed;
+    assert(pthread_cond_destroy(&gate.changed) == 0);
+    assert(pthread_mutex_destroy(&gate.mutex) == 0);
 }
 
 int main(void) {
-    uint64_t serial = concurrent_requests(true, false);
-    uint64_t parallel = concurrent_requests(false, false);
+    concurrent_requests(true, false);
+    concurrent_requests(false, false);
     concurrent_requests(true, true);
-    assert(parallel * 4 < serial * 3);
     cursor_budget();
     cache_reuse_and_replacement();
     identities_survive_metadata();
