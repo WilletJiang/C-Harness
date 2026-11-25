@@ -88,7 +88,7 @@ done
 build="$work/build"
 cmake -S "$source_root" -B "$build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     -DAH_BUILD_TUI=ON -DAH_BUNDLE_CURL=ON -DAH_REQUIRE_WEBSOCKETS=ON \
-    -DAH_BUILD_EXAMPLES=OFF -DAH_TUI_PYTHON=python3 -DAH_TUI_HOST_ROOT= \
+    -DAH_BUILD_EXAMPLES=OFF -DAH_TUI_PYTHON:STRING=python3 -DAH_TUI_HOST_ROOT= \
     "-DOPENSSL_ROOT_DIR=$ossl" -DOPENSSL_USE_STATIC_LIBS=ON \
     "-DOPENSSL_SSL_LIBRARY=$ossl/lib/libssl.a" "-DOPENSSL_CRYPTO_LIBRARY=$ossl/lib/libcrypto.a" \
     "-DNGHTTP2_LIBRARY=$ng/lib/libnghttp2.a" "-DNGHTTP2_INCLUDE_DIR=$ng/include" \
@@ -138,6 +138,7 @@ binary="$unpacked/$prefix/bin/ah"
 "$binary" --help | grep -F 'Interactive terminal and account setup'
 python3 -B "$source_root/tests/test_websocket.py" "$binary" --tui --bundled-curl
 python3 -B "$source_root/tests/test_flow.py" "$binary"
+python3 -B "$source_root/scripts/binary-package-host.py" "$binary"
 if [ "$system" = linux-x86_64 ]; then
     python3 -B "$source_root/scripts/binary-package-wss.py" "$binary"
 fi
