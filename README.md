@@ -1,7 +1,4 @@
 C Harness is a small C17 SDK and headless CLI for agents: JavaScript tool orchestration with [flow](packages/agent/src/core/flow.c), resumable tools, durable signals and waits, keyed child calls, fresh-context subagents, context checkpoints, and native text, image and file inputs and tool results. It uses libcurl, SQLite, pthreads, yyjson and tomlc17. Skills, MCP servers and plugins are disabled by default and can read existing Codex resources on demand.
 
-First-party code lives under `packages/`, including the optional [terminal frontend](packages/tui/README.md). The historical short name `ah` (agent harness) appears in the CLI, C symbols and CMake target.
-
+First-party code lives under `packages/`, including the optional [terminal frontend](packages/tui/README.md).
 Run `./test` to configure, build and test the project, then try `./build/ah_embed` or `./build/ah_durable`. Use `./build/ah --help` for the CLI, or include `ah/sdk.h` and link `ah::ah` from CMake. Swift hosts can import the `CHarness` package. See the [public SDK headers](packages/agent/include/ah), [embedding examples](examples) and [built-in session instructions](packages/agent/src/core/prompt.h).
-
-Top-level macOS CMake builds fetch and statically link a pinned WebSocket-enabled libcurl. They require OpenSSL development libraries and use the macOS certificate trust store. The CLI defaults to `--transport auto` and prefers WSS for the public OpenAI Responses endpoint. Use `--transport http` to select HTTP/SSE or `--transport websocket` to prefer WebSocket for a compatible custom endpoint. To use an externally supplied libcurl on macOS, configure with `AH_BUNDLE_CURL=OFF` and set `AH_REQUIRE_WEBSOCKETS=ON` when the build requires WSS.
