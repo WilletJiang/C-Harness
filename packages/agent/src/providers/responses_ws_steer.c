@@ -19,7 +19,7 @@ static bool encode(responses_ws_steer *s, const char *id, const char *input) {
         s->frame = yyjson_mut_write(doc, 0, &s->length);
         s->input = ah_strdup(input);
     }
-    yyjson_mut_doc_free(doc);
+    ah_mut_doc_free(doc);
     if (!s->frame || !s->input)
         return false;
     memcpy(s->parent, id, strlen(id) + 1);

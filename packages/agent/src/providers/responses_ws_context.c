@@ -114,7 +114,7 @@ char *responses_ws_encode(const char *json, const responses_ws_context *previous
     }
     encoded = yyjson_mut_write(wire, 0, length);
 done:
-    yyjson_mut_doc_free(wire);
+    ah_mut_doc_free(wire);
     yyjson_doc_free(request);
     return encoded;
 }

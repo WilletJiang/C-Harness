@@ -44,7 +44,7 @@ static ah_code build_request(ah_engine *e, const core_session *session, char **j
         yyjson_mut_val *reasoning = yyjson_mut_obj(d);
         if (!yyjson_mut_obj_add_strcpy(d, reasoning, "effort", session->reasoning) ||
             !yyjson_mut_obj_add_val(d, root, "reasoning", reasoning)) {
-            yyjson_mut_doc_free(d);
+            ah_mut_doc_free(d);
             return ah_fail(err, AH_IO, "cannot encode reasoning effort");
         }
     }
