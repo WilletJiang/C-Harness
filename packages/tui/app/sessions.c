@@ -82,6 +82,12 @@ static bool needs_attention(const char *state) {
            !strcmp(state, "outcome_unknown") || !strcmp(state, "stopped") || !strcmp(state, "failed");
 }
 
+static bool list_session(yyjson_val *item, const char *current) {
+    return !strcmp(field(item, "id"), current) || strcmp(field(item, "state"), "idle") ||
+           yyjson_get_uint(yyjson_obj_get(item, "turn")) ||
+           yyjson_get_uint(yyjson_obj_get(item, "model_calls"));
+}
+
 ah_code tui_open_sessions_picker(tui_app *app, ah_error *error) {
     char *json = NULL;
     ah_code code = ah_sessions_json(app->cli->engine, &json, error);
@@ -90,20 +96,26 @@ ah_code tui_open_sessions_picker(tui_app *app, ah_error *error) {
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     ah_free(json);
     yyjson_val *sessions = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(sessions) || !tui_picker_alloc(app, yyjson_arr_size(sessions))) {
+    size_t count = 0, i, total;
+    yyjson_val *item;
+    yyjson_arr_foreach(sessions, i, total, item)
+        count += list_session(item, app->session);
+    if (!yyjson_is_arr(sessions) || !tui_picker_alloc(app, count)) {
         yyjson_doc_free(doc);
         snprintf(error->message, sizeof(error->message), "Cannot load the conversation list");
         return AH_IO;
     }
-    size_t selected = 0;
-    for (size_t i = 0; i < app->pick_count; ++i) {
-        yyjson_val *item = yyjson_arr_get(sessions, app->pick_count - i - 1);
+    size_t selected = 0, row = 0;
+    for (i = yyjson_arr_size(sessions); i > 0; --i) {
+        item = yyjson_arr_get(sessions, i - 1);
+        if (!list_session(item, app->session))
+            continue;
         const char *id = field(item, "id"), *state = field(item, "state"), *model = field(item, "model");
         uint64_t turn = yyjson_get_uint(yyjson_obj_get(item, "turn"));
         uint64_t calls = yyjson_get_uint(yyjson_obj_get(item, "model_calls"));
         bool current = !strcmp(id, app->session);
         if (current)
-            selected = i;
+            selected = row;
         size_t id_len = strlen(id);
         const char *short_id = id + (id_len > 8 ? id_len - 8 : 0);
         session_preview preview = {0};
@@ -121,7 +133,7 @@ ah_code tui_open_sessions_picker(tui_app *app, ah_error *error) {
         snprintf(detail, sizeof(detail), "Last message: %s\nLast reply: %s\n\nModel: %s\nTurns: %llu\nID: %s%s",
                  *last ? last : "No messages yet", preview.reply[0] ? preview.reply : "No reply yet",
                  *model ? model : "-", (unsigned long long)turn, id, current ? " (current)" : "");
-        tui_picker_set(app, i, id, title, state, meta, detail, 0, current,
+        tui_picker_set(app, row++, id, title, state, meta, detail, 0, current,
                        needs_attention(state), !strcmp(state, "running"));
     }
     yyjson_doc_free(doc);

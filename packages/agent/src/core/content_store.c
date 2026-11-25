@@ -100,8 +100,8 @@ static bool same_file(const struct stat *a, const struct stat *b) {
     return a->st_size == b->st_size && am.tv_sec == bm.tv_sec && am.tv_nsec == bm.tv_nsec &&
            ac.tv_sec == bc.tv_sec && ac.tv_nsec == bc.tv_nsec;
 }
-static ah_code read_artifact(const char *path, const char *mime, content_blob *blob,
-                             ah_error *err) {
+ah_code content_artifact_read(const char *path, const char *mime, content_blob *blob,
+                              ah_error *err) {
     int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     struct stat before, after;
     if (fd < 0)
@@ -137,8 +137,26 @@ static ah_code read_artifact(const char *path, const char *mime, content_blob *b
         rc = ah_fail(err, AH_INVALID, "artifact bytes do not match supported MIME");
     if (rc == AH_OK)
         content_blob_id(blob);
+    else {
+        free(blob->data);
+        free(blob->mime);
+        *blob = (content_blob){0};
+    }
     return rc;
 }
+ah_code content_artifact_save(ah_engine *e, const char *sid, const content_blob *blob,
+                              ah_error *err) {
+    ah_code rc = content_blob_save(e, sid, blob, err);
+    if (rc != AH_OK)
+        return rc;
+    char *receipt = core_object_string("artifact_id", blob->id);
+    if (!receipt)
+        return ah_fail(err, AH_IO, "out of memory");
+    rc = core_event(e, sid, NULL, "artifact.imported", receipt, err);
+    free(receipt);
+    return rc;
+}
+
 ah_code ah_artifact_import(ah_engine *e, const char *sid, const char *path, const char *mime,
                            char id[AH_ARTIFACT_ID_CAP], ah_error *err) {
     if (id)
@@ -154,24 +172,18 @@ ah_code ah_artifact_import(ah_engine *e, const char *sid, const char *path, cons
         return rc;
     core_session_free(&session);
     content_blob blob = {0};
-    rc = read_artifact(path, mime, &blob, err);
+    rc = content_artifact_read(path, mime, &blob, err);
     uint64_t after = 0;
     if (rc == AH_OK)
         rc = core_begin(e, &after, err);
     if (rc == AH_OK)
-        rc = content_blob_save(e, sid, &blob, err);
-    char *receipt = rc == AH_OK ? core_object_string("artifact_id", blob.id) : NULL;
-    if (rc == AH_OK && !receipt)
-        rc = ah_fail(err, AH_IO, "out of memory");
-    if (rc == AH_OK)
-        rc = core_event(e, sid, NULL, "artifact.imported", receipt, err);
+        rc = content_artifact_save(e, sid, &blob, err);
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else if (!sqlite3_get_autocommit(e->db))
         core_rollback(e);
     if (rc == AH_OK)
         memcpy(id, blob.id, AH_ARTIFACT_ID_CAP);
-    free(receipt);
     free(blob.data);
     free(blob.mime);
     return rc;

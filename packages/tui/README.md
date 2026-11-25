@@ -38,8 +38,8 @@ new endpoint.
 `/model` opens the model list, then the selected model's reasoning effort.
 Press Esc at the effort step to return to the model list. Selecting the current
 model between turns updates its effort for the next turn. Selecting a different
-model, or selecting a model while the current turn is paused, opens a new
-session after confirmation. Enter a model ID in `/config` if the provider has no
+model, or selecting a model while the current turn is paused, opens a draft
+for the new conversation. Enter a model ID in `/config` if the provider has no
 model catalog.
 Each session saves its instructions at creation. Start a new session to use
 updated built-in instructions.
@@ -49,8 +49,9 @@ For CLI-supplied credentials use `AH_ACCESS_TOKEN` or `--token-file`, with
 Submitted messages, completed replies, and tool events are saved in SQLite
 under `--db` (default `./harness.db`). Reopen the same database to find the
 sessions you previously used.
-`/sessions` lists conversations by their opening prompt and highlights the
-current one. Move with the arrow keys and press Enter to switch. `/history`
+`/sessions` lists saved conversations and highlights the current one. Move
+with the arrow keys and press Enter to switch, or press `n` for a new draft.
+A draft becomes a saved conversation when you send its first message. `/history`
 reads the preceding event page, and `/pending` opens the operation targeted by
 a reply or approval.
 Use `/image PATH` to attach a PNG, JPEG, GIF, or WebP to the next message.

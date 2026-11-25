@@ -209,20 +209,30 @@ def exercise_stream_and_model_options(binary):
              "--allow-http-loopback", "--endpoint", endpoint, "--no-web-search"],
             cwd=root, stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True,
         )
+        def session_count():
+            with sqlite3.connect((root / "test.db").as_uri() + "?mode=ro", uri=True) as db:
+                return db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+
         try:
             receive(master, b"Ask ah anything")
+            assert session_count() == 0
+            os.write(master, b"/sessions\r")
+            receive(master, b"No matching items")
+            os.write(master, b"n")
+            receive(master, b"Ask ah anything")
+            assert session_count() == 0
             os.write(master, b"/model\r")
             receive(master, b"Enter to choose effort")
             os.write(master, b"\x1b[B\r")
-            assert b"picked-model" in receive(master, b"Enter starts a new session")
-            with sqlite3.connect((root / "test.db").as_uri() + "?mode=ro", uri=True) as db:
-                assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (1,)
+            assert b"picked-model" in receive(master, b"Applies to this draft")
+            assert session_count() == 0
             os.write(master, b"\x1b")
             receive(master, b"Enter to choose effort")
             os.write(master, b"\r")
-            assert b"picked-model" in receive(master, b"Enter starts a new session")
+            assert b"picked-model" in receive(master, b"Applies to this draft")
             os.write(master, b"\x1b[B\x1b[B\r")
             assert b"picked-model" in receive(master, b"Ask ah anything")
+            assert session_count() == 0
             os.write(master, b"Check the workspace\r")
             early = receive(master, b"scrollback-block-16")
             assert b"scrollback-block-00" in early
@@ -235,6 +245,7 @@ def exercise_stream_and_model_options(binary):
             receipt = re.search(rb"find +\x1b\[0m +mode=files", final)
             assert receipt and final.index(b"Before the tool") < receipt.start()
             assert len(server.requests) == 2
+            assert session_count() == 1
             for body in server.requests:
                 assert body["model"] == "picked-model"
                 assert body["reasoning"] == {"effort": "high"}
@@ -258,17 +269,20 @@ def exercise_stream_and_model_options(binary):
             os.write(master, b"Follow up\r")
             receive(master, b"Final answer after the tool")
             assert server.requests[2]["reasoning"] == {"effort": "low"}
-            with sqlite3.connect((root / "test.db").as_uri() + "?mode=ro", uri=True) as db:
-                assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (2,)
+            assert session_count() == 1
             os.write(master, b"/sessions\r")
             listing = receive(master, b"Choose a conversation")
             if b"Last message" not in listing:
                 listing += receive(master, b"Last message", 5)
-            if b"Empty chat" not in listing:
-                listing += receive(master, b"Empty chat", 5)
-            assert b"Check the workspace" in listing and b"Empty chat" in listing
-            os.write(master, b"\x1b[B\r")
-            assert b"fixture" in receive(master, b"Ask ah anything")
+            assert b"Check the workspace" in listing and b"Empty chat" not in listing
+            os.write(master, b"n")
+            assert b"picked-model" in receive(master, b"Ask ah anything")
+            assert session_count() == 1
+            os.write(master, b"/sessions\r")
+            receive(master, b"Check the workspace")
+            os.write(master, b"\r")
+            assert b"picked-model" in receive(master, b"Ask ah anything")
+            assert session_count() == 1
         finally:
             server.release.set()
             process.kill()

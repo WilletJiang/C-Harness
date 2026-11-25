@@ -3,6 +3,7 @@
 #include "ah/content.h"
 #include "ah/context.h"
 #include "ah/workspace.h"
+#include "internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -165,6 +166,8 @@ static ah_code open_agents_picker(tui_app *app, ah_error *error) {
 }
 
 ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
+    if (!app->session[0])
+        return ah_fail(error, AH_NOT_FOUND, "No pending operation");
     const char *session = !app->running && app->pending_session[0] ? app->pending_session
                                                                  : app->session;
     char *json = NULL;
@@ -234,31 +237,12 @@ ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
     return AH_OK;
 }
 
-ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
-    if (!target || !*target || strlen(target) >= sizeof(app->session)) {
-        snprintf(error->message, sizeof(error->message), "Invalid session ID");
-        return AH_INVALID;
-    }
-    if (!strcmp(target, app->session)) {
-        tui_picker_close(app);
-        return AH_OK;
-    }
-    if (app->running || app->catalog_loading) {
-        snprintf(error->message, sizeof(error->message), "Available when execution pauses");
-        return AH_BUSY;
-    }
-    char previous[AH_ID_CAP];
-    strcpy(previous, app->session);
-    strcpy(app->session, target);
-    ah_code code = tui_snapshot(app, app->session, true, error);
-    if (code != AH_OK) {
-        strcpy(app->session, previous);
-        return code;
-    }
+static void reset_conversation_view(tui_app *app) {
     app->ask_seen[0] = 0;
     app->reply_operation[0] = 0;
     if (strcmp(app->pending_session, app->session)) {
         app->pending_ask = false;
+        app->pending_background = false;
         app->pending_session[0] = app->operation[0] = app->pending_status[0] = 0;
         app->pending_tool[0] = app->pending_summary[0] = 0;
     }
@@ -271,12 +255,44 @@ ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
     app->notice[0] = 0;
     app->status.notice_error = false;
     if (app->image_id[0]) {
-        app->image_id[0] = app->image_name[0] = 0;
+        tui_clear_image(app);
         snprintf(app->notice, sizeof(app->notice), "Image removed from previous conversation draft");
     }
-    tui_models_sync(app);
     tui_picker_close(app);
     tui_print_banner(app);
+}
+
+ah_code tui_open_draft(tui_app *app, const char *model, const char *effort, ah_error *error) {
+    if (app->running || app->catalog_loading)
+        return ah_fail(error, AH_BUSY, "Available when execution pauses");
+    app->session[0] = 0;
+    app->turn = 0;
+    snprintf(app->state, sizeof(app->state), "idle");
+    snprintf(app->model, sizeof(app->model), "%s", model);
+    snprintf(app->effort, sizeof(app->effort), "%s", effort);
+    reset_conversation_view(app);
+    return AH_OK;
+}
+
+ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
+    if (!target || !*target || strlen(target) >= sizeof(app->session))
+        return ah_fail(error, AH_INVALID, "Invalid session ID");
+    if (!strcmp(target, app->session)) {
+        tui_picker_close(app);
+        return AH_OK;
+    }
+    if (app->running || app->catalog_loading)
+        return ah_fail(error, AH_BUSY, "Available when execution pauses");
+    char previous[AH_ID_CAP];
+    strcpy(previous, app->session);
+    strcpy(app->session, target);
+    ah_code code = tui_snapshot(app, app->session, true, error);
+    if (code != AH_OK) {
+        strcpy(app->session, previous);
+        return code;
+    }
+    tui_models_sync(app);
+    reset_conversation_view(app);
     (void)tui_history_page(app, app->cursor + 1, error);
     return AH_OK;
 }
@@ -348,8 +364,7 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
             app->pending_background = false;
         }
     } else {
-        code = app->image_id[0] ? tui_submit_image(app, id, text, error)
-                               : ah_submit_after_interruption(engine, app->session, id, text, error);
+        code = tui_submit_input(app, id, text, error);
         if (code == AH_OK) {
             ah_error ignored = {0};
             (void)tui_snapshot(app, app->session, false, &ignored);
@@ -426,6 +441,8 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
     if (!strcmp(name, "pending"))
         return tui_open_pending_picker(app, error);
     if (!strcmp(name, "note") || !strncmp(name, "note ", 5) || !strncmp(name, "note\t", 5)) {
+        if (!app->session[0])
+            return ah_fail(error, AH_BUSY, "Notes require an active run");
         const char *text = name + 4;
         while (*text == ' ' || *text == '\t')
             ++text;
@@ -440,6 +457,8 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
         return code;
     }
     if (!strcmp(name, "inspect")) {
+        if (!app->session[0])
+            return ah_fail(error, AH_NOT_FOUND, "Send a message to start a conversation");
         char *json = NULL;
         ah_code code = ah_reader_session_json(app->reader, app->session, &json, error);
         if (code == AH_OK)
@@ -489,18 +508,22 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
         return tui_open_sessions_picker(app, error);
     if (!strcmp(name, "model"))
         return tui_models_open(app, error);
-    if (!strcmp(name, "agents"))
-        return open_agents_picker(app, error);
     if (!strcmp(name, "login") || !strcmp(name, "config")) {
         tui_auth_open(app, false);
         return AH_OK;
     }
-    if (!strcmp(name, "context"))
+    if (!strcmp(name, "approve") || !strcmp(name, "deny"))
+        return decide_pending(app, !strcmp(name, "approve"), error);
+    if (!strcmp(name, "workspace"))
+        code = ah_workspace_json(engine, &json, error);
+    else if (!app->session[0])
+        return ah_fail(error, AH_NOT_FOUND, "Send a message to start a conversation");
+    else if (!strcmp(name, "agents"))
+        return open_agents_picker(app, error);
+    else if (!strcmp(name, "context"))
         code = ah_context_json(engine, app->session, &json, error);
     else if (!strcmp(name, "artifacts"))
         code = ah_artifacts_json(engine, app->session, &json, error);
-    else if (!strcmp(name, "workspace"))
-        code = ah_workspace_json(engine, &json, error);
     else if (!strcmp(name, "fork")) {
         char id[AH_ID_CAP];
         code = ah_fork(engine, app->session, id, error);
@@ -511,8 +534,6 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
             code = ah_resume(engine, app->session, error);
         if (code == AH_OK && !tui_start_run(app, error))
             code = AH_IO;
-    } else if (!strcmp(name, "approve") || !strcmp(name, "deny")) {
-        return decide_pending(app, !strcmp(name, "approve"), error);
     } else {
         code = AH_NOT_FOUND;
     }
@@ -593,14 +614,9 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
             code = decide_pending(app, action.kind != TUI_PICK_DENY, &error);
         }
         break;
-    case TUI_PICK_NEW: {
-        char id[AH_ID_CAP];
-        code = ah_session_create(app->cli->engine, app->default_model,
-                                 app->instructions, id, &error);
-        if (code == AH_OK)
-            code = tui_switch_session(app, id, &error);
+    case TUI_PICK_NEW:
+        code = tui_open_draft(app, app->default_model, "", &error);
         break;
-    }
     case TUI_AUTH_CANCEL:
         tui_oauth_cancel(app);
         if (app->auth.onboarding)
