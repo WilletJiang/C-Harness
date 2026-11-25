@@ -1,4 +1,4 @@
-#include "tui_app.h"
+#include "app.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>

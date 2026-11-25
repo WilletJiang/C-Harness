@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 
 [lib]
-path = "tui_math.rs"
 crate-type = ["staticlib"]
 
 [dependencies]

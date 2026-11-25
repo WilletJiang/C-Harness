@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef AH_BUILD_TUI
-#include "tui_internal.h"
+#include "tui/tui.h"
 #include <unistd.h>
 #endif
 

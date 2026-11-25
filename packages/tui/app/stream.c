@@ -1,4 +1,5 @@
-#include "tui_app.h"
+#include "app.h"
+#include "tui/render/markdown.h"
 #include <stdlib.h>
 #include <string.h>
 

@@ -1,4 +1,4 @@
-#include "tui_markup.h"
+#include "markup.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>

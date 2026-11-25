@@ -1,4 +1,4 @@
-#include "tui_app.h"
+#include "app.h"
 #include "signals.h"
 #include <errno.h>
 #include <fcntl.h>

@@ -1,4 +1,4 @@
-#include "tui_internal.h"
+#include "terminal.h"
 #include <curses.h>
 #include <stdlib.h>
 #include <string.h>

@@ -1,5 +1,5 @@
-#include "tui_internal.h"
-#include "tui_markup.h"
+#include "markup.h"
+#include "tui/terminal/terminal.h"
 #include <string.h>
 
 FILE *tui_markup_sink(const tui_markup_output *out) {

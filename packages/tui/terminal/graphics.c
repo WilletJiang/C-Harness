@@ -1,4 +1,4 @@
-#include "tui_graphics.h"
+#include "graphics.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>

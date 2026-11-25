@@ -10,9 +10,9 @@ use term_maths::mathfont;
 use term_maths::RenderedBlock as Block;
 use unicode_width::UnicodeWidthStr;
 
-mod tui_math_layout;
-mod tui_math_png;
-use tui_math_layout::{fenced, fraction, root, scripts, text};
+mod layout;
+mod png;
+use layout::{fenced, fraction, root, scripts, text};
 
 type Events<'a> = Peekable<Iter<'a, Event<'a>>>;
 

@@ -1,9 +1,7 @@
-#ifndef AH_TUI_INTERNAL_H
-#define AH_TUI_INTERNAL_H
-#include "cli.h"
-#include "ah/responses.h"
-#include "tui_graphics.h"
-#include "tui_view.h"
+#ifndef AH_TUI_TERMINAL_H
+#define AH_TUI_TERMINAL_H
+#include "graphics.h"
+#include "tui/view/view.h"
 #include <stdio.h>
 #include <termios.h>
 
@@ -36,11 +34,4 @@ void tui_input_read(tui_input *, const char *, size_t, uint64_t, tui_key_sink, v
 int tui_input_timeout(const tui_input *, uint64_t);
 void tui_input_expire(tui_input *, uint64_t, tui_key_sink, void *);
 void tui_safe_text(FILE *, const char *, size_t);
-void tui_markdown(FILE *, const char *, size_t, unsigned);
-void tui_markdown_graphics(FILE *, const char *, size_t, unsigned, const tui_graphics *);
-
-ah_code cli_tui(cli_context *, ah_responses *, const char *database, const char *session,
-                const char *model, const char *instructions, const char *endpoint,
-                bool endpoint_explicit, bool has_cli_token, const char *token_source,
-                bool allow_loopback_http, ah_error *);
 #endif

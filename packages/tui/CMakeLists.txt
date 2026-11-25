@@ -17,22 +17,26 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(AH_UTF8PROC REQUIRED IMPORTED_TARGET libutf8proc)
 find_program(AH_CARGO cargo REQUIRED)
 
+set(math_source "${CMAKE_CURRENT_SOURCE_DIR}/render/math")
 set(math_dir "${CMAKE_CURRENT_BINARY_DIR}/math")
 set(math_lib "${math_dir}/release/${CMAKE_STATIC_LIBRARY_PREFIX}ah_tui_math${CMAKE_STATIC_LIBRARY_SUFFIX}")
 add_custom_command(OUTPUT "${math_lib}"
   COMMAND "${AH_CARGO}" build --locked --release
-          --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
+          --manifest-path "${math_source}/Cargo.toml"
           --target-dir "${math_dir}"
-  DEPENDS Cargo.toml Cargo.lock tui_math.rs tui_math_layout.rs tui_math_png.rs
+  DEPENDS "${math_source}/Cargo.toml" "${math_source}/Cargo.lock"
+          "${math_source}/src/lib.rs" "${math_source}/src/layout.rs" "${math_source}/src/png.rs"
   VERBATIM)
 add_custom_target(ah_tui_math_build DEPENDS "${math_lib}")
 add_dependencies(ah_cli ah_tui_math_build)
 target_compile_definitions(ah_cli PRIVATE AH_BUILD_TUI=1)
-target_sources(ah_cli PRIVATE tui.c tui_auth.c tui_oauth.c tui_commands.c tui_events.c tui_terminal.c
-                              tui_ask.c tui_models.c tui_stream.c
-                              tui_view.c tui_graphics.c tui_markdown.c tui_markdown_math.c
-                              tui_markdown_table.c tui_markup_columns.c tui_markup_output.c)
-target_include_directories(ah_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
+target_sources(ah_cli PRIVATE
+    app/app.c app/ask.c app/commands.c app/events.c app/stream.c
+    provider/config.c provider/models.c provider/oauth.c
+    terminal/terminal.c terminal/graphics.c
+    view/view.c view/auth.c view/chat.c view/picker.c view/text.c
+    render/markdown.c render/formula.c render/table.c render/columns.c render/output.c)
+target_include_directories(ah_cli PRIVATE "${PROJECT_SOURCE_DIR}/packages"
     "${PROJECT_SOURCE_DIR}/packages/cli" "${AH_TERMINFO_INCLUDE_DIR}"
     "${ah_md4c_source_SOURCE_DIR}/src")
 target_link_libraries(ah_cli PRIVATE "${math_lib}" ah_tui_md4c PkgConfig::AH_UTF8PROC

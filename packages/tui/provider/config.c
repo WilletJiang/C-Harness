@@ -1,4 +1,4 @@
-#include "tui_app.h"
+#include "tui/app/app.h"
 #include "internal.h"
 #include "providers/http.h"
 #include <errno.h>

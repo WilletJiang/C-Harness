@@ -1,6 +1,7 @@
 #ifndef AH_TUI_APP_H
 #define AH_TUI_APP_H
-#include "tui_internal.h"
+#include "tui/tui.h"
+#include "tui/terminal/terminal.h"
 #include "ah/observe.h"
 #include <stdatomic.h>
 #include <sys/types.h>

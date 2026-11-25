@@ -1,4 +1,4 @@
-#include "tui_markup.h"
+#include "markup.h"
 #include <utf8proc.h>
 
 static size_t decode(const char *text, size_t size, utf8proc_int32_t *cp) {

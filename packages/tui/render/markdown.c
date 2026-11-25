@@ -1,5 +1,6 @@
-#include "tui_internal.h"
-#include "tui_markup.h"
+#include "markdown.h"
+#include "markup.h"
+#include "tui/terminal/terminal.h"
 #include <entity.h>
 #include <limits.h>
 #include <stdint.h>

@@ -52,8 +52,20 @@ files, edits that empty an existing file, tool calls with checks, and process
 execution require manual approval. Each automatically approved edit records
 an `approval.auto` event.
 
-`tui_view.h` is the keyboard and frame contract. The terminal thread owns the
-TTY and independent journal reader. The execution thread owns the active run.
+## Source layout
+
+- [`tui.h`](tui.h): entry point used by the CLI.
+- [`app/`](app/): main loop, commands, session events, and streaming output.
+- [`provider/`](provider/): provider configuration, OAuth, and model selection.
+- [`terminal/`](terminal/): TTY input and output, terminfo, and Kitty graphics.
+- [`view/`](view/): keyboard and frame API, chat composer, pickers, and login form.
+- [`render/`](render/): Markdown, tables, and formulas; the Rust crate lives in `render/math/`.
+
+[`view/view.h`](view/view.h) is the keyboard and frame contract. The view has no
+terminal I/O.
+
+The terminal thread owns the TTY and independent journal reader. The execution
+thread owns the active run.
 Completed Markdown blocks enter terminal scrollback while the model streams.
 The active fragment redraws above the composer. Durable events are read through
 sequence cursors following commit notification.

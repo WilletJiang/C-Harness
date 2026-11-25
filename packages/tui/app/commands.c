@@ -1,4 +1,4 @@
-#include "tui_app.h"
+#include "app.h"
 #include "ah/agents.h"
 #include "ah/content.h"
 #include "ah/context.h"

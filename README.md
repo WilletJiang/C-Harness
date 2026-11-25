@@ -1,5 +1,5 @@
 C Harness is a small C17 SDK and headless CLI for agents: JavaScript tool orchestration with [flow](packages/agent/src/core/flow.c), resumable tools, durable signals and waits, keyed child calls, fresh-context subagents, context checkpoints, and native text, image and file inputs and tool results. It uses libcurl, SQLite, pthreads, yyjson and tomlc17. Skills, MCP servers and plugins are disabled by default and can read existing Codex resources on demand.
 
-First-party code lives under `packages/`. The historical short name `ah` (agent harness) appears in the CLI, C symbols and CMake target.
+First-party code lives under `packages/`, including the optional [terminal frontend](packages/tui/README.md). The historical short name `ah` (agent harness) appears in the CLI, C symbols and CMake target.
 
 Run `./test` to configure, build and test the project, then try `./build/ah_embed` or `./build/ah_durable`. Use `./build/ah --help` for the CLI, or include `ah/sdk.h` and link `ah::ah` from CMake. Swift hosts can import the `CHarness` package. See the [public SDK headers](packages/agent/include/ah), [embedding examples](examples) and [built-in session instructions](packages/agent/src/core/prompt.h).
