@@ -41,7 +41,7 @@ ah_code core_session_step(ah_engine *e, core_session *session, bool *needs_model
     bool host = false;
     code = core_work_host_session(e, session->id, &host, error);
     if (code == AH_OK && !host)
-        code = core_drain_steering(e, session, false, NULL, error);
+        code = core_drain_inputs(e, session, false, NULL, error);
     if (code == AH_OK)
         *needs_model = true;
     return code;
@@ -54,6 +54,8 @@ ah_code core_model_prepare(ah_engine *e, core_session *session, char **request, 
     ah_code code = core_task_allow(e, session->id, true, 1, NULL, error);
     if (code == AH_OK)
         code = core_task_deadline(e, session->id, &e->deadline, error);
+    if (code == AH_OK)
+        code = core_publish_user_items(e, session, error);
     uint64_t assembled = ah_now_us();
     if (code == AH_OK)
         code = core_request(e, session, request, error);

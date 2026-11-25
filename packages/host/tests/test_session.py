@@ -126,6 +126,23 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.manager.access_token(), "access-two")
         self.assertEqual(self.api.refreshes, [("issued-client", "refresh-one")])
 
+    def test_rejected_bearer_rotates_once_even_before_expiry(self):
+        rejected = hashlib.sha256(b"access-one").hexdigest()
+        self.assertEqual(self.manager.access_token(rejected_sha256=rejected), "access-two")
+        self.assertEqual(self.manager.access_token(rejected_sha256=rejected), "access-two")
+        self.assertEqual(self.api.refreshes, [("issued-client", "refresh-one")])
+
+    def test_rejected_bearer_is_not_returned_inside_a_refresh_window(self):
+        rejected = hashlib.sha256(b"access-one").hexdigest()
+        self.api.error = AuthError("too_early", "Wait", earliest_refresh_at=self.now + 30)
+        with self.assertRaises(AuthError) as first:
+            self.manager.access_token(rejected_sha256=rejected)
+        self.assertEqual(first.exception.code, "too_early")
+        with self.assertRaises(AuthError) as deferred:
+            self.manager.access_token(rejected_sha256=rejected)
+        self.assertEqual(deferred.exception.code, "refresh_deferred")
+        self.assertEqual(len(self.api.refreshes), 1)
+
     def test_unusable_grant_clears_only_tokens(self):
         self.now = 5000
         self.api.error = AuthError("refresh_token_reused", "Invalid refresh token")

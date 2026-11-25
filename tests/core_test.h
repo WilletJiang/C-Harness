@@ -22,7 +22,7 @@ typedef struct {
     uint64_t last_seq;
     bool started;
     const char *steering_session;
-    bool steer;
+    bool steer, steer_at_question;
     const char *fault_database;
 } fixture;
 extern const char done[], call[], ask[];

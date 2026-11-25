@@ -181,7 +181,8 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
             return pending;
         }
     }
-    if (session.state == AH_RUNNING || (!close_previous && session.state == AH_OUTCOME_UNKNOWN)) {
+    if (session.state == AH_RUNNING || session.state == AH_WAITING_INPUT ||
+        (!close_previous && session.state == AH_OUTCOME_UNKNOWN)) {
         core_session_free(&session);
         return ah_fail(err, AH_BUSY, "session cannot accept input in current state");
     }
@@ -353,8 +354,31 @@ ah_code core_pending_operation(ah_engine *e, const char *sid, ah_state state, co
             rc = step == SQLITE_DONE ? AH_NOT_FOUND : ah_fail(err, AH_IO, "pending lookup failed");
     }
     sqlite3_finalize(s);
+    if (rc == AH_NOT_FOUND && state == AH_WAITING_INPUT)
+        rc = core_pending_question(e, sid, op, err);
     return rc;
 }
+
+static void add_pending_value(yyjson_mut_doc *d, yyjson_mut_val *root, const char *key,
+                              core_operation *op) {
+    yyjson_mut_val *p = yyjson_mut_obj(d);
+    bool question = !strcmp(op->status, "done");
+    yyjson_mut_obj_add_val(d, root, key, p);
+    yyjson_mut_obj_add_strcpy(d, p, "operation_id", op->id);
+    yyjson_mut_obj_add_strcpy(d, p, "call_id", op->call_id);
+    yyjson_mut_obj_add_strcpy(d, p, "name", op->name);
+    yyjson_mut_obj_add_strcpy(d, p, "status", question ? "input" : op->status);
+    if (question)
+        yyjson_mut_obj_add_bool(d, p, "background", true);
+    yyjson_doc *args = yyjson_read(op->arguments, strlen(op->arguments), 0);
+    if (args)
+        yyjson_mut_obj_add_val(d, p, "arguments", yyjson_val_mut_copy(d, yyjson_doc_get_root(args)));
+    else
+        yyjson_mut_obj_add_strcpy(d, p, "arguments", op->arguments);
+    yyjson_doc_free(args);
+    core_operation_free(op);
+}
+
 ah_code ah_session_json(ah_engine *e, const char *sid, char **json, ah_error *err) {
     if (json)
         *json = NULL;
@@ -382,24 +406,19 @@ ah_code ah_session_json(ah_engine *e, const char *sid, char **json, ah_error *er
     sqlite3_finalize(s);
     core_operation op;
     rc = core_pending_operation(e, sid, state, &op, err);
-    if (rc == AH_OK) {
-        yyjson_mut_val *p = yyjson_mut_obj(d);
-        yyjson_mut_obj_add_val(d, o, "pending", p);
-        yyjson_mut_obj_add_strcpy(d, p, "operation_id", op.id);
-        yyjson_mut_obj_add_strcpy(d, p, "call_id", op.call_id);
-        yyjson_mut_obj_add_strcpy(d, p, "name", op.name);
-        yyjson_mut_obj_add_strcpy(d, p, "status", op.status);
-        yyjson_doc *args = yyjson_read(op.arguments, strlen(op.arguments), 0);
-        if (args)
-            yyjson_mut_obj_add_val(d, p, "arguments",
-                                   yyjson_val_mut_copy(d, yyjson_doc_get_root(args)));
-        else
-            yyjson_mut_obj_add_strcpy(d, p, "arguments", op.arguments);
-        yyjson_doc_free(args);
-        core_operation_free(&op);
-    } else if (rc == AH_NOT_FOUND) {
+    if (rc == AH_OK)
+        add_pending_value(d, o, "pending", &op);
+    else if (rc == AH_NOT_FOUND) {
         yyjson_mut_obj_add_null(d, o, "pending");
         rc = AH_OK;
+    }
+    if (rc == AH_OK && (state == AH_RUNNING || state == AH_WAITING_AGENTS ||
+                        state == AH_WAITING_WORK)) {
+        rc = core_pending_question(e, sid, &op, err);
+        if (rc == AH_OK)
+            add_pending_value(d, o, "question", &op);
+        else if (rc == AH_NOT_FOUND)
+            rc = AH_OK;
     }
     if (rc == AH_OK) {
         *json = ah_mut_write(d);

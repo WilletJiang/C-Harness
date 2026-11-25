@@ -326,18 +326,18 @@ static bool emit_auth_right_row(text_buf *out, unsigned row, const tui_view *v,
                view_buf_puts(out, S_RST);
     case 2:
         if (v->auth_token.len)
-            snprintf(line, sizeof(line), "\xe2\x97\x8f New key ready (%zu chars)", v->auth_token.len);
+            snprintf(line, sizeof(line), "\xe2\x80\xa2 New key ready (%zu chars)", v->auth_token.len);
         else if (can_keep)
-            snprintf(line, sizeof(line), "\xe2\x97\x8f Configured (%s)",
+            snprintf(line, sizeof(line), "\xe2\x80\xa2 Configured (%s)",
                      a->token_source && *a->token_source ? a->token_source : "saved");
         else
-            snprintf(line, sizeof(line), "\xe2\x96\xb2 API key required");
-        return view_buf_puts(out, tok_ok ? S_GREEN : S_AMBER) &&
+            snprintf(line, sizeof(line), "! API key required");
+        return view_buf_puts(out, tok_ok ? S_DIM : S_AMBER) &&
                view_emit_padded(out, line, strlen(line), rw) && view_buf_puts(out, S_RST);
     case 3:
-        snprintf(line, sizeof(line), "%s %s", ep_ok ? "\xe2\x97\x8f" : "\xe2\x96\xb2",
+        snprintf(line, sizeof(line), "%s %s", ep_ok ? "\xe2\x80\xa2" : "!",
                  ep_ok ? "Responses URL entered" : "Enter an HTTPS URL");
-        return view_buf_puts(out, ep_ok ? S_GREEN : S_AMBER) &&
+        return view_buf_puts(out, ep_ok ? S_DIM : S_AMBER) &&
                view_emit_padded(out, line, strlen(line), rw) && view_buf_puts(out, S_RST);
     case 4:
         snprintf(line, sizeof(line), "Model: %s", mdl);
@@ -617,11 +617,11 @@ bool tui_view_render_auth(tui_view *v, const tui_view_status *status, unsigned c
     // Footer shortcut bar
     if (lines < budget) {
         if (!view_newline(out, &lines) ||
-            !view_buf_puts(out, "  " S_KEY "\xe2\x86\x91/\xe2\x86\x93" S_DIM " field  \xc2\xb7  " S_KEY
-                           "\xe2\x86\x90/\xe2\x86\x92" S_DIM " preset/cursor  \xc2\xb7  ") ||
-            (!chatgpt && !view_buf_puts(out, S_KEY "^r" S_DIM " reveal  \xc2\xb7  ")) ||
-            !view_buf_puts(out, chatgpt ? S_KEY "^s" S_DIM " connect  \xc2\xb7  "
-                                  : S_KEY "^s" S_DIM " save  \xc2\xb7  ") ||
+            !view_buf_puts(out, "  " S_KEY "\xe2\x86\x91/\xe2\x86\x93" S_DIM " field   " S_KEY
+                           "\xe2\x86\x90/\xe2\x86\x92" S_DIM " preset/cursor   ") ||
+            (!chatgpt && !view_buf_puts(out, S_KEY "^r" S_DIM " reveal   ")) ||
+            !view_buf_puts(out, chatgpt ? S_KEY "^s" S_DIM " connect   "
+                                  : S_KEY "^s" S_DIM " save   ") ||
             !view_buf_puts(out, S_KEY "esc" S_DIM))
             return false;
         if (!view_buf_puts(out, a->onboarding ? " quit" S_RST : " back" S_RST))

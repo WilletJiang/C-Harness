@@ -1,4 +1,5 @@
 """Accept a new TUI message after an interrupted tool run."""
+import base64
 import fcntl
 import http.server
 import json
@@ -24,6 +25,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if any(item.get("type") == "function_call_output" for item in request["input"]):
+            self.server.recovery_input = request["input"][-1]["content"]
             output = [{"type": "message", "role": "assistant",
                        "content": [{"type": "output_text", "text": "Recovered turn."}]}]
         else:
@@ -45,6 +47,10 @@ def main():
         test = root / "test"
         test.write_text("#!/bin/sh\nexec sleep 10\n")
         test.chmod(0o700)
+        (root / "draft image.png").write_bytes(base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/"
+            "ScLbtAAAAABJRU5ErkJggg=="
+        ))
         db = root / "test.db"
         env = dict(os.environ, TERM="xterm-256color", AH_ACCESS_TOKEN="outcome-fixture",
                    AH_TUI_MATH="text", XDG_CONFIG_HOME=str(root / "config"))
@@ -55,6 +61,10 @@ def main():
         thread.start()
         try:
             exercise(Path(sys.argv[1]).resolve(), root, db, env, opts)
+            content = server.recovery_input
+            assert [part["type"] for part in content] == ["input_text", "input_image"]
+            assert content[0]["text"] == "Continue with the next question."
+            assert content[1]["image_url"].startswith("data:image/png;base64,")
         finally:
             server.shutdown()
             thread.join()
@@ -83,6 +93,10 @@ def exercise(binary, root, db, env, opts):
                                stdout=slave, stderr=slave, start_new_session=True)
     try:
         receive(master, b"Tool result unconfirmed. Send a new message.")
+        os.write(master, b"/context\r")
+        receive(master, b'"enabled": true')
+        os.write(master, b'/image "draft image.png"\r')
+        receive(master, b"draft image.png")
         os.write(master, b"Continue with the next question.\r")
         receive(master, b"Recovered turn.")
         with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
@@ -96,7 +110,7 @@ def exercise(binary, root, db, env, opts):
             assert "cancelled" in json.loads(results[1][2])["error"]
             items = [json.loads(raw) for raw, in conn.execute("SELECT json FROM items ORDER BY seq")]
             new_input = next(i for i, item in enumerate(items)
-                             if item.get("content") == "Continue with the next question.")
+                             if item.get("role") == "user" and isinstance(item.get("content"), list))
             assert [item["call_id"] for item in items[new_input-2:new_input]] == ["test-once", "old-write"]
         assert not (root / "old.txt").exists()
     finally:

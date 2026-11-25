@@ -21,7 +21,14 @@ def obtain_token(manager, interactive):
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in {"login", "reuse"}:
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if mode == "refresh" and len(sys.argv) == 4:
+        fingerprint = sys.argv[3]
+        if len(fingerprint) != 64 or any(c not in "0123456789abcdef" for c in fingerprint):
+            return 2
+    elif mode in {"login", "reuse"} and len(sys.argv) == 3:
+        fingerprint = None
+    else:
         return 2
     fd = int(sys.argv[2])
     if fd < 3 or not stat.S_ISFIFO(os.fstat(fd).st_mode):
@@ -30,14 +37,18 @@ def main():
     with os.fdopen(fd, "wb") as channel:
         try:
             manager = SessionManager(KeychainVault(), DEFAULT_PROFILE)
-            token = obtain_token(manager, sys.argv[1] == "login").encode("ascii")
+            token = (manager.access_token(rejected_sha256=fingerprint) if fingerprint
+                     else obtain_token(manager, mode == "login")).encode("ascii")
             if not token or len(token) > 16384 or any(b < 33 or b > 126 for b in token):
                 raise AuthError("protocol", "Invalid access token")
         except (AuthError, VaultError, UnicodeError) as error:
             code = getattr(error, "code", "keychain")
             if code in UNUSABLE:
                 code = "login_required"
-            allowed = {"login_required", "access_denied", "timeout", "network", "keychain"}
+            elif getattr(error, "retryable", False) and code != "refresh_deferred":
+                code = "network"
+            allowed = {"login_required", "access_denied", "timeout", "network", "keychain",
+                       "refresh_deferred"}
             channel.write(("error " + (code if code in allowed else "protocol") + "\n").encode())
             return 1
         channel.write(b"ok " + token + b"\n")

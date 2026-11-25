@@ -23,6 +23,8 @@ add_library(ah STATIC
   src/core/observations.c
   src/core/observe.c
   src/core/operations.c
+  src/core/questions.c
+  src/core/input_items.c
   src/core/recovery.c
   src/core/request.c
   src/core/request_tools.c
@@ -71,6 +73,12 @@ add_library(ah STATIC
   src/providers/responses.c
   src/providers/responses_async.c
   src/providers/responses_http.c
+  src/providers/responses_ws.c
+  src/providers/responses_ws_context.c
+  src/providers/responses_ws_io.c
+  src/providers/responses_ws_steer.c
+  src/providers/responses_policy.c
+  src/providers/responses_auth.c
   src/providers/turn_route.c
   src/providers/responses_metrics.c
   src/providers/stream.c
@@ -123,6 +131,9 @@ target_include_directories(ah PUBLIC
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_include_directories(ah PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(ah PRIVATE ah_json ah_toml CURL::libcurl SQLite::SQLite3 Threads::Threads)
+if(AH_HAVE_CURL_WS)
+  target_compile_definitions(ah PRIVATE AH_HAVE_CURL_WS=1)
+endif()
 if(APPLE)
   target_link_libraries(ah PRIVATE "-framework CoreFoundation")
 elseif(UNIX)

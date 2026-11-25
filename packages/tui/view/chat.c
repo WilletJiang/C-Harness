@@ -1,96 +1,14 @@
-// Inline chat frame: stream preview, command palette, and composer.
+// Inline chat frame: stream preview, palette, pending card, and composer.
 #include "internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum { SPIN_MS = 90, PALETTE_ROWS = 6, PREVIEW_ROWS = 6 };
+enum { BUSY_PULSE_MS = 250, PALETTE_ROWS = 6, PREVIEW_ROWS = 5 };
 
-static const char *const spinner[] = {
-    "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc",
-    "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f",
-};
-#define SPIN_FRAMES (sizeof(spinner) / sizeof(*spinner))
-
-static void format_elapsed(char *out, size_t size, uint64_t ms) {
-    uint64_t s = ms / 1000;
-    if (s < 60)
-        snprintf(out, size, "%us", (unsigned)s);
-    else if (s < 3600)
-        snprintf(out, size, "%um %02us", (unsigned)(s / 60), (unsigned)(s % 60));
-    else
-        snprintf(out, size, "%uh %02um", (unsigned)(s / 3600), (unsigned)(s / 60 % 60));
-}
-
-static bool append_meta_border(text_buf *out, const tui_view_status *status, unsigned width,
-                               const char *bcolor) {
-    // Build embedded bottom-right metadata: " model · state · turn N "
-    const char *model = status->model && *status->model ? status->model : NULL;
-    const char *state = status->state && *status->state ? status->state : NULL;
-    char turn_buf[32] = "";
-    if (status->turn)
-        snprintf(turn_buf, sizeof(turn_buf), "turn %u", status->turn);
-
-    unsigned meta_w = 0;
-    bool has_meta = false;
-    if (model) {
-        meta_w += view_span_width(model, strlen(model));
-        has_meta = true;
-    }
-    if (state) {
-        meta_w += (has_meta ? 3 : 0) + view_span_width(state, strlen(state));
-        has_meta = true;
-    }
-    if (turn_buf[0]) {
-        meta_w += (has_meta ? 3 : 0) + view_span_width(turn_buf, strlen(turn_buf));
-        has_meta = true;
-    }
-    if (status->has_pending) {
-        meta_w += (has_meta ? 3 : 0) + 9; // "! pending"
-        has_meta = true;
-    }
-
-    if (!view_buf_puts(out, bcolor) || !view_buf_puts(out, "\xe2\x95\xb0")) // ╰
-        return false;
-    if (has_meta && width >= meta_w + 6) {
-        unsigned fill = width - 2 - (meta_w + 2) - 1;
-        if (!view_buf_repeat(out, "\xe2\x94\x80", fill) || !view_buf_put(out, " ", 1))
-            return false;
-        bool sep = false;
-        if (model) {
-            if (!view_buf_puts(out, S_GOLD) || !view_buf_puts(out, model))
-                return false;
-            sep = true;
-        }
-        if (state) {
-            if (sep && !view_buf_puts(out, S_FAINT " \xc2\xb7 "))
-                return false;
-            if (!view_buf_puts(out, view_status_color(state, status->has_pending, status->busy)) ||
-                !view_buf_puts(out, state))
-                return false;
-            sep = true;
-        }
-        if (turn_buf[0]) {
-            if (sep && !view_buf_puts(out, S_FAINT " \xc2\xb7 "))
-                return false;
-            if (!view_buf_puts(out, S_DIM) || !view_buf_puts(out, turn_buf))
-                return false;
-            sep = true;
-        }
-        if (status->has_pending) {
-            if (sep && !view_buf_puts(out, S_FAINT " \xc2\xb7 "))
-                return false;
-            if (!view_buf_puts(out, S_AMBER "! pending"))
-                return false;
-        }
-        if (!view_buf_puts(out, " ") || !view_buf_puts(out, bcolor) ||
-            !view_buf_puts(out, "\xe2\x94\x80\xe2\x95\xaf" S_RST)) // ─╯
-            return false;
-    } else {
-        if (!view_buf_repeat(out, "\xe2\x94\x80", width - 2) || !view_buf_puts(out, "\xe2\x95\xaf" S_RST))
-            return false;
-    }
-    return true;
+static bool state_is_quiet(const char *s) {
+    return !s || !*s || !strcmp(s, "ready") || !strcmp(s, "completed") || !strcmp(s, "running") ||
+           !strcmp(s, "idle");
 }
 
 bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned cols, unsigned rows,
@@ -98,19 +16,32 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
     unsigned width = view_frame_width(cols);
     unsigned budget = rows > 1 ? rows - 1 : 1;
     bool boxed = view_boxed_mode(cols, rows);
-    if (status->busy && !v->was_busy)
-        v->busy_since = now_ms;
-    v->was_busy = status->busy;
-
     if (!view_layout_draft(v, cols, boxed))
         return false;
     view_refresh_matches(v, status);
 
     size_t pal_items = v->match_count < PALETTE_ROWS ? v->match_count : PALETTE_ROWS;
-    size_t pal_rows = pal_items ? (boxed ? pal_items + 2 : pal_items) : 0;
+    // Seamless unified container: palette shares its divider with the composer top border
+    size_t pal_rows = pal_items ? (boxed ? pal_items + 1 : pal_items) : 0;
+    bool has_pending_card = !pal_items && boxed && status->pending && status->pending->active;
+    text_row *pend_rows = NULL;
+    size_t pend_count = 0, pend_cap = 0;
+    const char *pend_text = has_pending_card && status->pending->summary ? status->pending->summary : "";
+    unsigned pend_w = width > 6 ? width - 6 : 2;
+    if (has_pending_card && *pend_text) {
+        if (!view_wrap(pend_text, strlen(pend_text), pend_w, &pend_rows, &pend_count, &pend_cap)) {
+            free(pend_rows);
+            return false;
+        }
+        if (pend_count > 3)
+            pend_count = 3;
+    }
+    size_t pend_card_rows = has_pending_card ? (pend_count ? pend_count + 1 : 2) : 0;
     bool has_notice = status->notice && *status->notice;
+    bool has_image = status->image_name && *status->image_name;
     size_t busy_rows = status->busy ? 1 : 0;
     size_t notice_rows = has_notice ? 1 : 0;
+    size_t image_rows = has_image ? 1 : 0;
     size_t footer_rows = boxed ? 1 : 0;
     size_t box_chrome = boxed ? 2 : 0;
     size_t ed_need = v->row_count;
@@ -122,6 +53,7 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
     size_t plen = preview ? strlen(preview) : 0;
     unsigned prev_w = width > 3 ? width - 2 : width;
     if (plen && !view_wrap(preview, plen, prev_w, &prow, &pcount, &pcap)) {
+        free(pend_rows);
         free(prow);
         return false;
     }
@@ -129,23 +61,24 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
         --pcount;
     preview_need = pcount < PREVIEW_ROWS ? pcount : PREVIEW_ROWS;
 
-    // Row budget allocation: composer box first, then palette, status, footer, preview
+    // Row budget allocation: composer box first, then palette/pending card, status, footer, preview
     size_t ed = ed_need;
     size_t max_ed = budget > box_chrome ? budget - box_chrome : 1;
     if (ed > max_ed)
         ed = max_ed;
-    if (ed + box_chrome + pal_rows + busy_rows + notice_rows + footer_rows > budget) {
-        size_t keep = box_chrome + pal_rows + busy_rows + notice_rows + footer_rows;
+    if (ed + box_chrome + pal_rows + pend_card_rows + busy_rows + notice_rows + image_rows + footer_rows >
+        budget) {
+        size_t keep = box_chrome + pal_rows + pend_card_rows + busy_rows + notice_rows + image_rows + footer_rows;
         ed = budget > keep ? budget - keep : 1;
         if (ed > ed_need)
             ed = ed_need;
         if (ed + box_chrome > budget)
-            boxed = false, box_chrome = 0, footer_rows = 0, pal_rows = pal_items;
+            boxed = false, box_chrome = 0, footer_rows = 0, pal_rows = pal_items, pend_card_rows = 0;
     }
     size_t left = budget > ed + box_chrome ? budget - ed - box_chrome : 0;
     if (pal_rows > left) {
-        if (boxed && left >= 3) {
-            pal_items = left - 2;
+        if (boxed && left >= 2) {
+            pal_items = left - 1;
             pal_rows = left;
         } else if (!boxed && left >= 1) {
             pal_items = left;
@@ -155,12 +88,18 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
         }
     }
     left -= pal_rows;
+    size_t show_pend = pend_card_rows <= left ? pend_card_rows : 0;
+    left -= show_pend;
     size_t show_busy = busy_rows <= left ? busy_rows : 0;
     left -= show_busy;
     size_t show_notice = notice_rows <= left ? notice_rows : 0;
     left -= show_notice;
+    size_t show_image = image_rows <= left ? image_rows : 0;
+    left -= show_image;
     size_t show_footer = footer_rows <= left ? footer_rows : 0;
     left -= show_footer;
+    size_t show_gap = (boxed && left > 0) ? 1 : 0;
+    left -= show_gap;
     size_t show_prev = preview_need < left ? preview_need : left;
 
     text_buf *out = &v->out;
@@ -170,28 +109,60 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
     out->data[0] = 0;
     unsigned lines = 0, cursor_row = 0, cursor_col = 0;
 
-    // 1. Streaming preview rail
+    // 1. Live streaming preview (aligned at column 2 to match committed assistant prose)
     for (size_t i = pcount - show_prev; i < pcount; ++i) {
-        if (!view_newline(out, &lines) || !view_buf_puts(out, S_FAINT "\xe2\x94\x82 " S_TEXT) ||
+        if (!view_newline(out, &lines) || !view_buf_puts(out, "  " S_TEXT) ||
             !view_emit_line(out, preview + prow[i].start, prow[i].end - prow[i].start, prev_w, NULL) ||
             !view_buf_puts(out, S_RST))
             goto fail;
     }
 
-    // 2. Busy strip (smooth Braille spinner + elapsed + right-aligned esc hint)
+    // 2. Busy strip: one pulsing glyph, stable label, and cancel shortcut.
     if (show_busy) {
-        char elapsed[32];
-        format_elapsed(elapsed, sizeof(elapsed), now_ms - v->busy_since);
-        const char *spin = spinner[(now_ms / SPIN_MS) % SPIN_FRAMES];
-        const char *verb = plen ? "Streaming" : "Working";
         const char *hint = "esc to cancel";
-        unsigned used = 0;
-        if (!view_newline(out, &lines) || !view_buf_puts(out, " ") || !view_buf_puts(out, S_ACCENT) ||
-            !view_buf_puts(out, spin) || !view_buf_puts(out, " " S_TEXT) || !view_buf_puts(out, verb) ||
-            !view_buf_puts(out, S_DIM "  ") || !view_buf_puts(out, elapsed) || !view_buf_puts(out, S_RST))
-            goto fail;
-        used = 1 + 1 + 1 + (unsigned)strlen(verb) + 2 + (unsigned)strlen(elapsed);
         unsigned hlen = (unsigned)strlen(hint);
+        const char *pulse = now_ms / BUSY_PULSE_MS % 4 < 2 ? S_ACCENT : S_DIM;
+        if (!view_newline(out, &lines) || !view_buf_puts(out, "  ") ||
+            !view_buf_puts(out, pulse) || !view_buf_puts(out, "\xe2\x97\x8c " S_RST S_TEXT))
+            goto fail;
+        unsigned used = 4;
+        if (status->activity && *status->activity) {
+            const char *act = status->activity;
+            size_t vlen = 0;
+            while (act[vlen] && act[vlen] != ' ')
+                ++vlen;
+            if (!view_buf_put(out, act, vlen) || !view_buf_puts(out, S_RST))
+                goto fail;
+            used += (unsigned)vlen;
+            const char *rest = act + vlen;
+            if (*rest) {
+                char extra[24] = "";
+                if (status->active_tools > 1)
+                    snprintf(extra, sizeof(extra), " (+%u)", status->active_tools - 1);
+                unsigned max_rest = width > used + hlen + 8 ? width - used - hlen - 8
+                                    : width > used + 2      ? width - used - 2
+                                                            : 4;
+                if (!view_buf_puts(out, S_TEXT))
+                    goto fail;
+                unsigned ru = 0;
+                if (!view_emit_line(out, rest, strlen(rest), max_rest, &ru) ||
+                    !view_buf_puts(out, S_RST))
+                    goto fail;
+                used += ru;
+                if (extra[0] && used + strlen(extra) + 3 <= width) {
+                    if (!view_buf_puts(out, S_DIM) || !view_buf_puts(out, extra) ||
+                        !view_buf_puts(out, S_RST))
+                        goto fail;
+                    used += (unsigned)strlen(extra);
+                }
+            }
+        } else {
+            const char *verb = plen ? "Streaming" : "Thinking";
+            size_t vlen = strlen(verb);
+            if (!view_buf_put(out, verb, vlen) || !view_buf_puts(out, S_RST))
+                goto fail;
+            used += (unsigned)vlen;
+        }
         if (used + hlen + 4 <= width) {
             if (!view_buf_repeat(out, " ", width - used - hlen - 1) ||
                 !view_buf_puts(out, S_FAINT) || !view_buf_puts(out, hint) || !view_buf_puts(out, S_RST))
@@ -202,12 +173,98 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
     // 3. Notice strip
     if (show_notice) {
         const char *bar = status->notice_error ? S_RED : status->has_pending ? S_AMBER : S_ACCENT;
-        if (!view_newline(out, &lines) || !view_buf_puts(out, " ") || !view_buf_puts(out, bar) ||
-            !view_buf_puts(out, "\xe2\x96\x8e " S_TEXT) ||
+        if (!view_newline(out, &lines) || !view_buf_puts(out, "  ") || !view_buf_puts(out, bar) ||
+            !view_buf_puts(out, "\xe2\x96\x8e " S_RST S_TEXT) ||
             !view_emit_line(out, status->notice, strlen(status->notice),
-                       width > 4 ? width - 4 : width, NULL) ||
+                       width > 5 ? width - 5 : width, NULL) ||
             !view_buf_puts(out, S_RST))
             goto fail;
+    }
+    if (show_image) {
+        const char *label = "  Image  ";
+        unsigned lead = (unsigned)strlen(label);
+        if (!view_newline(out, &lines) || !view_buf_puts(out, S_DIM) ||
+            !view_emit_line(out, label, lead, width, NULL) || !view_buf_puts(out, S_TEXT) ||
+            (width > lead && !view_emit_line(out, status->image_name, strlen(status->image_name),
+                                             width - lead, NULL)) || !view_buf_puts(out, S_RST))
+            goto fail;
+    }
+
+    // 3a. Breathing-room blank line separating conversation/live activity from composer box
+    if (show_gap && !view_newline(out, &lines))
+        goto fail;
+
+    // 3b. Inline Pending Approval / Question Card above the composer
+    if (show_pend) {
+        const tui_pending_card *pc = status->pending;
+        bool is_appr = pc->kind && !strcmp(pc->kind, "approval");
+        bool is_inp = pc->kind && !strcmp(pc->kind, "input");
+        const char *pcol = is_inp ? S_ACCENT : S_AMBER;
+        const char *hdr = is_appr ? " ! Approval required "
+                          : is_inp ? " ? Agent question "
+                                   : " ! Unknown tool outcome ";
+        unsigned hw = view_span_width(hdr, strlen(hdr));
+        const char *tname = pc->tool && *pc->tool ? pc->tool : "";
+        unsigned tw = *tname ? view_span_width(tname, strlen(tname)) + 2 : 0;
+        if (!view_newline(out, &lines) || !view_buf_puts(out, pcol) || !view_buf_puts(out, "\xe2\x95\xad\xe2\x94\x80"))
+            goto fail;
+        if (width >= hw + tw + 5) {
+            if (!view_buf_puts(out, S_BOLD) || !view_buf_puts(out, hdr) || !view_buf_puts(out, S_RST) ||
+                !view_buf_puts(out, pcol) ||
+                !view_buf_repeat(out, "\xe2\x94\x80", width - 3 - hw - tw - 1))
+                goto fail;
+            if (*tname) {
+                if (!view_buf_puts(out, S_GOLD " ") || !view_buf_puts(out, tname) || !view_buf_puts(out, " ") ||
+                    !view_buf_puts(out, pcol))
+                    goto fail;
+            }
+            if (!view_buf_puts(out, "\xe2\x94\x80\xe2\x95\xae" S_RST))
+                goto fail;
+        } else {
+            if (!view_buf_repeat(out, "\xe2\x94\x80", width - 3) || !view_buf_puts(out, "\xe2\x95\xae" S_RST))
+                goto fail;
+        }
+        size_t body_lines = pend_count ? pend_count : 1;
+        for (size_t i = 0; i < body_lines; ++i) {
+            if (!view_newline(out, &lines) || !view_buf_puts(out, pcol) || !view_buf_puts(out, "\xe2\x94\x82  " S_RST))
+                goto fail;
+            if (pend_count) {
+                const text_row *pr = &pend_rows[i];
+                if (!view_render_detail_line(out, pend_text + pr->start, pr->end - pr->start, pend_w))
+                    goto fail;
+            } else {
+                const char *fallback = is_appr ? "Review tool call before executing"
+                                               : "Waiting for user response";
+                if (!view_buf_puts(out, S_DIM) || !view_emit_padded(out, fallback, strlen(fallback), pend_w) ||
+                    !view_buf_puts(out, S_RST))
+                    goto fail;
+            }
+            if (!view_buf_puts(out, "  ") || !view_buf_puts(out, pcol) || !view_buf_puts(out, "\xe2\x94\x82" S_RST))
+                goto fail;
+        }
+        if (!view_newline(out, &lines) || !view_buf_puts(out, pcol) || !view_buf_puts(out, "\xe2\x94\x9c\xe2\x94\x80"))
+            goto fail;
+        if (is_appr && width >= 58) {
+            const char *act_plain = " [y] Approve   [a] Always   [n] Deny   [i] Inspect ";
+            unsigned aw = (unsigned)strlen(act_plain);
+            if (!view_buf_puts(out, " " S_BOLD S_TEXT "[y]" S_RST S_TEXT " Approve   " S_ACCENT "[a]"
+                               S_RST S_TEXT " Always   " S_KEY "[n]" S_DIM " Deny   " S_KEY "[i]"
+                               S_DIM " Inspect ") ||
+                !view_buf_puts(out, pcol) || !view_buf_repeat(out, "\xe2\x94\x80", width - 3 - aw) ||
+                !view_buf_puts(out, "\xe2\x94\xa4" S_RST))
+                goto fail;
+        } else if (is_appr && width >= 42) {
+            const char *act_plain = " [y] Approve   [a] Always   [n] Deny ";
+            unsigned aw = (unsigned)strlen(act_plain);
+            if (!view_buf_puts(out, " " S_BOLD S_TEXT "[y]" S_RST S_TEXT " Approve   " S_ACCENT "[a]"
+                               S_RST S_TEXT " Always   " S_KEY "[n]" S_DIM " Deny ") ||
+                !view_buf_puts(out, pcol) || !view_buf_repeat(out, "\xe2\x94\x80", width - 3 - aw) ||
+                !view_buf_puts(out, "\xe2\x94\xa4" S_RST))
+                goto fail;
+        } else {
+            if (!view_buf_repeat(out, "\xe2\x94\x80", width - 3) || !view_buf_puts(out, "\xe2\x94\xa4" S_RST))
+                goto fail;
+        }
     }
 
     // 4. Floating Slash Command Palette ABOVE the composer box
@@ -260,7 +317,7 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
                 goto fail;
             unsigned row_used = 0;
             if (sel) {
-                if (!view_buf_puts(out, S_SEL_BOLD " \xe2\x80\xba /"))
+                if (!view_buf_puts(out, S_SEL_CHEV " \xe2\x80\xba " S_SEL_BOLD "/"))
                     goto fail;
             } else {
                 if (!view_buf_puts(out, S_TEXT "   /"))
@@ -300,20 +357,20 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
                     goto fail;
             }
         }
-        if (boxed) {
-            if (!view_newline(out, &lines) || !view_buf_puts(out, S_BORDER "\xe2\x95\xb0") ||
-                !view_buf_repeat(out, "\xe2\x94\x80", width - 2) ||
-                !view_buf_puts(out, "\xe2\x95\xaf" S_RST))
-                goto fail;
-        }
     }
 
-    // 5. Thin-Border Composer Box
-    const char *bcolor = status->busy ? S_BORDER_HI : S_BORDER;
+    // 5. Thin-Border Composer Box (calm neutral border; seamlessly joined with ├...┤ when palette is open)
+    const char *bcolor = S_BORDER;
     if (boxed) {
-        if (!view_newline(out, &lines) || !view_buf_puts(out, bcolor) || !view_buf_puts(out, "\xe2\x95\xad") ||
-            !view_buf_repeat(out, "\xe2\x94\x80", width - 2) || !view_buf_puts(out, "\xe2\x95\xae" S_RST))
-            goto fail;
+        if (pal_items) {
+            if (!view_newline(out, &lines) || !view_buf_puts(out, bcolor) || !view_buf_puts(out, "\xe2\x94\x9c") ||
+                !view_buf_repeat(out, "\xe2\x94\x80", width - 2) || !view_buf_puts(out, "\xe2\x94\xa4" S_RST))
+                goto fail;
+        } else if (!show_pend) {
+            if (!view_newline(out, &lines) || !view_buf_puts(out, bcolor) || !view_buf_puts(out, "\xe2\x95\xad") ||
+                !view_buf_repeat(out, "\xe2\x94\x80", width - 2) || !view_buf_puts(out, "\xe2\x95\xae" S_RST))
+                goto fail;
+        }
     }
 
     size_t crow = view_row_of(v, v->cursor);
@@ -343,8 +400,18 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
         }
         unsigned used = 0;
         if (empty_draft && i == 0) {
-            const char *ph = status->busy ? "Queue steering message while running..."
-                                          : "Ask ah anything, or type / for commands";
+            const char *ph = status->replying
+                                 ? "Type your answer, or press Esc to return to steering"
+                                 : status->busy
+                                 ? "Queue steering message while running..."
+                                 : (status->pending && status->pending->active &&
+                                    status->pending->kind && !strcmp(status->pending->kind, "input"))
+                                       ? "Type your reply to the agent and press enter..."
+                                       : (status->pending && status->pending->active &&
+                                          status->pending->kind &&
+                                          !strcmp(status->pending->kind, "approval"))
+                                             ? "Press y to approve, a for always, n to deny, or i to inspect"
+                                             : "Ask ah anything, or type / for commands";
             if (!view_buf_puts(out, S_FAINT) || !view_emit_line(out, ph, strlen(ph), ew, &used) ||
                 !view_buf_puts(out, S_RST))
                 goto fail;
@@ -371,20 +438,40 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
     }
 
     if (boxed) {
-        if (!view_newline(out, &lines) || !append_meta_border(out, status, width, bcolor))
+        if (!view_newline(out, &lines) || !view_buf_puts(out, bcolor) ||
+            !view_buf_puts(out, "\xe2\x95\xb0") || !view_buf_repeat(out, "\xe2\x94\x80", width - 2) ||
+            !view_buf_puts(out, "\xe2\x95\xaf" S_RST))
             goto fail;
     }
 
-    // 6. Bottom shortcut & workspace context strip
+    // 6. Single quiet status line below the pure border: model/mode on left, workspace on right
     if (show_footer) {
-        if (!view_newline(out, &lines))
+        if (!view_newline(out, &lines) || !view_buf_puts(out, "  "))
             goto fail;
-        const char *left_plain = "enter send  ·  / commands  ·  ^j newline  ·  ^c quit";
-        unsigned lw = view_span_width(left_plain, strlen(left_plain)) + 1;
-        if (!view_buf_puts(out, " " S_KEY "enter" S_DIM " send  \xc2\xb7  " S_KEY "/" S_DIM
-                           " commands  \xc2\xb7  " S_KEY "^j" S_DIM " newline  \xc2\xb7  " S_KEY
-                           "^c" S_DIM " quit" S_RST))
-            goto fail;
+        unsigned lw = 2;
+        const char *model = status->model && *status->model ? status->model : NULL;
+        const char *state =
+            !status->busy && !state_is_quiet(status->state) ? status->state : NULL;
+        if (model) {
+            unsigned mw = 0;
+            if (!view_buf_puts(out, S_DIM) ||
+                !view_emit_line(out, model, strlen(model), width > lw ? width - lw : 0, &mw) ||
+                !view_buf_puts(out, S_RST))
+                goto fail;
+            lw += mw;
+        }
+        if (state && lw + 4 < width) {
+            if (lw > 2 && !view_buf_puts(out, "   "))
+                goto fail;
+            if (lw > 2)
+                lw += 3;
+            unsigned sw = 0;
+            if (!view_buf_puts(out, view_status_color(state, status->has_pending, false)) ||
+                !view_emit_line(out, state, strlen(state), width > lw ? width - lw : 0, &sw) ||
+                !view_buf_puts(out, S_RST))
+                goto fail;
+            lw += sw;
+        }
         const char *cwd = status->cwd && *status->cwd ? status->cwd : NULL;
         const char *branch = status->branch && *status->branch ? status->branch : NULL;
         if (cwd || branch) {
@@ -396,16 +483,21 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
                     goto fail;
                 if (cwd && (!view_buf_puts(out, S_DIM) || !view_buf_puts(out, cwd)))
                     goto fail;
-                if (cwd && branch && !view_buf_puts(out, S_FAINT " \xc2\xb7 "))
-                    goto fail;
-                if (branch && (!view_buf_puts(out, S_LAVENDER) || !view_buf_puts(out, branch)))
-                    goto fail;
+                if (cwd && branch) {
+                    if (!view_buf_puts(out, S_FAINT " (" S_RST S_DIM) || !view_buf_puts(out, branch) ||
+                        !view_buf_puts(out, S_FAINT ")"))
+                        goto fail;
+                } else if (branch) {
+                    if (!view_buf_puts(out, S_DIM) || !view_buf_puts(out, branch))
+                        goto fail;
+                }
                 if (!view_buf_puts(out, S_RST))
                     goto fail;
             }
         }
     }
 
+    free(pend_rows);
     free(prow);
     frame->text = out->data;
     frame->lines = lines ? lines : 1;
@@ -414,6 +506,7 @@ bool tui_view_render_chat(tui_view *v, const tui_view_status *status, unsigned c
     frame->hide_cursor = false;
     return true;
 fail:
+    free(pend_rows);
     free(prow);
     return false;
 }
@@ -421,5 +514,5 @@ fail:
 int tui_view_timeout(const tui_view_status *status, uint64_t now_ms) {
     if (!status || !status->busy)
         return -1;
-    return (int)(SPIN_MS - now_ms % SPIN_MS);
+    return (int)(BUSY_PULSE_MS - now_ms % BUSY_PULSE_MS);
 }

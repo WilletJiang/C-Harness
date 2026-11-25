@@ -76,6 +76,12 @@ void tui_config_init_paths(tui_app *app) {
     if (n <= 0 || (size_t)n >= sizeof(app->config_path)) {
         app->config_path[0] = 0;
         snprintf(app->config_display, sizeof(app->config_display), "(this run only)");
+    } else {
+        const char *leaf = strrchr(app->config_path, '/');
+        n = snprintf(app->prefs_path, sizeof(app->prefs_path), "%.*s/tui-preferences.json",
+                     (int)(leaf - app->config_path), app->config_path);
+        if (n < 0 || (size_t)n >= sizeof(app->prefs_path))
+            app->prefs_path[0] = 0;
     }
 }
 
@@ -105,7 +111,19 @@ void tui_config_load(tui_app *app) {
             strcpy(app->token_source, "saved");
         }
     }
+    if (app->chatgpt)
+        (void)ah_responses_set_refresh(app->responses, tui_oauth_rejected, NULL, &ignored);
     close_profile(&saved);
+    profile prefs = read_profile(app->prefs_path);
+    char *workspace = realpath(app->cli->workspace ? app->cli->workspace : ".", NULL);
+    const char *saved_workspace = profile_string(&prefs, "workspace");
+    const char *saved_endpoint = profile_string(&prefs, "endpoint");
+    app->approve_all = workspace && saved_workspace && saved_endpoint &&
+                       !strcmp(workspace, saved_workspace) && !strcmp(app->endpoint, saved_endpoint) &&
+                       yyjson_get_bool(yyjson_obj_get(yyjson_doc_get_root(prefs.doc), "yolo"));
+    ah_set_approve_all(app->cli->engine, app->approve_all);
+    free(workspace);
+    close_profile(&prefs);
 }
 
 static bool make_profile_directory(const char *path) {
@@ -129,6 +147,36 @@ static bool make_profile_directory(const char *path) {
     struct stat st;
     return !lstat(parent, &st) && S_ISDIR(st.st_mode) && st.st_uid == getuid() &&
            !(st.st_mode & 0022);
+}
+
+static bool write_config_json(const char *path, const char *json, size_t length) {
+    if (!*path)
+        return false;
+    char temp[540];
+    snprintf(temp, sizeof(temp), "%s.XXXXXX", path);
+    int fd = make_profile_directory(path) ? mkstemp(temp) : -1;
+    bool ok = fd >= 0 && fchmod(fd, 0600) == 0;
+    size_t used = 0;
+    while (ok && used < length) {
+        ssize_t n = write(fd, json + used, length - used);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            ok = false;
+        else
+            used += (size_t)n;
+    }
+    if (fd >= 0) {
+        if (ok && fsync(fd))
+            ok = false;
+        if (close(fd))
+            ok = false;
+        if (ok && rename(temp, path))
+            ok = false;
+        if (!ok)
+            (void)unlink(temp);
+    }
+    return ok;
 }
 
 static bool write_profile(const tui_app *app, const char *url, const char *token,
@@ -157,30 +205,7 @@ static bool write_profile(const tui_app *app, const char *url, const char *token
     close_profile(&saved);
     if (!json)
         return false;
-    char temp[540];
-    snprintf(temp, sizeof(temp), "%s.XXXXXX", app->config_path);
-    int fd = make_profile_directory(app->config_path) ? mkstemp(temp) : -1;
-    bool ok = fd >= 0 && fchmod(fd, 0600) == 0;
-    size_t used = 0;
-    while (ok && used < length) {
-        ssize_t n = write(fd, json + used, length - used);
-        if (n < 0 && errno == EINTR)
-            continue;
-        if (n <= 0)
-            ok = false;
-        else
-            used += (size_t)n;
-    }
-    if (fd >= 0) {
-        if (ok && fsync(fd))
-            ok = false;
-        if (close(fd))
-            ok = false;
-        if (ok && rename(temp, app->config_path))
-            ok = false;
-        if (!ok)
-            (void)unlink(temp);
-    }
+    bool ok = write_config_json(app->config_path, json, length);
     wipe(json, length);
     free(json);
     return ok;
@@ -192,6 +217,28 @@ bool tui_config_save_model(tui_app *app, const char *model) {
                          !strcmp(app->token_source, "file")))
         return true;
     return write_profile(app, app->endpoint, NULL, model, app->chatgpt);
+}
+
+bool tui_yolo_set(tui_app *app, bool enabled) {
+    app->approve_all = enabled;
+    app->auto_approval_attempt[0] = 0;
+    ah_set_approve_all(app->cli->engine, enabled);
+    char *workspace = realpath(app->cli->workspace ? app->cli->workspace : ".", NULL);
+    yyjson_mut_doc *doc = workspace ? yyjson_mut_doc_new(NULL) : NULL;
+    yyjson_mut_val *root = doc ? yyjson_mut_obj(doc) : NULL;
+    size_t length = 0;
+    char *json = NULL;
+    if (root && yyjson_mut_obj_add_str(doc, root, "workspace", workspace) &&
+        yyjson_mut_obj_add_str(doc, root, "endpoint", app->endpoint) &&
+        yyjson_mut_obj_add_bool(doc, root, "yolo", enabled)) {
+        yyjson_mut_doc_set_root(doc, root);
+        json = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY_TWO_SPACES, &length);
+    }
+    bool saved = json && write_config_json(app->prefs_path, json, length);
+    free(json);
+    yyjson_mut_doc_free(doc);
+    free(workspace);
+    return saved;
 }
 
 void tui_auth_open(tui_app *app, bool onboarding) {
@@ -250,8 +297,16 @@ static ah_code apply_connection(tui_app *app, const char *url, const char *token
     ah_code code = ah_responses_set_connection(app->responses, url, token, error);
     if (code != AH_OK)
         return code;
+    if (chatgpt || token || strcmp(app->endpoint, url))
+        (void)ah_responses_set_refresh(app->responses, chatgpt ? tui_oauth_rejected : NULL,
+                                       NULL, error);
     yyjson_doc_free(app->catalog);
     app->catalog = NULL;
+    if (strcmp(app->endpoint, url)) {
+        app->approve_all = false;
+        app->auto_approval_attempt[0] = 0;
+        ah_set_approve_all(app->cli->engine, false);
+    }
     strcpy(app->endpoint, url);
     strcpy(app->default_model, model);
     app->chatgpt = chatgpt;

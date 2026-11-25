@@ -184,16 +184,14 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "the whole group. Use one file and one edit for a single replacement.",
          ah_apply_schema, AH_EFFECT_EXTERNAL, approval, ah_local_apply, tools, false, NULL},
         {"find",
-         "List regular file paths with mode=files (omit query; path defaults to .), including "
-         "binary files. "
-         "Discovery respects workspace .gitignore rules; include_ignored includes ignored files. "
-         "With query, search a single-line literal in workspace UTF-8 files and return merged "
-         "source "
-         "excerpts with SHA-256 revisions. Use path '.' for root; optional glob matches relative "
-         "paths. "
-         "Skips symlinks, .git, non-text and files over 1 MiB. Bounded scan: narrow path/glob when "
-         "scan_truncated. Paginate with next_offset and snapshot; use read_file for truncated "
-         "excerpts. Unchanged pages may be referenced; force=true repeats the page.",
+         "Use for workspace path discovery and source search. Set mode=files to list paths, "
+         "or pass query to search UTF-8 text and return merged excerpts with SHA-256 revisions. "
+         "Query is literal by default. Set syntax=ere for single-line POSIX extended regular "
+         "expressions such as workspace|root (no backreferences). Narrow with path or glob. "
+         "Respects .gitignore unless include_ignored=true. Skips symlinks and .git; text search "
+         "skips non-text and files over 1 MiB. Narrow the scope if scan_truncated. Paginate "
+         "with next_offset and snapshot. Use read_file for known lines or truncated excerpts. "
+         "Unchanged pages may be referenced; force=true repeats the page.",
          ah_find_schema, AH_EFFECT_READ, false, ah_local_find, tools, true, NULL},
         {"read_file",
          "Read UTF-8 file lines (default 200, max 1000) from offset_line (default 1). "
@@ -219,7 +217,9 @@ ah_code ah_local_tools_register(ah_local_tools *tools, ah_engine *engine, ah_err
          "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
          AH_EFFECT_EXTERNAL, true, ah_local_test, tools, false, NULL},
         {"exec",
-         "Execute argv in the workspace with broad local process authority. This is NOT a sandbox.",
+         "Execute argv in the workspace with broad local process authority. Optional timeout_ms "
+         "(1000..1800000) sets a per-command deadline. Use find for workspace path or source "
+         "search and read_file for known file lines. This is NOT a sandbox.",
          ah_exec_schema, AH_EFFECT_EXTERNAL, true, ah_local_exec, tools, false, NULL}};
     size_t count = sizeof(definitions) / sizeof(*definitions);
     for (size_t i = 0; i < count; ++i) {

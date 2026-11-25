@@ -1,7 +1,9 @@
 #include "tui/app/app.h"
 #include "internal.h"
+#include "hash.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdlib.h>
@@ -26,9 +28,11 @@ static void reap(pid_t pid) {
         continue;
 }
 
-static ah_code start_helper(bool interactive, pid_t *pid, int *read_fd, ah_error *error) {
+static ah_code start_helper(const char *mode, const char *fingerprint, pid_t *pid, int *read_fd,
+                            ah_error *error) {
 #ifndef AH_TUI_PYTHON
-    (void)interactive;
+    (void)mode;
+    (void)fingerprint;
     (void)pid;
     (void)read_fd;
     return ah_fail(error, AH_AUTH, "ChatGPT sign-in requires the optional host adapter");
@@ -53,7 +57,7 @@ static ah_code start_helper(bool interactive, pid_t *pid, int *read_fd, ah_error
             "import sys; sys.path.insert(0, sys.argv.pop(1)); "
             "from packages.host.tui_auth import main; raise SystemExit(main())";
         char *argv[] = {AH_TUI_PYTHON, "-I", "-B", "-c", bootstrap, AH_TUI_HOST_ROOT,
-                       interactive ? "login" : "reuse", "3", NULL};
+                       (char *)mode, "3", (char *)fingerprint, NULL};
         rc = posix_spawn_file_actions_adddup2(&actions, fd[1], 3);
         for (int i = 0; !rc && i < 3; ++i)
             rc = posix_spawn_file_actions_addopen(&actions, i, "/dev/null", O_RDWR, 0);
@@ -88,8 +92,11 @@ static const char *read_token(char *reply, size_t used, ah_error *error) {
                               ? "Browser sign-in timed out"
                           : !strcmp(reply, "error network\n")
                               ? "ChatGPT sign-in could not reach OpenAI"
+                          : !strcmp(reply, "error refresh_deferred\n")
+                              ? "ChatGPT credential refresh is temporarily deferred"
                               : "ChatGPT host adapter did not return a credential";
-    ah_fail(error, AH_AUTH, "%s", message);
+    bool transient = !strcmp(reply, "error network\n") || !strcmp(reply, "error refresh_deferred\n");
+    ah_fail(error, transient ? AH_NETWORK : AH_AUTH, "%s", message);
     return NULL;
 }
 
@@ -109,7 +116,8 @@ ah_code tui_oauth_start(tui_app *app, const char *model, bool interactive, ah_er
     app->oauth_reply = calloc(REPLY_CAP, 1);
     if (!app->oauth_reply)
         return ah_fail(error, AH_IO, "Cannot allocate the ChatGPT credential channel");
-    ah_code code = start_helper(interactive, &app->oauth_pid, &app->oauth_fd, error);
+    ah_code code = start_helper(interactive ? "login" : "reuse", NULL, &app->oauth_pid,
+                                &app->oauth_fd, error);
     if (code == AH_OK && fcntl(app->oauth_fd, F_SETFL, O_NONBLOCK) != 0)
         code = ah_fail(error, AH_IO, "Cannot watch the ChatGPT credential channel");
     if (code != AH_OK) {
@@ -164,23 +172,90 @@ void tui_oauth_read(tui_app *app) {
         tui_show_error(app, error.code, &error);
 }
 
-ah_code tui_oauth_refresh(ah_responses *responses, ah_error *error) {
+static void *reap_refresh(void *context) {
+    reap((pid_t)(intptr_t)context);
+    return NULL;
+}
+
+static void abandon_refresh(pid_t pid) {
+    /* Let a rotation already sent to the issuer finish saving in Keychain. */
+    pthread_t worker;
+    if (!pthread_create(&worker, NULL, reap_refresh, (void *)(intptr_t)pid))
+        pthread_detach(worker);
+    else
+        reap(pid);
+}
+
+static ah_code collect_token(const char *fingerprint, uint64_t deadline, ah_cancel_check cancelled,
+                             void *context, char **token, ah_error *error) {
     char *reply = calloc(REPLY_CAP, 1);
     if (!reply)
         return ah_fail(error, AH_IO, "Cannot allocate the ChatGPT credential channel");
     pid_t pid = 0;
     int fd = -1;
-    ah_code code = start_helper(false, &pid, &fd, error);
+    ah_code code = start_helper(fingerprint ? "refresh" : "reuse", fingerprint, &pid, &fd, error);
     if (code == AH_OK) {
         size_t used = 0;
-        ssize_t n;
-        while ((n = read_more(fd, reply, used)) > 0)
+        struct pollfd input = {.fd = fd, .events = POLLIN};
+        bool eof = false;
+        while (used < REPLY_CAP - 1) {
+            if (cancelled && cancelled(context)) {
+                code = ah_fail(error, AH_CANCELLED, "ChatGPT credential wait cancelled");
+                break;
+            }
+            uint64_t now = ah_now_ms();
+            if (now >= deadline) {
+                code = ah_fail(error, AH_LIMIT, "ChatGPT credential wait timed out");
+                break;
+            }
+            int wait = deadline - now < 50 ? (int)(deadline - now) : 50;
+            int ready = poll(&input, 1, wait);
+            if (ready == 0 || (ready < 0 && errno == EINTR))
+                continue;
+            ssize_t n = ready > 0 ? read_more(fd, reply, used) : -1;
+            if (n <= 0) {
+                eof = n == 0;
+                break;
+            }
             used += (size_t)n;
+        }
         close(fd);
-        reap(pid);
-        const char *token = read_token(reply, used, error);
-        code = token ? ah_responses_set_token(responses, token, error) : AH_AUTH;
+        if (eof) {
+            reap(pid);
+            const char *value = read_token(reply, used, error);
+            if (value)
+                *token = ah_strdup(value);
+            code = !value ? error->code : *token ? AH_OK :
+                   ah_fail(error, AH_IO, "Cannot allocate the ChatGPT credential");
+        } else {
+            abandon_refresh(pid);
+            if (!code)
+                code = ah_fail(error, AH_AUTH, "Invalid ChatGPT credential helper reply");
+        }
     }
     release_reply(reply);
     return code;
+}
+
+ah_code tui_oauth_refresh(ah_responses *responses, ah_error *error) {
+    char *token = NULL;
+    ah_code code = collect_token(NULL, ah_now_ms() + 35000, NULL, NULL, &token, error);
+    if (!code)
+        code = ah_responses_set_token(responses, token, error);
+    if (token) {
+        volatile char *p = token;
+        for (size_t i = 0, n = strlen(token); i < n; ++i)
+            p[i] = 0;
+        free(token);
+    }
+    return code;
+}
+
+ah_code tui_oauth_rejected(void *context, const char *rejected, uint64_t deadline,
+                            ah_cancel_check cancelled, void *cancel_context, char **replacement) {
+    (void)context;
+    char fingerprint[65];
+    ah_hash_bytes(rejected, strlen(rejected), fingerprint);
+    ah_error error = {0};
+    return collect_token(fingerprint, deadline, cancelled, cancel_context, replacement, &error);
 }

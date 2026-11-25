@@ -1,6 +1,7 @@
 #ifndef AH_AGENT_SCHEDULER_H
 #define AH_AGENT_SCHEDULER_H
 #include "agents_internal.h"
+#include "../providers/turn.h"
 
 typedef struct {
     ah_engine *engine;
@@ -9,6 +10,7 @@ typedef struct {
     unsigned request_turn, request_attempt;
     char *request;
     void *handle;
+    responses_turn_steer steer;
     bool recover, cancelled;
     bool notified;
     unsigned notified_turn, notified_attempt, notified_tools;

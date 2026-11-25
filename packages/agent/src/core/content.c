@@ -202,8 +202,8 @@ ah_code core_content_prepare(ah_engine *e, const char *sid, const char *json, co
     content->json = item;
     return AH_OK;
 }
-ah_code ah_submit_content(ah_engine *e, const char *sid, const char *command, const char *json,
-                          ah_error *err) {
+static ah_code submit_content(ah_engine *e, const char *sid, const char *command, const char *json,
+                              bool allow_interruption, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -212,7 +212,17 @@ ah_code ah_submit_content(ah_engine *e, const char *sid, const char *command, co
     core_content content;
     rc = core_content_prepare(e, sid, json, &content, err);
     if (rc == AH_OK)
-        rc = core_submit_item(e, sid, command, content.json, 1, false, &content, err);
+        rc = core_submit_item(e, sid, command, content.json, 1, allow_interruption, &content, err);
     core_content_free(&content);
     return rc;
+}
+
+ah_code ah_submit_content(ah_engine *e, const char *sid, const char *command, const char *json,
+                          ah_error *err) {
+    return submit_content(e, sid, command, json, false, err);
+}
+
+ah_code ah_submit_content_after_interruption(ah_engine *e, const char *sid, const char *command,
+                                             const char *json, ah_error *err) {
+    return submit_content(e, sid, command, json, true, err);
 }

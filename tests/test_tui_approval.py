@@ -81,7 +81,10 @@ def terminal(binary, root, server, *args):
 
 def submit(master, text, expected):
     os.write(master, text.encode() + b"\r")
-    return receive(master, expected)
+    out = receive(master, expected)
+    if expected == b"Turn finished.":
+        out += receive(master, b"Ask ah anything")
+    return out
 
 
 def main():
@@ -96,18 +99,18 @@ def main():
         try:
             with terminal(binary, root, server, "--model", "fixture") as master:
                 submit(master, "default", b"waiting_approval")
-                submit(master, "/deny", b"Worked for")
+                submit(master, "/deny", b"Turn finished.")
                 submit(master, "/auto-approve", b"Auto-approve on")
                 submit(master, "Guarded edits", b"waiting_approval")
                 assert (root / "note.txt").read_text() == "new"
                 assert (root / "existing.txt").read_text() == "after\n"
                 assert not (root / ".env").exists()
-                submit(master, "/deny", b"Worked for")
+                submit(master, "/deny", b"Turn finished.")
                 submit(master, "Process check", b"waiting_approval")
-                submit(master, "/deny", b"Worked for")
+                submit(master, "/deny", b"Turn finished.")
                 submit(master, "/auto-approve", b"Auto-approve off")
                 submit(master, "disabled", b"waiting_approval")
-                submit(master, "/deny", b"Worked for")
+                submit(master, "/deny", b"Turn finished.")
                 submit(master, "/auto-approve", b"Auto-approve on")
                 submit(master, "/quit", b"\x1b[?2004l")
             with sqlite3.connect(db) as conn:
@@ -123,7 +126,21 @@ def main():
                 assert conn.execute("SELECT COUNT(*) FROM events WHERE type='input.submitted'").fetchone() == (4,)
             with terminal(binary, root, server, "--session", session) as master:
                 submit(master, "reopened", b"waiting_approval")
-            assert not (root / "reopened.txt").exists()
+                assert not (root / "reopened.txt").exists()
+                submit(master, "/pending", b"Pending operation")
+                os.write(master, b"A")
+                receive(master, b"Turn finished.")
+                receive(master, b"Ask ah anything")
+                assert (root / "reopened.txt").read_text() == "pending"
+                submit(master, "immediate", b"Turn finished.")
+                assert (root / "immediate.txt").read_text() == "pending"
+                submit(master, "/quit", b"\x1b[?2004l")
+            with terminal(binary, root, server, "--session", session) as master:
+                submit(master, "persists", b"Turn finished.")
+                assert (root / "persists.txt").read_text() == "pending"
+                submit(master, "/yolo off", b"YOLO mode off")
+                submit(master, "opted-out", b"waiting_approval")
+                assert not (root / "opted-out.txt").exists()
         finally:
             server.shutdown()
             thread.join()

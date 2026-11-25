@@ -29,16 +29,20 @@ typedef struct {
 static void style(markdown *md) {
     FILE *out = tui_markup_sink(&md->out);
     fputs("\033[0m", out);
-    if (md->bold)
+    if (md->code)
+        return;
+    if (md->inline_code) {
+        fputs("\033[38;5;208m", out);
+        return;
+    }
+    if (md->underline)
+        fputs("\033[4;38;5;208m", out);
+    else if (md->bold)
         fputs("\033[1m", out);
     if (md->italic)
         fputs("\033[3m", out);
-    if (md->underline)
-        fputs("\033[4m", out);
     if (md->strike)
-        fputs("\033[9m", out);
-    if (md->inline_code)
-        fputs("\033[7m", out);
+        fputs("\033[9;2m", out);
 }
 
 static void write_text(markdown *md, const char *s, size_t size) {
@@ -100,6 +104,7 @@ static int enter_block(MD_BLOCKTYPE type, void *detail, void *opaque) {
         tui_markup_separate(&md->out);
         md->code = true;
         md->out.indent += 2;
+        style(md);
         break;
     case MD_BLOCK_TABLE:
         tui_markup_separate(&md->out);
@@ -172,6 +177,7 @@ static int leave_block(MD_BLOCKTYPE type, void *detail, void *opaque) {
     case MD_BLOCK_CODE:
         md->code = false;
         md->out.indent -= 2;
+        style(md);
         tui_markup_separate(&md->out);
         break;
     default: break;

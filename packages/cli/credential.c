@@ -69,3 +69,13 @@ char *cli_load_token(const char *path) {
     }
     return data;
 }
+
+ah_code cli_reload_token(void *path, const char *rejected, uint64_t deadline_ms,
+                         ah_cancel_check cancelled, void *cancel_context, char **replacement) {
+    (void)rejected;
+    (void)deadline_ms;
+    if (cancelled(cancel_context))
+        return AH_CANCELLED;
+    *replacement = cli_load_token(path);
+    return *replacement ? AH_OK : AH_AUTH;
+}

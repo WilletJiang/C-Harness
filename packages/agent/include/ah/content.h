@@ -18,6 +18,10 @@ extern "C" {
  * Only artifacts in selected native input or tool output parts are expanded. */
 ah_code ah_submit_content(ah_engine *, const char *session_id, const char *command_id,
                           const char *content_json, ah_error *);
+/* Typed input with the same interrupted-tool handling as ah_submit_after_interruption. */
+ah_code ah_submit_content_after_interruption(ah_engine *, const char *session_id,
+                                             const char *command_id, const char *content_json,
+                                             ah_error *);
 
 /* Owner-thread import, regular files only, final symlinks rejected. Supported MIME:
  * image/png, image/jpeg, image/gif, image/webp, application/pdf, text/plain,

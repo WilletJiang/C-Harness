@@ -98,17 +98,40 @@ static void dispatch(cli_context *cli, run_job *job, const char *line) {
     }
     if (!strcmp(method, "steer")) {
         yyjson_val *expected = yyjson_obj_get(obj, "expected_turn");
+        yyjson_val *interrupt = yyjson_obj_get(obj, "interrupt");
         if (expected && (!yyjson_is_uint(expected) || !yyjson_get_uint(expected) ||
                          yyjson_get_uint(expected) > UINT_MAX)) {
             invalid(cli, id, "expected_turn must be a positive turn number");
             goto done;
         }
+        if (interrupt && !yyjson_is_bool(interrupt)) {
+            invalid(cli, id, "interrupt must be boolean");
+            goto done;
+        }
         unsigned turn = 0;
-        code = ah_steer_turn(cli->engine, session, (unsigned)yyjson_get_uint(expected),
-                             str(obj, "command"), str(obj, "text"), &turn, &error);
+        if (yyjson_is_false(interrupt))
+            code = ah_queue_turn_input(cli->engine, session, (unsigned)yyjson_get_uint(expected),
+                                       str(obj, "command"), str(obj, "text"), &turn, &error);
+        else
+            code = ah_steer_turn(cli->engine, session, (unsigned)yyjson_get_uint(expected),
+                                 str(obj, "command"), str(obj, "text"), &turn, &error);
         char ack[64];
         snprintf(ack, sizeof(ack), "{\"queued\":true,\"turn\":%u}", turn);
         reply(cli, id, code, code == AH_OK ? ack : NULL, &error);
+        goto done;
+    }
+    if (running && !strcmp(method, "reply")) {
+        yyjson_val *value = yyjson_obj_get(obj, "value"), *expected = yyjson_obj_get(obj, "expected_turn");
+        if (expected && (!yyjson_is_uint(expected) || !yyjson_get_uint(expected) ||
+                         yyjson_get_uint(expected) > UINT_MAX)) {
+            invalid(cli, id, "expected_turn must be a positive turn number");
+            goto done;
+        }
+        char *value_json = value ? yyjson_val_write(value, 0, NULL) : NULL;
+        code = ah_queue_reply(cli->engine, session, (unsigned)yyjson_get_uint(expected), op,
+                              value_json, &error);
+        free(value_json);
+        reply(cli, id, code, code == AH_OK ? "{\"queued\":true}" : NULL, &error);
         goto done;
     }
     if (running) {

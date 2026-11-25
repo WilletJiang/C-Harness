@@ -74,6 +74,55 @@ static uint32_t random_step(uint32_t *seed) {
     *seed = *seed * 1664525u + 1013904223u;
     return *seed;
 }
+
+static void regex_search(workflow *w) {
+    wf_put(w, "regex.txt", "config\n\nworkspace\nrooted\nother\nroot\n雪\n");
+    const char *query = "{\"path\":\"regex.txt\",\"syntax\":\"ere\",\"query\":\"^(workspace|root)$\","
+                        "\"context_lines\":0,\"max_results\":1}";
+    wf_result first = wf_call(w, ah_local_find, query, 0);
+    assert(first.code == AH_OK && !first.failed);
+    yyjson_val *rows = yyjson_obj_get(first.root, "results");
+    yyjson_val *row = yyjson_arr_get_first(rows);
+    assert(yyjson_get_uint(yyjson_obj_get(row, "start_line")) == 3);
+    assert(yyjson_get_uint(yyjson_obj_get(first.root, "total_excerpts")) == 2);
+    const char *snapshot = yyjson_get_str(yyjson_obj_get(first.root, "snapshot"));
+    assert(snapshot && yyjson_get_uint(yyjson_obj_get(first.root, "next_offset")) == 1);
+    char page[256];
+    snprintf(page, sizeof(page),
+             "{\"path\":\"regex.txt\",\"syntax\":\"ere\",\"query\":\"^(workspace|root)$\","
+             "\"context_lines\":0,\"offset\":1,\"snapshot\":\"%s\"}", snapshot);
+    wf_result second = wf_call(w, ah_local_find, page, 0);
+    assert(second.code == AH_OK && !second.failed);
+    row = yyjson_arr_get_first(yyjson_obj_get(second.root, "results"));
+    assert(yyjson_get_uint(yyjson_obj_get(row, "start_line")) == 6);
+    wf_result_free(&second);
+    snprintf(page, sizeof(page),
+             "{\"path\":\"regex.txt\",\"query\":\"^(workspace|root)$\","
+             "\"context_lines\":0,\"offset\":1,\"snapshot\":\"%s\"}", snapshot);
+    second = wf_call(w, ah_local_find, page, 0);
+    assert(second.failed && yyjson_equals_str(yyjson_obj_get(second.root, "error"), "stale_snapshot"));
+    wf_result_free(&second);
+    wf_result_free(&first);
+
+    const struct { const char *query; size_t count; } patterns[] = {
+        {"^$", 1}, {"workspace[[:space:]]+root", 0}, {"^雪$", 1}, {"workspace", 1},
+        {"missing|workspace|rooted|root|雪", 2}, {"workspace|workspace|missing", 1},
+    };
+    for (size_t i = 0; i < sizeof(patterns) / sizeof(*patterns); ++i) {
+        snprintf(page, sizeof(page),
+                 "{\"path\":\"regex.txt\",\"syntax\":\"ere\",\"query\":\"%s\",\"context_lines\":0}",
+                 patterns[i].query);
+        first = wf_call(w, ah_local_find, page, 0);
+        assert(first.code == AH_OK && !first.failed);
+        assert(yyjson_arr_size(yyjson_obj_get(first.root, "results")) == patterns[i].count);
+        wf_result_free(&first);
+    }
+    first = wf_call(w, ah_local_find, "{\"path\":\"missing\",\"syntax\":\"ere\",\"query\":\"[\"}", 0);
+    assert(first.code == AH_OK && first.failed &&
+           yyjson_equals_str(yyjson_obj_get(first.root, "error"), "invalid"));
+    wf_result_free(&first);
+}
+
 static void utf8_boundaries(void) {
     const struct {
         const char *bytes;
@@ -106,6 +155,7 @@ int main(int argc, char **argv) {
     utf8_boundaries();
     workflow w;
     wf_open(&w, argv[0]);
+    regex_search(&w);
     const char *edge[] = {
         "", "\n", "aa", "aa\n", "\naa\n", "aaa\n\n\n\naaaa", "a\na\na\n\nb\na\n", "雪🙂\r\n🙂雪"};
     for (unsigned c = 0; c <= 5; c++)

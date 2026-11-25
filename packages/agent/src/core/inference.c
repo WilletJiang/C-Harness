@@ -1,6 +1,7 @@
 #include "core.h"
 #include <stdio.h>
 #include "../agents/agents_internal.h"
+#include "../providers/turn.h"
 
 void core_emit_delta(ah_engine *e, const char *sid, const char *text, size_t length) {
     if (!e->config.observer || !text || core_cancelled(e))
@@ -74,7 +75,7 @@ ah_code core_model_intent(ah_engine *e, core_session *session, ah_error *err) {
     return rc;
 }
 ah_code core_model_finish(ah_engine *e, core_session *session, const char *response, ah_code rc,
-                          ah_error *err) {
+                          const responses_turn_steer *steer, ah_error *err) {
     if (core_cancelled(e)) {
         uint64_t after = 0;
         ah_code saved = core_begin(e, &after, err);
@@ -96,6 +97,11 @@ ah_code core_model_finish(ah_engine *e, core_session *session, const char *respo
                  : saved;
         return rc;
     }
+    if (rc == AH_OK && steer && steer->applied) {
+        rc = core_apply_native_steer(e, session, steer->command, err);
+        if (rc == AH_OK && !steer->awaiting_tools)
+            rc = core_publish_user_items(e, session, err);
+    }
     /* This check is the admission boundary. Even a provider that returns completed
      * output after observing cancellation cannot commit stale tool intents. */
     if ((rc == AH_OK || rc == AH_CANCELLED || rc == AH_NETWORK) &&
@@ -115,7 +121,7 @@ ah_code core_model_finish(ah_engine *e, core_session *session, const char *respo
         char *json = ah_mut_write(doc);
         ah_mut_doc_free(doc);
         yyjson_doc_free(reply);
-        ah_code saved = json ? core_drain_steering(e, session, false, json, err)
+        ah_code saved = json ? core_drain_inputs(e, session, false, json, err)
                              : ah_fail(err, AH_IO, "cannot encode interrupted attempt");
         free(json);
         if (saved == AH_OK)
@@ -125,9 +131,12 @@ ah_code core_model_finish(ah_engine *e, core_session *session, const char *respo
     if (rc == AH_OK)
         rc = core_accept_response(e, session, response, err);
     if (rc == AH_OK && session->state == AH_COMPLETED) {
-        rc = core_drain_steering(e, session, true, NULL, err);
-        if (rc == AH_OK && session->state == AH_COMPLETED && !session->completion_committed)
-            rc = core_run_transition(e, session->id, AH_COMPLETED, NULL, NULL, err);
+        rc = core_drain_inputs(e, session, true, NULL, err);
+        if (rc == AH_OK && session->state == AH_COMPLETED && !session->completion_committed) {
+            rc = core_question_finish_state(e, session->id, &session->state, err);
+            if (rc == AH_OK)
+                rc = core_run_transition(e, session->id, session->state, NULL, NULL, err);
+        }
     }
     return rc;
 }

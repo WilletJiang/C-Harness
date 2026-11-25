@@ -175,6 +175,8 @@ ah_code ah_submit_after_interruption(ah_engine *engine, const char *session_id,
 ah_code ah_run(ah_engine *engine, const char *session_id, ah_error *error);
 /* Cross-thread operations. Engine must remain alive until the owner joins. */
 void ah_cancel(ah_engine *engine);
+void ah_set_approve_all(ah_engine *engine, bool enabled);
+bool ah_approve_all(const ah_engine *engine);
 /* Queues a bounded update. Active inference yields and uncommitted model output is discarded.
  * Already admitted tool work settles before the next inference. AH_OK means
  * queued; input.steered is the durable acknowledgment. Retry unacknowledged
@@ -186,6 +188,15 @@ ah_code ah_steer(ah_engine *engine, const char *session_id, const char *command_
 ah_code ah_steer_turn(ah_engine *engine, const char *session_id, unsigned expected_turn,
                       const char *command_id, const char *text, unsigned *accepted_turn,
                       ah_error *error);
+/* Queue text for the next settled request without superseding current inference. */
+ah_code ah_queue_turn_input(ah_engine *engine, const char *session_id, unsigned expected_turn,
+                            const char *command_id, const char *text, unsigned *accepted_turn,
+                            ah_error *error);
+/* Cross-thread reply to a nonblocking ask. It joins the next settled model
+ * boundary without preempting inference. input.question_answered acknowledges
+ * durable delivery; input.reply_rejected reports a closed or mismatched question. */
+ah_code ah_queue_reply(ah_engine *engine, const char *session_id, unsigned expected_turn,
+                       const char *operation_id, const char *reply_json, ah_error *error);
 ah_code ah_resume(ah_engine *engine, const char *session_id, ah_error *error);
 ah_code ah_decide(ah_engine *engine, const char *session_id, const char *operation_id, bool allow,
                   ah_error *error);

@@ -236,18 +236,29 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                             validation.message[0] ? validation.message
                                                   : "tool arguments failed schema validation",
                             ARGUMENTS_REJECTED, err);
-    if (op->approval && op->decision != 1 && !core_auto_approve(registered, op))
+    if (op->approval && op->decision != 1 && !ah_approve_all(e) &&
+        !core_auto_approve(registered, op))
         return core_pause_approval(e, session, op, err);
     if (builtin && strcmp(op->name, "read_result") && strcmp(op->name, "recall")) {
+        bool background = false;
+        if (!strcmp(op->name, "ask") || !strcmp(op->name, "harness_ask")) {
+            yyjson_doc *args = yyjson_read(op->arguments, strlen(op->arguments), 0);
+            if (!args)
+                return ah_fail(err, AH_IO, "cannot read validated question");
+            background = yyjson_is_false(yyjson_obj_get(yyjson_doc_get_root(args), "blocking"));
+            yyjson_doc_free(args);
+        }
         uint64_t after = 0;
         ah_code rc = core_begin(e, &after, err);
         if (rc == AH_OK)
             rc = count_calls(e, session->id, 1, err);
-        if (rc == AH_OK)
+        if (rc == AH_OK && background)
+            rc = core_open_question(e, session, op, err);
+        if (rc == AH_OK && !background)
             rc = core_set_operation(e, session->id, op->id, "input", err);
-        if (rc == AH_OK)
+        if (rc == AH_OK && !background)
             rc = core_state(e, session->id, AH_WAITING_INPUT, err);
-        if (rc == AH_OK)
+        if (rc == AH_OK && !background)
             rc = core_event(e, session->id, op->id, "input.requested", op->arguments, err);
         if (rc == AH_OK) {
             rc = core_commit(e, after, err);
@@ -257,7 +268,8 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
             core_rollback(e);
         if (rc == AH_OK) {
             session->tool_calls++;
-            session->state = AH_WAITING_INPUT;
+            if (!background)
+                session->state = AH_WAITING_INPUT;
         }
         return rc;
     }

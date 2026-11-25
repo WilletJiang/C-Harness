@@ -2,25 +2,26 @@
 #define AH_TUI_VIEW_INTERNAL_H
 #include "view.h"
 
-// Restrained dark-terminal 256-color palette
+// Theme-adaptive minimalist palette: terminal-default fg + mid-gray border + signal orange accent
 #define S_RST       "\033[0m"
 #define S_BOLD      "\033[1m"
-#define S_TEXT      "\033[38;5;252m"
-#define S_DIM       "\033[38;5;244m"
-#define S_FAINT     "\033[38;5;240m"
-#define S_BORDER    "\033[38;5;239m"
-#define S_BORDER_HI "\033[38;5;75m"
-#define S_ACCENT    "\033[38;5;75m"
-#define S_GOLD      "\033[38;5;180m"
-#define S_LAVENDER  "\033[38;5;146m"
-#define S_GREEN     "\033[38;5;114m"
-#define S_AMBER     "\033[38;5;215m"
-#define S_RED       "\033[38;5;203m"
-#define S_KEY       "\033[38;5;250m"
-#define S_SEL_BG    "\033[48;5;24m\033[38;5;231m"
-#define S_SEL_BOLD  "\033[48;5;24m\033[1;38;5;231m"
-#define S_SEL_DESC  "\033[48;5;24m\033[38;5;153m"
-#define S_PILL_ON   "\033[1;48;5;240m\033[38;5;231m"
+#define S_TEXT      ""
+#define S_DIM       "\033[2m"
+#define S_FAINT     "\033[2m"
+#define S_BORDER    "\033[38;5;244m"
+#define S_BORDER_HI "\033[38;5;208m"
+#define S_ACCENT    "\033[38;5;208m"
+#define S_GOLD      ""
+#define S_LAVENDER  "\033[2m"
+#define S_GREEN     "\033[2m"
+#define S_AMBER     "\033[38;5;208m"
+#define S_RED       "\033[38;5;167m"
+#define S_KEY       "\033[1m"
+#define S_SEL_BG    ""
+#define S_SEL_CHEV  "\033[1;38;5;208m"
+#define S_SEL_BOLD  "\033[0;1m"
+#define S_SEL_DESC  "\033[0;2m"
+#define S_PILL_ON   "\033[1;7m"
 
 typedef struct {
     char *data;
@@ -37,8 +38,7 @@ struct tui_view {
     size_t cursor, scroll;
     unsigned cols;
     int goal;
-    bool dismissed, was_busy, stashed, was_picker;
-    uint64_t busy_since;
+    bool dismissed, stashed, was_picker;
     size_t selected;
     size_t *matches;
     size_t match_count, match_cap;

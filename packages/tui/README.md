@@ -2,7 +2,9 @@
 
 Build with a C17 toolchain, Cargo, system terminfo and `pkg-config` access to
 `libutf8proc`. CMake fetches the pinned MD4C source. Cargo uses the checked-in
-lockfile for the statically linked math renderer.
+lockfile for the statically linked math renderer. On macOS, OpenSSL development
+libraries are required by the bundled libcurl, which enables WebSocket for the
+OpenAI Responses endpoint in this build.
 
 ```sh
 cmake -S . -B build-tui -DAH_BUILD_TUI=ON -DCMAKE_BUILD_TYPE=Release
@@ -38,10 +40,23 @@ For CLI-supplied credentials use `AH_ACCESS_TOKEN` or `--token-file`, with
 Submitted messages, completed replies, and tool events are saved in SQLite
 under `--db` (default `./harness.db`). Reopen the same database to find the
 sessions you previously used.
-`/sessions` opens the session picker, `/history` reads the preceding event page,
-and `/pending` opens the operation targeted by a reply or approval.
+`/sessions` lists conversations by their opening prompt and highlights the
+current one. Move with the arrow keys and press Enter to switch. `/history`
+reads the preceding event page, and `/pending` opens the operation targeted by
+a reply or approval.
+Use `/image PATH` to attach a PNG, JPEG, GIF, or WebP to the next message.
+Enter sends the image with the draft text, or on its own if the draft is empty.
+Use `/image clear` to remove it before sending.
+The TUI automatically archives older complete exchanges as context grows.
+`/context` shows the active limits and checkpoint count.
 When `ask` supplies choices, use the arrow keys and Enter to reply. Press Esc
 or select `Type a reply` to use the composer. `/pending` reopens the choices.
+An agent can ask a background question while it continues independent work.
+Use `/pending` to answer it. During a run, a normal message steers the current
+turn, and `/note TEXT` queues additional context for the next model request.
+On a supported WSS session, live steer sends the correction on the existing
+connection. If the provider is waiting for a tool result, the regular tool and
+approval flow supplies that result before the provider continues.
 If a tool stops without a confirmed result, send a new message in the same
 session. The next turn sees an error result for that call, and the journal
 keeps the original evidence.
@@ -51,6 +66,11 @@ in the current workspace. It starts off each time the TUI opens. Protected
 files, edits that empty an existing file, tool calls with checks, and process
 execution require manual approval. Each automatically approved edit records
 an `approval.auto` event.
+
+`/yolo on` approves all already-enabled tools for the current workspace and
+endpoint and saves that choice for reopening the TUI. Use `/yolo off` to turn
+it off. In the pending picker, `a` approves once and `A` enables YOLO and
+approves the pending operation. Process execution is available with `--enable-exec`.
 
 ## Source layout
 

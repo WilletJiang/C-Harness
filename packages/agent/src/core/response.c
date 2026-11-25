@@ -212,7 +212,7 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
     if (rc == AH_OK && calls == 0) {
         pthread_mutex_lock(&e->mailbox_lock);
         bool queued = false;
-        for (core_steering *message = e->mailbox_head; message; message = message->next) {
+        for (core_turn_input *message = e->mailbox_head; message; message = message->next) {
             if (!strcmp(message->session, session->id)) {
                 queued = true;
                 break;
@@ -221,11 +221,14 @@ ah_code core_accept_response(ah_engine *e, core_session *session, const char *js
         if (!queued && !e->agents_enabled && !strcmp(e->active_session, session->id))
             e->active_session[0] = '\0';
         pthread_mutex_unlock(&e->mailbox_lock);
+        ah_state final = AH_COMPLETED;
         if (!queued) {
-            rc = core_state(e, session->id, AH_COMPLETED, err);
+            rc = core_question_finish_state(e, session->id, &final, err);
+            if (rc == AH_OK)
+                rc = core_state(e, session->id, final, err);
             session->completion_committed = rc == AH_OK;
         }
-        session->state = AH_COMPLETED;
+        session->state = final;
     }
     if (rc == AH_OK && first_flow[0] && calls == 1)
         rc = core_flow_stage(e, session, first_flow, err);

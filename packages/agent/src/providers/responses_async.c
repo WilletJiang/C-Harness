@@ -10,7 +10,8 @@ static responses_request *find_request(ah_responses *provider, void *handle) {
 
 static ah_code start_scoped(void *context, const char *sid, unsigned turn, const char *json,
                             ah_delta_sink delta, void *delta_context, ah_cancel_check cancelled,
-                            void *cancel_context, void **handle, ah_error *error) {
+                            void *cancel_context, responses_turn_steer *steer, void **handle,
+                            ah_error *error) {
     ah_responses *provider = context;
     ah_error_clear(error);
     if (handle)
@@ -32,6 +33,7 @@ static ah_code start_scoped(void *context, const char *sid, unsigned turn, const
                              .delta_context = delta_context,
                              .cancelled = cancelled,
                              .cancel_context = cancel_context,
+                             .steer = steer,
                              .deadline = provider->config.timeout_ms > UINT64_MAX - now
                                              ? UINT64_MAX
                                              : now + provider->config.timeout_ms,
@@ -39,7 +41,9 @@ static ah_code start_scoped(void *context, const char *sid, unsigned turn, const
                              .measure = provider->config.observe != NULL};
     ah_code code = responses_request_setup(t, sid, turn, error);
     if (!code) {
+        provider->dispatching = true;
         code = responses_attempt_start(t);
+        provider->dispatching = false;
         if (code && error)
             *error = t->error;
     }
@@ -55,14 +59,15 @@ static ah_code start_scoped(void *context, const char *sid, unsigned turn, const
 
 static ah_code start(void *context, const char *json, ah_delta_sink delta, void *dc,
                      ah_cancel_check cancelled, void *cc, void **handle, ah_error *err) {
-    return start_scoped(context, NULL, 0, json, delta, dc, cancelled, cc, handle, err);
+    return start_scoped(context, NULL, 0, json, delta, dc, cancelled, cc, NULL, handle, err);
 }
 
 ah_code responses_start_in_turn(ah_async_provider p, const char *sid, unsigned turn,
                                 const char *json, ah_delta_sink delta, void *dc,
-                                ah_cancel_check cancelled, void *cc, void **handle, ah_error *err) {
+                                ah_cancel_check cancelled, void *cc, responses_turn_steer *steer,
+                                void **handle, ah_error *err) {
     if (p.start == start)
-        return start_scoped(p.context, sid, turn, json, delta, dc, cancelled, cc, handle, err);
+        return start_scoped(p.context, sid, turn, json, delta, dc, cancelled, cc, steer, handle, err);
     return p.start(p.context, json, delta, dc, cancelled, cc, handle, err);
 }
 
@@ -76,20 +81,22 @@ static bool advance_timers(ah_responses *provider) {
             if (t->active)
                 responses_attempt_finish(t, CURLE_ABORTED_BY_CALLBACK);
             else
-                t->done = true;
-        } else if (!t->active && ah_now_ms() >= t->retry_at) {
+                responses_settle(t);
+        } else if (!t->active && !t->waiting_auth && ah_now_ms() >= t->retry_at) {
             if (responses_attempt_start(t))
-                t->done = true;
+                responses_settle(t);
         }
         completed |= t->done;
     }
+    responses_auth_cancel_unused(provider);
+    responses_auth_poll(provider);
     return completed;
 }
 
 static ah_code drive(ah_responses *provider, bool *completed, ah_error *error) {
     *completed = advance_timers(provider);
     for (responses_request *t = provider->requests; t; t = t->next)
-        if (t->active)
+        if (t->active && (!t->websocket || !t->websocket_reused))
             t->measurement.curl_started = true;
     int running = 0;
     if (curl_multi_perform(provider->multi, &running) != CURLM_OK)
@@ -103,6 +110,12 @@ static ah_code drive(ah_responses *provider, bool *completed, ah_error *error) {
         curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, &t);
         if (t && t->active) {
             responses_attempt_finish(t, message->data.result);
+            *completed |= t->done;
+        }
+    }
+    for (responses_request *t = provider->requests; t; t = t->next) {
+        if (t->active && t->websocket) {
+            responses_ws_pump(t);
             *completed |= t->done;
         }
     }
@@ -132,13 +145,19 @@ static ah_code poll_requests(void *context, unsigned timeout_ms, ah_error *error
         if (t->done)
             continue;
         uint64_t next = t->deadline;
-        if (!t->active && t->retry_at < next)
+        if (t->active && t->connect_deadline && t->connect_deadline < next)
+            next = t->connect_deadline;
+        if (t->active && t->phase_deadline && t->phase_deadline < next)
+            next = t->phase_deadline;
+        if (!t->active && !t->waiting_auth && t->retry_at < next)
             next = t->retry_at;
         uint64_t remaining = next > now ? next - now : 0;
         if (remaining < wait_ms)
             wait_ms = (unsigned)remaining;
     }
-    if (curl_multi_poll(provider->multi, NULL, 0, (int)wait_ms, NULL) != CURLM_OK)
+    struct curl_waitfd fds[64];
+    unsigned count = responses_ws_pollfds(provider, fds, sizeof(fds) / sizeof(*fds));
+    if (curl_multi_poll(provider->multi, count ? fds : NULL, count, (int)wait_ms, NULL) != CURLM_OK)
         code = ah_fail(error, AH_NETWORK, "provider multi poll failed");
     else
         code = drive(provider, &completed, error);
@@ -149,11 +168,13 @@ done:
             if (t->done)
                 continue;
             ah_fail(&t->error, code, "provider multi transfer failed");
+            t->failure = RESP_LOCAL;
             if (t->active)
                 responses_attempt_finish(t, CURLE_FAILED_INIT);
             else
-                t->done = true;
+                responses_settle(t);
         }
+        responses_auth_cancel_unused(provider);
     }
     provider->dispatching = false;
     return code;
@@ -195,14 +216,19 @@ static void release(void *context, void *handle) {
     if (!*link)
         return;
     responses_request *t = *link;
-    if (t->active) {
+    if (!t->done) {
         provider->dispatching = true;
         ah_fail(&t->error, AH_CANCELLED, "provider request released");
-        responses_attempt_finish(t, CURLE_ABORTED_BY_CALLBACK);
+        t->failure = RESP_CANCELLED;
+        if (t->active)
+            responses_attempt_finish(t, CURLE_ABORTED_BY_CALLBACK);
+        else
+            responses_settle(t);
         provider->dispatching = false;
     }
     *link = t->next;
     responses_request_free(t);
+    responses_auth_cancel_unused(provider);
 }
 
 ah_async_provider ah_responses_async_provider(ah_responses *provider) {
@@ -215,7 +241,8 @@ ah_async_provider ah_responses_async_provider(ah_responses *provider) {
 
 static ah_code complete_scoped(void *context, const char *sid, unsigned turn, const char *json,
                                ah_delta_sink delta, void *delta_context, ah_cancel_check cancelled,
-                               void *cancel_context, char **response, ah_error *error) {
+                               void *cancel_context, responses_turn_steer *steer, char **response,
+                               ah_error *error) {
     ah_responses *provider = context;
     ah_error_clear(error);
     if (response)
@@ -226,7 +253,7 @@ static ah_code complete_scoped(void *context, const char *sid, unsigned turn, co
         return ah_fail(error, AH_BUSY, "provider is running");
     void *handle = NULL;
     ah_code code = start_scoped(context, sid, turn, json, delta, delta_context, cancelled,
-                                cancel_context, &handle, error);
+                                cancel_context, steer, &handle, error);
     if (code)
         return code;
     bool done = false;
@@ -241,13 +268,14 @@ static ah_code complete_scoped(void *context, const char *sid, unsigned turn, co
 
 ah_code responses_complete(void *context, const char *json, ah_delta_sink delta, void *dc,
                            ah_cancel_check cancelled, void *cc, char **response, ah_error *err) {
-    return complete_scoped(context, NULL, 0, json, delta, dc, cancelled, cc, response, err);
+    return complete_scoped(context, NULL, 0, json, delta, dc, cancelled, cc, NULL, response, err);
 }
 
 ah_code responses_complete_in_turn(ah_provider p, const char *sid, unsigned turn, const char *json,
                                    ah_delta_sink delta, void *dc, ah_cancel_check cancelled,
-                                   void *cc, char **response, ah_error *err) {
+                                   void *cc, responses_turn_steer *steer, char **response,
+                                   ah_error *err) {
     if (p.complete == responses_complete)
-        return complete_scoped(p.context, sid, turn, json, delta, dc, cancelled, cc, response, err);
+        return complete_scoped(p.context, sid, turn, json, delta, dc, cancelled, cc, steer, response, err);
     return p.complete(p.context, json, delta, dc, cancelled, cc, response, err);
 }

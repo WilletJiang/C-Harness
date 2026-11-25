@@ -63,6 +63,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         tag = body["tag"]
         index = int(tag.removeprefix("request-"))
+        mode = self.path.removeprefix("/")
         route = f"route-{index}" if index % 2 == 0 else None
         expected = {"model": "test", "input": [], "stream": True, "tag": tag}
         if index % 2 == 0 or index % 4 == 3:
@@ -72,9 +73,10 @@ class Handler(BaseHTTPRequestHandler):
             attempt = self.server.state.counts[self.path, tag]
             if body != expected or self.headers.get("session-id") != route:
                 self.server.state.errors.append(f"crossed request or route: {body!r}")
-            if self.headers.get("Authorization") != "Bearer local-test-token":
+            rotated = mode == "refresh" and index < 2 and attempt > 1
+            token = "rotated-test-token" if rotated else "local-test-token"
+            if self.headers.get("Authorization") != f"Bearer {token}":
                 self.server.state.errors.append("crossed authorization")
-        mode = self.path.removeprefix("/")
         if mode == "overlap":
             self.server.state.overlap.wait()
             time.sleep(0.18)
@@ -87,6 +89,11 @@ class Handler(BaseHTTPRequestHandler):
         status = 200
         extra = 0
         slow = False
+        if (mode == "refresh" and index < 2 and attempt == 1) or (mode == "cancel-refresh" and index == 0):
+            status = 401
+            payload = b'{"error":{"code":"invalid_api_key"}}'
+        if mode == "refresh" and index == 2:
+            time.sleep(0.15)
         if index == 0:
             if mode == "retry" and attempt == 1:
                 status = 429
@@ -228,7 +235,7 @@ def main():
     worker.start()
     endpoint = f"http://127.0.0.1:{server.server_port}"
 
-    def run(mode, first_code=0, attempts=1):
+    def run(mode, first_code=0, attempts=1, second_attempts=1):
         completed = subprocess.run([sys.argv[1], f"{endpoint}/{mode}", mode],
                                    capture_output=True, text=True, check=True, timeout=8)
         value = json.loads(completed.stdout)
@@ -236,13 +243,14 @@ def main():
         for i, request in enumerate(requests):
             code = first_code if i == 0 else 0
             assert request["code"] == code, (mode, value)
-            assert server.state.counts[f"/{mode}", f"request-{i}"] == (attempts if i == 0 else 1)
+            assert server.state.counts[f"/{mode}", f"request-{i}"] == (
+                attempts if i == 0 else second_attempts if i == 1 else 1)
             if code:
                 assert request["response"] is None, (mode, value)
             else:
                 assert request["response"] == {"id": f"request-{i}", "status": "completed", "output": []}
                 assert request["delta"] == f"request-{i}", (mode, value)
-        assert len(value["metrics"]) == len(requests) + attempts - 1, (mode, value)
+        assert len(value["metrics"]) == len(requests) + attempts + second_attempts - 2, (mode, value)
         assert not server.state.errors, server.state.errors
         return value
 
@@ -255,6 +263,10 @@ def main():
         for mode, attempts in (("retry", 2), ("before-output", 3)):
             value = run(mode, attempts=attempts)
             assert sum(m["retry"] for m in value["metrics"]) == attempts - 1, value
+        reauth = run("refresh", attempts=2, second_attempts=2)
+        first, second, independent = reauth["requests"]
+        assert independent["finished"] < min(first["finished"], second["finished"]), reauth
+        run("cancel-refresh", first_code=5)
         deadline = run("deadline", first_code=4)
         expired, surviving = deadline["requests"]
         first_deadline = expired["started"] + deadline["timeout_ms"]

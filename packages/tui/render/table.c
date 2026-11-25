@@ -130,16 +130,20 @@ static bool print_cell(FILE *out, const tui_markdown_table *table, const table_c
     return next < cell->size;
 }
 
+#define TBL_BORDER "\033[38;5;238m"
+#define TBL_RST    "\033[0m"
+
 static void rule(FILE *out, const char *gutter, const size_t *widths, unsigned cols,
                  const char *left, const char *junction, const char *right) {
     fputs(gutter, out);
+    fputs(TBL_BORDER, out);
     fputs(left, out);
     for (unsigned i = 0; i < cols; ++i) {
         for (size_t j = 0; j < widths[i] + 2; ++j)
             fputs("─", out);
         fputs(i + 1 == cols ? right : junction, out);
     }
-    fputc('\n', out);
+    fputs(TBL_RST "\n", out);
 }
 
 static void print_rows(tui_markdown_table *table, FILE *out, const char *gutter,
@@ -154,11 +158,11 @@ static void print_rows(tui_markdown_table *table, FILE *out, const char *gutter,
         do {
             more = false;
             fputs(gutter, out);
-            fputs("│ ", out);
+            fputs(TBL_BORDER "│ " TBL_RST, out);
             for (unsigned i = 0; i < cols; ++i) {
                 table_cell *cell = &table->cells[row * cols + i];
                 more |= print_cell(out, table, cell, widths[i], &cells[i]);
-                fputs(i + 1 < cols ? " │ " : " │", out);
+                fputs(i + 1 < cols ? TBL_BORDER " │ " TBL_RST : TBL_BORDER " │" TBL_RST, out);
             }
             fputc('\n', out);
         } while (more);

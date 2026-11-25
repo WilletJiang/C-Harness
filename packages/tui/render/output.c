@@ -11,6 +11,10 @@ unsigned tui_markup_gutter(const tui_markup_output *out, char buffer[80]) {
     if (width > 79)
         width = 79;
     unsigned used = 0;
+    if (!out->capture && width >= 4) {
+        buffer[used++] = ' ';
+        buffer[used++] = ' ';
+    }
     for (unsigned i = 0; i < out->quote && used + 2 <= width; ++i) {
         buffer[used++] = '|';
         buffer[used++] = ' ';

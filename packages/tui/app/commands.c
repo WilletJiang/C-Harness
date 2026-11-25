@@ -12,6 +12,8 @@ static const tui_command commands[] = {
     {"login", "Configure API key, endpoint, and default model"},
     {"config", "Open API & account configuration page"},
     {"auto-approve", "Toggle automatic approval for ordinary workspace edits"},
+    {"approve-all", "Alias for /yolo"},
+    {"yolo", "Toggle all tool approvals (or /yolo on|off)"},
     {"model", "Choose model and reasoning effort"},
     {"sessions", "Open Command Center to switch or create sessions"},
     {"agents", "Open interactive agent tree inspector"},
@@ -24,6 +26,8 @@ static const tui_command commands[] = {
     {"fork", "Fork the current session"},
     {"inspect", "Inspect raw session JSON"},
     {"context", "Inspect context budget and checkpoints"},
+    {"note", "Queue text for the next model request: /note TEXT"},
+    {"image", "Attach an image: /image PATH or /image clear"},
     {"artifacts", "List saved attachments"},
     {"workspace", "Inspect workspace ownership"},
     {"quit", "Exit ah"},
@@ -110,52 +114,6 @@ static bool state_needs_attention(const char *st) {
            !strcmp(st, "unknown");
 }
 
-static ah_code open_sessions_picker(tui_app *app, ah_error *error) {
-    char *json = NULL;
-    ah_code code = ah_sessions_json(app->cli->engine, &json, error);
-    if (code != AH_OK)
-        return code;
-    yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
-    ah_free(json);
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    size_t count = yyjson_is_arr(root) ? yyjson_arr_size(root) : 0;
-    if (!tui_picker_alloc(app, count)) {
-        yyjson_doc_free(doc);
-        return AH_IO;
-    }
-    size_t idx, max;
-    yyjson_val *item;
-    yyjson_arr_foreach(root, idx, max, item) {
-        const char *id = jstr(item, "id");
-        const char *mdl = jstr(item, "model");
-        const char *st = jstr(item, "state");
-        uint64_t turn = yyjson_get_uint(yyjson_obj_get(item, "turn"));
-        uint64_t mcalls = yyjson_get_uint(yyjson_obj_get(item, "model_calls"));
-        uint64_t tcalls = yyjson_get_uint(yyjson_obj_get(item, "tool_calls"));
-        bool active = !strcmp(id, app->session);
-        char meta[64], detail[512];
-        snprintf(meta, sizeof(meta), "turn %llu", (unsigned long long)turn);
-        snprintf(detail, sizeof(detail),
-                 "Session: %s\nStatus: %s%s\nModel: %s\nTurn: %llu\nModel calls: %llu\nTool calls: %llu",
-                 id, st, active ? " (current)" : "", *mdl ? mdl : "-",
-                 (unsigned long long)turn, (unsigned long long)mcalls, (unsigned long long)tcalls);
-        tui_picker_set(app, idx, id, id, st, meta, detail, 0, active, state_needs_attention(st),
-                   !strcmp(st, "running"));
-    }
-    yyjson_doc_free(doc);
-    app->pick_kind = TUI_PICK_SESSIONS;
-    app->picker = (tui_picker){
-        .open = true,
-        .title = "Command center",
-        .subtitle = "Sessions",
-        .can_open = true,
-        .can_new = true,
-        .items = app->pick_items,
-        .count = app->pick_count,
-    };
-    return AH_OK;
-}
-
 static ah_code open_agents_picker(tui_app *app, ah_error *error) {
     char *json = NULL;
     ah_code code = ah_agents_json(app->cli->engine, app->session, &json, error);
@@ -207,7 +165,8 @@ static ah_code open_agents_picker(tui_app *app, ah_error *error) {
 }
 
 ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
-    const char *session = app->pending_session[0] ? app->pending_session : app->session;
+    const char *session = !app->running && app->pending_session[0] ? app->pending_session
+                                                                 : app->session;
     char *json = NULL;
     ah_code code = ah_reader_session_json(app->reader, session, &json, error);
     if (code != AH_OK)
@@ -215,7 +174,8 @@ ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     ah_free(json);
     yyjson_val *root = yyjson_doc_get_root(doc);
-    yyjson_val *pending = yyjson_obj_get(root, "pending");
+    yyjson_val *question = yyjson_obj_get(root, "question");
+    yyjson_val *pending = yyjson_is_obj(question) ? question : yyjson_obj_get(root, "pending");
     const char *st = jstr(pending, "status");
     if (!*st) {
         yyjson_doc_free(doc);
@@ -225,6 +185,7 @@ ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
     }
     const char *op_id = jstr(pending, "operation_id");
     const char *name = jstr(pending, "name");
+    bool background = yyjson_is_true(yyjson_obj_get(pending, "background"));
     if (!strcmp(st, "unknown")) {
         yyjson_doc_free(doc);
         app->status.notice_error = false;
@@ -232,13 +193,20 @@ ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
         return AH_OK;
     }
     bool approval = !strcmp(st, "approval");
-    const char *subtitle = approval ? "Press a to approve or d to deny"
+    const char *subtitle = approval ? "a approve once   A approve all   d deny"
                            : !strcmp(st, "input") ? "Awaiting input" : "Review required";
     yyjson_val *args = yyjson_obj_get(pending, "arguments");
     if (!strcmp(st, "input") && tui_ask_has_options(args)) {
         code = tui_ask_picker(app, op_id, args, error);
         yyjson_doc_free(doc);
         return code;
+    }
+    if (background) {
+        snprintf(app->reply_operation, sizeof(app->reply_operation), "%s", op_id);
+        snprintf(app->notice, sizeof(app->notice), "%s", jstr(args, "question"));
+        app->status.notice_error = false;
+        yyjson_doc_free(doc);
+        return AH_OK;
     }
     char *args_pretty = args ? yyjson_val_write(args, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL) : NULL;
     if (!tui_picker_alloc(app, 1)) {
@@ -275,15 +243,37 @@ ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
         tui_picker_close(app);
         return AH_OK;
     }
+    if (app->running || app->catalog_loading) {
+        snprintf(error->message, sizeof(error->message), "Available when execution pauses");
+        return AH_BUSY;
+    }
+    char previous[AH_ID_CAP];
+    strcpy(previous, app->session);
     strcpy(app->session, target);
+    ah_code code = tui_snapshot(app, app->session, true, error);
+    if (code != AH_OK) {
+        strcpy(app->session, previous);
+        return code;
+    }
     app->ask_seen[0] = 0;
-    app->pending_ask = false;
-    app->pending_session[0] = app->operation[0] = app->pending_status[0] = 0;
+    app->reply_operation[0] = 0;
+    if (strcmp(app->pending_session, app->session)) {
+        app->pending_ask = false;
+        app->pending_session[0] = app->operation[0] = app->pending_status[0] = 0;
+        app->pending_tool[0] = app->pending_summary[0] = 0;
+    }
+    app->active_tool[0] = 0;
+    app->active_tools = 0;
+    app->history = 0;
+    app->restore_history = false;
+    app->last_block = TUI_BLOCK_NONE;
+    memset(app->tool_cache, 0, sizeof(app->tool_cache));
     app->notice[0] = 0;
     app->status.notice_error = false;
-    ah_code code = tui_snapshot(app, app->session, true, error);
-    if (code != AH_OK)
-        return code;
+    if (app->image_id[0]) {
+        app->image_id[0] = app->image_name[0] = 0;
+        snprintf(app->notice, sizeof(app->notice), "Image removed from previous conversation draft");
+    }
     tui_models_sync(app);
     tui_picker_close(app);
     tui_print_banner(app);
@@ -299,6 +289,23 @@ static void command_id(char id[80]) {
              (long)getpid(), (unsigned long long)++serial);
 }
 
+static ah_code answer_question(tui_app *app, const char *session, const char *operation,
+                               const char *text, ah_error *error) {
+    yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *content = doc ? yyjson_mut_str(doc, text) : NULL;
+    if (content)
+        yyjson_mut_doc_set_root(doc, content);
+    char *json = content ? yyjson_mut_write(doc, 0, NULL) : NULL;
+    yyjson_mut_doc_free(doc);
+    if (!json)
+        return AH_IO;
+    ah_engine *engine = app->cli->engine;
+    ah_code code = app->running ? ah_queue_reply(engine, session, app->turn, operation, json, error)
+                                : ah_reply(engine, session, operation, json, error);
+    free(json);
+    return code;
+}
+
 static ah_code submit(tui_app *app, const char *text, ah_error *error) {
     if (app->catalog_loading) {
         snprintf(error->message, sizeof(error->message), "Loading model catalog");
@@ -307,7 +314,21 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
     char id[80];
     command_id(id);
     ah_engine *engine = app->cli->engine;
+    if (app->reply_operation[0]) {
+        ah_code code = answer_question(app, app->session, app->reply_operation, text, error);
+        if (code == AH_OK) {
+            app->reply_operation[0] = 0;
+            app->notice[0] = 0;
+            if (!app->running && !tui_start_run(app, error))
+                tui_show_error(app, AH_IO, error);
+        }
+        return code;
+    }
     if (app->running) {
+        if (app->image_id[0]) {
+            snprintf(error->message, sizeof(error->message), "Wait for the current run to send the attached image");
+            return AH_BUSY;
+        }
         ah_code code = ah_steer_turn(engine, app->session, app->turn, id, text, NULL, error);
         if (code == AH_OK) {
             app->status.notice_error = false;
@@ -317,21 +338,18 @@ static ah_code submit(tui_app *app, const char *text, ah_error *error) {
     }
     ah_code code;
     if (!strcmp(app->pending_status, "input")) {
-        yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
-        yyjson_mut_val *content = doc ? yyjson_mut_str(doc, text) : NULL;
-        if (content)
-            yyjson_mut_doc_set_root(doc, content);
-        char *json = content ? yyjson_mut_write(doc, 0, NULL) : NULL;
-        code = json ? ah_reply(engine, app->pending_session, app->operation, json, error) : AH_IO;
-        free(json);
-        yyjson_mut_doc_free(doc);
+        code = answer_question(app, app->pending_session, app->operation, text, error);
         if (code == AH_OK) {
             app->pending_status[0] = app->operation[0] = app->pending_session[0] = 0;
             app->pending_ask = false;
-            tui_line(app, "> ", text);
+            app->pending_tool[0] = app->pending_summary[0] = 0;
+            if (!app->pending_background)
+                tui_line(app, "> ", text);
+            app->pending_background = false;
         }
     } else {
-        code = ah_submit_after_interruption(engine, app->session, id, text, error);
+        code = app->image_id[0] ? tui_submit_image(app, id, text, error)
+                               : ah_submit_after_interruption(engine, app->session, id, text, error);
         if (code == AH_OK) {
             ah_error ignored = {0};
             (void)tui_snapshot(app, app->session, false, &ignored);
@@ -355,12 +373,33 @@ static ah_code decide_pending(tui_app *app, bool approve, ah_error *error) {
         ah_decide(app->cli->engine, app->pending_session, app->operation, approve, error);
     if (code == AH_OK) {
         app->pending_status[0] = app->operation[0] = app->pending_session[0] = 0;
+        app->pending_tool[0] = app->pending_summary[0] = 0;
         tui_picker_close(app);
-        tui_line(app, "", approve ? "Approved" : "Denied");
+        tui_line(app, approve ? "" : "! ", approve ? "Approved" : "Denied");
         if (!tui_start_run(app, error))
             tui_show_error(app, AH_IO, error);
     }
     return code;
+}
+
+void tui_resume_yolo(tui_app *app) {
+    if (app->quit || app->running || app->catalog_loading || !app->has_token || app->auth.open ||
+        !app->approve_all || strcmp(app->pending_status, "approval") || !app->operation[0] ||
+        strcmp(app->pending_session, app->session) ||
+        !strcmp(app->auto_approval_attempt, app->operation))
+        return;
+    strcpy(app->auto_approval_attempt, app->operation);
+    ah_error error = {0};
+    ah_code code = decide_pending(app, true, &error);
+    if (code != AH_OK)
+        tui_show_error(app, code, &error);
+}
+
+static void set_yolo(tui_app *app, bool enabled) {
+    bool saved = tui_yolo_set(app, enabled);
+    app->status.notice_error = !saved;
+    snprintf(app->notice, sizeof(app->notice), "YOLO mode %s%s", enabled ? "on" : "off",
+             saved ? "" : " (could not save preference)");
 }
 
 static ah_code command(tui_app *app, const char *name, ah_error *error) {
@@ -380,10 +419,26 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
         }
         return AH_OK;
     }
+    if (!strcmp(name, "image") || !strncmp(name, "image ", 6) || !strncmp(name, "image\t", 6))
+        return tui_image_command(app, name + 5, error);
     if (!strcmp(name, "history"))
         return app->history ? tui_history_page(app, app->history, error) : AH_OK;
     if (!strcmp(name, "pending"))
         return tui_open_pending_picker(app, error);
+    if (!strcmp(name, "note") || !strncmp(name, "note ", 5) || !strncmp(name, "note\t", 5)) {
+        const char *text = name + 4;
+        while (*text == ' ' || *text == '\t')
+            ++text;
+        char id[80];
+        command_id(id);
+        ah_code code = ah_queue_turn_input(app->cli->engine, app->session, app->turn, id, text,
+                                           NULL, error);
+        if (code == AH_OK) {
+            app->status.notice_error = false;
+            snprintf(app->notice, sizeof(app->notice), "Note queued for the next model request");
+        }
+        return code;
+    }
     if (!strcmp(name, "inspect")) {
         char *json = NULL;
         ah_code code = ah_reader_session_json(app->reader, app->session, &json, error);
@@ -391,6 +446,37 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
             tui_show_json(app, json);
         ah_free(json);
         return code;
+    }
+    if (!strcmp(name, "auto-approve")) {
+        ah_local_tools *tools = app->cli->local_tools;
+        if (!tools) {
+            snprintf(error->message, sizeof(error->message), "Start with --workspace to enable auto-approve");
+            return AH_INVALID;
+        }
+        if (app->running || app->catalog_loading) {
+            snprintf(error->message, sizeof(error->message), "Available when execution pauses");
+            return AH_BUSY;
+        }
+        bool enabled = !ah_local_tools_auto_approve(tools);
+        ah_local_tools_set_auto_approve(tools, enabled);
+        app->status.notice_error = false;
+        snprintf(app->notice, sizeof(app->notice), "Auto-approve %s", enabled ? "on" : "off");
+        return AH_OK;
+    }
+    if (!strcmp(name, "approve-all") || !strcmp(name, "yolo")) {
+        set_yolo(app, !app->approve_all);
+        return AH_OK;
+    }
+    if (!strncmp(name, "yolo ", 5)) {
+        const char *arg = name + 5;
+        while (*arg == ' ' || *arg == '\t')
+            ++arg;
+        if (strcmp(arg, "on") && strcmp(arg, "off")) {
+            snprintf(error->message, sizeof(error->message), "Usage: /yolo [on|off]");
+            return AH_INVALID;
+        }
+        set_yolo(app, !strcmp(arg, "on"));
+        return AH_OK;
     }
     if (app->running || app->catalog_loading) {
         snprintf(error->message, sizeof(error->message), "Available when execution pauses");
@@ -400,21 +486,9 @@ static ah_code command(tui_app *app, const char *name, ah_error *error) {
     ah_code code = AH_OK;
     char *json = NULL;
     if (!strcmp(name, "sessions"))
-        return open_sessions_picker(app, error);
+        return tui_open_sessions_picker(app, error);
     if (!strcmp(name, "model"))
         return tui_models_open(app, error);
-    if (!strcmp(name, "auto-approve")) {
-        ah_local_tools *tools = app->cli->local_tools;
-        if (!tools) {
-            snprintf(error->message, sizeof(error->message), "Start with --workspace to enable auto-approve");
-            return AH_INVALID;
-        }
-        bool enabled = !ah_local_tools_auto_approve(tools);
-        ah_local_tools_set_auto_approve(tools, enabled);
-        app->status.notice_error = false;
-        snprintf(app->notice, sizeof(app->notice), "Auto-approve %s", enabled ? "on" : "off");
-        return AH_OK;
-    }
     if (!strcmp(name, "agents"))
         return open_agents_picker(app, error);
     if (!strcmp(name, "login") || !strcmp(name, "config")) {
@@ -453,6 +527,11 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
     tui_app *app = context;
     if (app->quit)
         return;
+    if (key == TUI_ESCAPE && !app->picker.open && app->reply_operation[0]) {
+        app->reply_operation[0] = 0;
+        app->notice[0] = 0;
+        return;
+    }
     tui_restore_history(app);
     if (key == TUI_PASTE && !text) {
         app->status.notice_error = true;
@@ -476,9 +555,18 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
         return;
     case TUI_PICK_OPEN:
         if (app->pick_kind == TUI_PICK_ASK) {
-            if (app->running || app->catalog_loading || !action.text ||
-                strcmp(app->pending_status, "input") ||
-                strcmp(app->ask_seen, app->operation)) {
+            if (app->catalog_loading || !action.text || !app->ask_seen[0]) {
+                snprintf(error.message, sizeof(error.message), "Pending question changed");
+                code = AH_BUSY;
+            } else if (app->running) {
+                snprintf(app->reply_operation, sizeof(app->reply_operation), "%s", app->ask_seen);
+                if (*action.text)
+                    code = submit(app, action.text, &error);
+                if (code == AH_OK)
+                    tui_picker_close(app);
+                else
+                    app->reply_operation[0] = 0;
+            } else if (strcmp(app->pending_status, "input") || strcmp(app->ask_seen, app->operation)) {
                 snprintf(error.message, sizeof(error.message), "Pending question changed");
                 code = AH_BUSY;
             } else {
@@ -494,12 +582,15 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
                    : tui_switch_session(app, action.text, &error);
         break;
     case TUI_PICK_APPROVE:
+    case TUI_PICK_APPROVE_ALL:
     case TUI_PICK_DENY:
         if (!action.text || strcmp(action.text, app->operation)) {
             snprintf(error.message, sizeof(error.message), "Pending operation changed");
             code = AH_BUSY;
         } else {
-            code = decide_pending(app, action.kind == TUI_PICK_APPROVE, &error);
+            if (action.kind == TUI_PICK_APPROVE_ALL)
+                set_yolo(app, true);
+            code = decide_pending(app, action.kind != TUI_PICK_DENY, &error);
         }
         break;
     case TUI_PICK_NEW: {

@@ -319,6 +319,15 @@ static ah_code provide_result(ah_engine *e, const char *sid, const char *id, con
         return rc;
     if (!sid || !id || !json || strlen(json) > e->config.max_output_bytes || !ah_json_valid(json))
         return ah_fail(err, AH_INVALID, "bounded valid JSON result required");
+    if (!resolve) {
+        bool added = false;
+        rc = core_answer_question(e, sid, id, json, &added, err);
+        if (rc != AH_NOT_FOUND) {
+            if (rc == AH_OK && added)
+                atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
+            return rc;
+        }
+    }
     core_operation op;
     rc = core_get_operation(e, sid, id, &op, err);
     if (rc != AH_OK)

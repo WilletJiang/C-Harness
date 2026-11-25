@@ -73,9 +73,16 @@ static void detect_workspace(tui_app *app) {
 static void sync_status(tui_app *app) {
     app->status.model = app->model;
     bool auto_approve = ah_local_tools_auto_approve(app->cli->local_tools);
-    if (app->effort[0] || auto_approve) {
-        snprintf(app->model_label, sizeof(app->model_label), "%s%s%s%s", app->model,
-                 app->effort[0] ? " · " : "", app->effort, auto_approve ? " · auto" : "");
+    const char *mode = app->approve_all ? "yolo" : auto_approve ? "auto" : "";
+    if (app->effort[0] && mode[0]) {
+        snprintf(app->model_label, sizeof(app->model_label), "%s %s   %s", app->model,
+                 app->effort, mode);
+        app->status.model = app->model_label;
+    } else if (app->effort[0]) {
+        snprintf(app->model_label, sizeof(app->model_label), "%s %s", app->model, app->effort);
+        app->status.model = app->model_label;
+    } else if (mode[0]) {
+        snprintf(app->model_label, sizeof(app->model_label), "%s   %s", app->model, mode);
         app->status.model = app->model_label;
     }
     app->status.session = app->session;
@@ -85,7 +92,23 @@ static void sync_status(tui_app *app) {
     app->status.turn = app->turn;
     app->status.notice = !app->notice[0] && !app->running && !strcmp(app->state, "outcome_unknown")
                              ? "Tool result unconfirmed. Send a new message." : app->notice;
+    app->status.image_name = app->image_name;
+    app->status.replying = app->reply_operation[0] != '\0';
+    pthread_mutex_lock(&app->preview_lock);
+    memcpy(app->network_label, app->network_status, sizeof(app->network_label));
+    pthread_mutex_unlock(&app->preview_lock);
+    app->status.activity = app->active_tool[0] ? app->active_tool :
+                           app->running && app->network_label[0] ? app->network_label : NULL;
+    app->status.active_tools = app->active_tools;
     app->status.has_pending = app->pending_status[0] != 0;
+    app->pending_card = (tui_pending_card){
+        .active = !app->running && app->pending_status[0] != 0,
+        .kind = app->pending_status,
+        .operation = app->operation,
+        .tool = app->pending_tool,
+        .summary = app->pending_summary,
+    };
+    app->status.pending = app->pending_card.active ? &app->pending_card : NULL;
     app->status.picker = app->picker.open ? &app->picker : NULL;
     app->auth.has_token = app->has_token;
     app->auth.token_source = app->token_source;
@@ -109,6 +132,8 @@ static void *run_worker(void *opaque) {
 bool tui_start_run(tui_app *app, ah_error *error) {
     tui_graphics_colors(&app->graphics);
     memset(&app->run_error, 0, sizeof(app->run_error));
+    app->network_status[0] = 0;
+    app->network_permission_denied = false;
     atomic_store(&app->worker_done, false);
     if (pthread_create(&app->worker, NULL, run_worker, app) != 0) {
         error->code = AH_IO;
@@ -116,16 +141,19 @@ bool tui_start_run(tui_app *app, ah_error *error) {
         return false;
     }
     app->notice[0] = 0;
+    app->active_tool[0] = 0;
+    app->active_tools = 0;
+    snprintf(app->state, sizeof(app->state), "running");
     app->status.notice_error = false;
-    app->run_started_ms = ah_now_ms();
     app->running = app->status.busy = app->status.steering = true;
     return true;
 }
 
 static void finish_run(tui_app *app) {
     pthread_join(app->worker, NULL);
-    uint64_t elapsed = ah_now_ms() - app->run_started_ms;
     app->running = app->status.busy = app->status.steering = false;
+    app->active_tool[0] = 0;
+    app->active_tools = 0;
     tui_stream_abort(app, "Response interrupted");
     tui_stream_free(app);
     ah_error error = {0};
@@ -135,9 +163,7 @@ static void finish_run(tui_app *app) {
     if (code == AH_OK && pending[0] && strcmp(pending, app->session) &&
         (!app->operation[0] || strcmp(app->pending_session, app->session)))
         code = tui_snapshot(app, pending, false, &error);
-    if (app->run_code == AH_OK && !app->pending_status[0])
-        tui_print_worked(app, elapsed);
-    if (app->run_code == AH_AUTH && app->chatgpt) {
+    if (app->run_code == AH_AUTH && app->chatgpt && !app->network_permission_denied) {
         app->has_token = false;
         tui_auth_open(app, false);
         snprintf(app->auth_error, sizeof(app->auth_error), "%.255s", app->run_error.message);
@@ -181,6 +207,7 @@ static bool terminal_loop(tui_app *app) {
         if (history_wait < 0)
             tui_restore_history(app);
         tui_stream_render(app);
+        tui_resume_yolo(app);
         tui_ask_maybe_open(app);
         sync_status(app);
         tui_frame frame;

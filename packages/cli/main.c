@@ -8,6 +8,7 @@
 #include "ah/tools.h"
 #include "ah/agents.h"
 #include <stdio.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef AH_BUILD_TUI
@@ -29,6 +30,8 @@ int main(int argc, char **argv) {
     const char *model = NULL, *instructions = "", *session = NULL, *prompt = NULL;
     const char *command_id = NULL, *operation = NULL, *value = NULL, *summary = NULL;
     const char *endpoint = "https://api.openai.com/v1/responses", *token_file = NULL;
+    ah_responses_config pc;
+    ah_responses_config_init(&pc);
 #ifdef AH_BUILD_TUI
     bool endpoint_explicit = false;
 #endif
@@ -109,9 +112,34 @@ int main(int argc, char **argv) {
 #ifdef AH_BUILD_TUI
             endpoint_explicit = true;
 #endif
+        } else if (!strcmp(arg, "--transport")) {
+            if (!strcmp(v, "auto"))
+                pc.transport = AH_RESPONSES_AUTO;
+            else if (!strcmp(v, "http"))
+                pc.transport = AH_RESPONSES_HTTP;
+            else if (!strcmp(v, "websocket"))
+                pc.transport = AH_RESPONSES_WEBSOCKET;
+            else {
+                fputs("Expected --transport auto, http, or websocket\n", stderr);
+                return 2;
+            }
         } else if (!strcmp(arg, "--search-endpoint"))
             search.endpoint = v;
-        else if (!strcmp(arg, "--tool-timeout-ms")) {
+        else if (!strcmp(arg, "--request-timeout-ms") || !strcmp(arg, "--connect-timeout-ms") ||
+                 !strcmp(arg, "--first-output-timeout-ms") || !strcmp(arg, "--stream-idle-timeout-ms")) {
+            uintmax_t number;
+            bool total = !strcmp(arg, "--request-timeout-ms");
+            if (!cli_option_number(arg, v, total ? 1 : 0, LONG_MAX, &number))
+                return 2;
+            if (total)
+                pc.timeout_ms = number;
+            else if (!strcmp(arg, "--connect-timeout-ms"))
+                pc.connect_timeout_ms = number;
+            else if (!strcmp(arg, "--first-output-timeout-ms"))
+                pc.first_output_timeout_ms = number;
+            else
+                pc.stream_idle_timeout_ms = number;
+        } else if (!strcmp(arg, "--tool-timeout-ms")) {
             if (!cli_option_number(arg, v, 1, UINT32_MAX, &tool_timeout_ms))
                 return 2;
         } else if (!strcmp(arg, "--target"))
@@ -178,6 +206,8 @@ int main(int argc, char **argv) {
         fputs("Use ah run or ah rpc for --prompt or --events\n", stderr);
         return 2;
     }
+    if (tui)
+        policies.automatic_context = true;
 #endif
     known |= tui;
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++)
@@ -214,11 +244,18 @@ int main(int argc, char **argv) {
     }
     ah_error error = {0};
     ah_responses *responses = NULL;
-    ah_responses_config pc;
-    ah_responses_config_init(&pc);
+    cli_context cli = {
+        .json_events = events, .rpc = !strcmp(command, "rpc"), .workspace = workspace};
+    pthread_mutex_init(&cli.output, NULL);
     pc.endpoint = endpoint;
     pc.bearer_token = token;
     pc.allow_loopback_http = allow_http;
+    pc.state = cli_network_state;
+    pc.state_context = &cli;
+    if (token_file) {
+        pc.refresh = cli_reload_token;
+        pc.refresh_context = (void *)token_file;
+    }
     ah_code code = ah_responses_open(&pc, &responses, &error);
     if (token) {
         size_t n = strlen(token);
@@ -229,16 +266,19 @@ int main(int argc, char **argv) {
     }
     if (code != AH_OK) {
         fprintf(stderr, "%s: %s\n", ah_code_name(code), error.message);
+        pthread_mutex_destroy(&cli.output);
         return 1;
     }
-    cli_context cli = {.json_events = events, .rpc = !strcmp(command, "rpc")};
-    pthread_mutex_init(&cli.output, NULL);
     ah_config config;
     ah_config_init(&config);
     search.allow_loopback_http = allow_http;
     config.search = search;
     if (tool_timeout_ms)
         config.tool_timeout_ms = tool_timeout_ms;
+    else if (tui) {
+        config.tool_timeout_ms = 1800000;
+        config.run_timeout_ms = 3600000;
+    }
     config.database_path = db;
     if (policies.context_bytes)
         config.max_context_bytes = policies.context_bytes;

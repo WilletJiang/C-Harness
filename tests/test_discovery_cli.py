@@ -97,6 +97,8 @@ def discovery(ws):
     (searched,) = yield find(path=".", query="needle", glob="*.c")
     assert not searched["result"]["scan_truncated"]
     assert [r["path"] for r in searched["result"]["results"]] == ["src/keep.c"]
+    (searched,) = yield find(path="src", query="^(needle|other)$", syntax="ere", glob="*.c")
+    assert [r["path"] for r in searched["result"]["results"]] == ["src/keep.c"]
     (scoped,) = yield find(mode="files", path="src", glob="*.c")
     assert [r["path"] for r in scoped["result"]["results"]] == ["src/keep.c", "src/sub/file.c"]
     (all_paths,) = yield find(mode="files", path="src", include_ignored=True)

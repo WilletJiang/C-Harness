@@ -12,7 +12,9 @@
 
 const char ah_exec_schema[] = "{\"type\":\"object\",\"properties\":{\"argv\":{\"type\":\"array\","
                               "\"minItems\":1,\"maxItems\":128,"
-                              "\"items\":{\"type\":\"string\",\"maxLength\":32768}}},\"required\":["
+                              "\"items\":{\"type\":\"string\",\"maxLength\":32768}},"
+                              "\"timeout_ms\":{\"type\":\"integer\",\"minimum\":1000,"
+                              "\"maximum\":1800000}},\"required\":["
                               "\"argv\"],\"additionalProperties\":false}";
 
 static void close_pair(int pair[2]) {
@@ -223,7 +225,12 @@ ah_code ah_local_exec(void *context, const ah_tool_call *call, ah_tool_result *r
         return ah_local_error(call, result, error, AH_LIMIT,
                               "Output limit too small for process receipt");
     }
-    yyjson_val *array = yyjson_obj_get(yyjson_doc_get_root(args), "argv");
+    yyjson_val *root_args = yyjson_doc_get_root(args);
+    yyjson_val *array = yyjson_obj_get(root_args, "argv");
+    yyjson_val *timeout_val = yyjson_obj_get(root_args, "timeout_ms");
+    uint64_t requested_timeout_ms =
+        timeout_val && (yyjson_is_uint(timeout_val) || yyjson_is_int(timeout_val))
+            ? yyjson_get_uint(timeout_val) : 0;
     char *argv[129] = {0};
     size_t i, count, bytes = 0;
     yyjson_val *argument;
@@ -267,7 +274,9 @@ ah_code ah_local_exec(void *context, const ah_tool_call *call, ah_tool_result *r
     bool truncated = false, reaped = false, killing = false;
     int status = 0;
     uint64_t stopped_at = 0;
-    uint64_t fallback_deadline = ah_now_ms() + 60000;
+    uint64_t now_start = ah_now_ms();
+    uint64_t local_deadline = requested_timeout_ms ? now_start + requested_timeout_ms
+                                                   : (!call->deadline_ms ? now_start + 1800000 : 0);
     size_t remaining = capacity;
     int reap_delay_ms = 1;
     while (!reaped || streams[0].fd >= 0 || streams[1].fd >= 0 || (stopped_at && !killing)) {
@@ -275,7 +284,7 @@ ah_code ah_local_exec(void *context, const ah_tool_call *call, ah_tool_result *r
             call->yield(call->yield_context);
         if (code == AH_OK)
             code = ah_local_stopped(call);
-        if (code == AH_OK && !call->deadline_ms && ah_now_ms() >= fallback_deadline)
+        if (code == AH_OK && local_deadline && ah_now_ms() >= local_deadline)
             code = AH_LIMIT;
         if (code != AH_OK && !stopped_at) {
             stopped_at = ah_now_ms();

@@ -33,7 +33,7 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
-find_package(CURL REQUIRED)
+include(cmake/ResponsesCurl.cmake)
 find_package(SQLite3 3.37 REQUIRED)
 find_package(Threads REQUIRED)
 if(AH_TESTS_ENABLED)
@@ -88,7 +88,7 @@ install(TARGETS ah ah_json ah_toml EXPORT ahTargets ARCHIVE DESTINATION ${CMAKE_
 install(DIRECTORY packages/agent/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT ahTargets NAMESPACE ah:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ah)
 configure_package_config_file(cmake/ahConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/ahConfig.cmake
-  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ah)
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ah PATH_VARS CMAKE_INSTALL_LIBDIR)
 write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/ahConfigVersion.cmake
   VERSION ${PROJECT_VERSION} COMPATIBILITY ExactVersion)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/ahConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/ahConfigVersion.cmake

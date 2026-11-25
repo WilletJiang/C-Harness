@@ -78,6 +78,7 @@ static void cancellations_and_limits(void) {
     ah_engine *e = open_engine(&f, ":memory:", NULL);
     register_tool(e, &f, AH_EFFECT_READ, false);
     create_input(e, id);
+    f.steering_session = id;
     assert(ah_run(e, id, &error) == AH_CANCELLED);
     state_is(e, id, "stopped");
     assert(f.executions == 0);
@@ -85,6 +86,7 @@ static void cancellations_and_limits(void) {
     ok(ah_resume(e, id, &error), &error);
     ok(ah_run(e, id, &error), &error);
     state_is(e, id, "completed");
+    assert(strstr(f.last_request, "Keep this note on resume."));
     ah_close(e);
     free(f.last_request);
     memset(&f, 0, sizeof(f));
@@ -309,6 +311,27 @@ static void steering_boundaries(void) {
         free(f.last_request);
     }
 }
+
+static void steering_keeps_a_blocking_question_intact(void) {
+    fixture f = {.answers = {ask, done}, .steer_at_question = true};
+    ah_engine *e = open_engine(&f, ":memory:", NULL);
+    char id[AH_ID_CAP];
+    create_input(e, id);
+    ah_error error = {0};
+    ok(ah_run(e, id, &error), &error);
+    state_is(e, id, "waiting_input");
+    assert(f.calls == 1);
+    char *op = pending(e, id);
+    ok(ah_reply(e, id, op, "\"a\"", &error), &error);
+    ok(ah_run(e, id, &error), &error);
+    state_is(e, id, "completed");
+    const char *output = strstr(f.last_request, "\"type\":\"function_call_output\"");
+    const char *steering = strstr(f.last_request, "Use the narrower option.");
+    assert(output && steering && output < steering);
+    free(op);
+    ah_close(e);
+    free(f.last_request);
+}
 static void approval_contract_change(void) {
     char path[] = "/tmp/ah-core-XXXXXX";
     int fd = mkstemp(path);
@@ -402,6 +425,7 @@ int main(int argc, char **argv) {
     fork_keeps_call_identity();
     malformed_responses();
     steering_boundaries();
+    steering_keeps_a_blocking_question_intact();
     approval_contract_change();
     receipt_failure_recovery();
     approval_and_input();

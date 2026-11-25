@@ -11,11 +11,34 @@ void responses_wipe(char *value) {
         *p++ = 0;
 }
 
+bool responses_valid_token(const char *token) {
+    if (!token || !*token || strlen(token) > 16384)
+        return false;
+    for (const unsigned char *p = (const unsigned char *)token; *p; ++p)
+        if (*p < 0x21 || *p > 0x7e)
+            return false;
+    return true;
+}
+
+void responses_replace_token(ah_responses *provider, char *token) {
+    if (!provider->token || strcmp(provider->token, token)) {
+        responses_routes_clear(provider);
+        responses_ws_clear(provider);
+        ++provider->auth_generation;
+    }
+    responses_wipe(provider->token);
+    free(provider->token);
+    provider->token = token;
+}
+
 void ah_responses_config_init(ah_responses_config *config) {
     if (!config)
         return;
-    *config = (ah_responses_config){.endpoint = "https://api.openai.com/v1/responses",
+    *config = (ah_responses_config){.endpoint = AH_RESPONSES_OPENAI_ENDPOINT,
                                     .timeout_ms = 120000,
+                                    .connect_timeout_ms = 15000,
+                                    .first_output_timeout_ms = 90000,
+                                    .stream_idle_timeout_ms = 30000,
                                     .max_response_bytes = 32 * 1024 * 1024,
                                     .max_event_bytes = 8 * 1024 * 1024,
                                     .max_retries = 2};
@@ -28,13 +51,8 @@ static ah_code set_connection(ah_responses *provider, const char *endpoint, cons
         return ah_fail(error, AH_INVALID, "Responses provider is required");
     if (provider->requests || provider->dispatching)
         return ah_fail(error, AH_BUSY, "provider is running");
-    if (token) {
-        if (!*token || strlen(token) > 16384)
-            return ah_fail(error, AH_INVALID, "invalid bearer token");
-        for (const unsigned char *p = (const unsigned char *)token; *p; p++)
-            if (*p < 0x21 || *p > 0x7e)
-                return ah_fail(error, AH_INVALID, "invalid bearer token");
-    }
+    if (token && !responses_valid_token(token))
+        return ah_fail(error, AH_INVALID, "invalid bearer token");
     bool loopback = false;
     if (endpoint && !ah_http_endpoint(endpoint, provider->config.allow_loopback_http, &loopback))
         return ah_fail(error, AH_INVALID,
@@ -47,20 +65,19 @@ static ah_code set_connection(ah_responses *provider, const char *endpoint, cons
         free(bearer);
         return ah_fail(error, AH_IO, "cannot allocate Responses connection");
     }
-    if ((url && strcmp(provider->endpoint, url)) ||
-        (bearer && (!provider->token || strcmp(provider->token, bearer))))
+    responses_auth_close(provider);
+    if (url && strcmp(provider->endpoint, url)) {
         responses_routes_clear(provider);
+        responses_ws_clear(provider);
+    }
     if (url) {
         free(provider->endpoint);
         provider->endpoint = url;
         provider->config.endpoint = url;
         provider->loopback = loopback;
     }
-    if (bearer) {
-        responses_wipe(provider->token);
-        free(provider->token);
-        provider->token = bearer;
-    }
+    if (bearer)
+        responses_replace_token(provider, bearer);
     return AH_OK;
 }
 
@@ -68,6 +85,19 @@ ah_code ah_responses_set_token(ah_responses *provider, const char *token, ah_err
     if (!token)
         return ah_fail(error, AH_INVALID, "invalid bearer token");
     return set_connection(provider, NULL, token, error);
+}
+
+ah_code ah_responses_set_refresh(ah_responses *provider, ah_responses_refresh_fn refresh,
+                                 void *context, ah_error *error) {
+    ah_error_clear(error);
+    if (!provider)
+        return ah_fail(error, AH_INVALID, "Responses provider is required");
+    if (provider->requests || provider->dispatching)
+        return ah_fail(error, AH_BUSY, "provider is running");
+    responses_auth_close(provider);
+    provider->config.refresh = refresh;
+    provider->config.refresh_context = context;
+    return AH_OK;
 }
 
 ah_code ah_responses_set_endpoint(ah_responses *provider, const char *endpoint, ah_error *error) {
@@ -87,11 +117,15 @@ ah_code ah_responses_open(const ah_responses_config *config, ah_responses **out,
         *out = NULL;
     if (!config || !out || !config->timeout_ms || config->timeout_ms > LONG_MAX ||
         !config->max_event_bytes || config->max_event_bytes > config->max_response_bytes ||
-        config->max_response_bytes > 256 * 1024 * 1024 || config->max_retries > 5)
+        config->max_response_bytes > 256 * 1024 * 1024 || config->max_retries > 5 ||
+        (unsigned)config->transport > AH_RESPONSES_WEBSOCKET)
         return ah_fail(error, AH_INVALID, "invalid Responses configuration");
     ah_code initialized = ah_http_init(error);
     if (initialized != AH_OK)
         return initialized;
+    bool websocket = ah_responses_websocket_available();
+    if (config->transport == AH_RESPONSES_WEBSOCKET && !websocket)
+        return ah_fail(error, AH_INVALID, "linked libcurl does not support WebSocket transport");
     bool loopback = false;
     if (!ah_http_endpoint(config->endpoint, config->allow_loopback_http, &loopback))
         return ah_fail(error, AH_INVALID,
@@ -100,6 +134,7 @@ ah_code ah_responses_open(const ah_responses_config *config, ah_responses **out,
     if (!provider)
         return ah_fail(error, AH_IO, "provider allocation failed");
     provider->config = *config;
+    provider->websocket_available = websocket;
     provider->config.bearer_token = NULL;
     provider->endpoint = ah_strdup(config->endpoint);
     provider->config.endpoint = provider->endpoint;
@@ -126,6 +161,9 @@ void ah_responses_close(ah_responses *provider) {
     ah_async_provider async = ah_responses_async_provider(provider);
     while (provider->requests)
         async.release(provider, provider->requests);
+    responses_auth_close(provider);
+    responses_ws_clear(provider);
+    responses_ws_shutdown(provider);
     curl_multi_cleanup(provider->multi);
     responses_routes_clear(provider);
     responses_wipe(provider->token);

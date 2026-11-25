@@ -6,14 +6,40 @@
 
 enum { FILTER_COUNT = 5 };
 
+static bool item_is_ready(const char *st) {
+    return st && (!strcmp(st, "ready") || !strcmp(st, "completed") || !strcmp(st, "idle"));
+}
+
 static bool item_matches_filter(const tui_picker_item *it, unsigned filter) {
     switch (filter) {
     case 0: return true; // All
     case 1: return it->attention;
     case 2: return it->working;
-    case 3: return !it->attention && !it->working && it->status && !strcmp(it->status, "ready");
-    default: return !it->attention && !it->working && (!it->status || strcmp(it->status, "ready"));
+    case 3: return !it->attention && !it->working && item_is_ready(it->status);
+    default: return !it->attention && !it->working && !item_is_ready(it->status);
     }
+}
+
+static const char *status_label(const char *st) {
+    if (!st || !*st)
+        return "";
+    if (!strcmp(st, "outcome_unknown"))
+        return "unconfirmed";
+    if (!strcmp(st, "waiting_approval"))
+        return "approval";
+    if (!strcmp(st, "waiting_input"))
+        return "question";
+    if (!strcmp(st, "completed") || !strcmp(st, "idle"))
+        return "ready";
+    return st;
+}
+
+static const char *status_mark(const char *state, bool attention, bool working) {
+    if (attention)
+        return "!";
+    if (working || !strcmp(state, "running"))
+        return "\xe2\x97\x8c"; /* ◌ */
+    return item_is_ready(state) ? "\xe2\x80\xa2" : "\xc2\xb7";
 }
 
 static void refresh_picker(tui_view *v, const tui_picker *p) {
@@ -34,18 +60,6 @@ static void refresh_picker(tui_view *v, const tui_picker *p) {
             v->pick_idx[v->pick_count++] = i;
     if (v->pick_selected >= v->pick_count)
         v->pick_selected = v->pick_count ? v->pick_count - 1 : 0;
-}
-
-static const char *status_dot(const char *st, bool attention, bool working) {
-    if (attention)
-        return "\xe2\x96\xb2"; // ▲
-    if (working || (st && !strcmp(st, "running")))
-        return "\xe2\x97\x90"; // ◐
-    if (st && !strcmp(st, "ready"))
-        return "\xe2\x97\x8f"; // ●
-    if (st && !strcmp(st, "failed"))
-        return "\xe2\x9c\x95"; // ✕
-    return "\xe2\x97\x8b";     // ○
 }
 
 void tui_view_select_picker(tui_view *v, size_t row) {
@@ -106,7 +120,8 @@ tui_action tui_view_picker_key(tui_view *v, const tui_picker *p, tui_key key, co
             else if (c == 'k' && v->pick_count)
                 v->pick_selected = (v->pick_selected + v->pick_count - 1) % v->pick_count;
             else if (c == 'a' && p->can_approve && cur && cur->id)
-                return view_action(v, TUI_PICK_APPROVE, cur->id, strlen(cur->id));
+                return view_action(v, text[0] == 'A' ? TUI_PICK_APPROVE_ALL : TUI_PICK_APPROVE,
+                                   cur->id, strlen(cur->id));
             else if (c == 'd' && p->can_approve && cur && cur->id)
                 return view_action(v, TUI_PICK_DENY, cur->id, strlen(cur->id));
             else if (c == 'n' && p->can_new)
@@ -179,7 +194,7 @@ static bool render_ask_picker(tui_view *v, const tui_picker *p, unsigned cols, u
         }
     }
     if (ok && footer && lines < budget) {
-        static const char help[] = "↑↓ choose · Enter reply · Esc type";
+        static const char help[] = "↑↓ choose   Enter reply   Esc type";
         ok = view_newline(out, &lines) && view_buf_puts(out, "  " S_DIM) &&
              view_emit_line(out, help, sizeof(help) - 1, inner, NULL) && view_buf_puts(out, S_RST);
     }
@@ -230,9 +245,9 @@ bool tui_view_render_picker(tui_view *v, const tui_view_status *status, unsigned
         return false;
     used += tw;
     if (*sub && used + 4 < width) {
-        if (!view_buf_puts(out, S_RST S_DIM "  \xc2\xb7  "))
+        if (!view_buf_puts(out, S_RST S_DIM "   "))
             return false;
-        used += 5;
+        used += 3;
         unsigned sw = 0;
         if (!view_emit_line(out, sub, strlen(sub), width > used ? width - used : 0, &sw))
             return false;
@@ -386,21 +401,22 @@ bool tui_view_render_picker(tui_view *v, const tui_view_status *status, unsigned
                                    ? inner_l - lead_w - status_w - meta_w
                                    : 4;
             const char *st = it->status ? it->status : "";
+            const char *label = status_label(st);
             const char *meta = it->meta ? it->meta : "";
             const char *ititle = it->title ? it->title : (it->id ? it->id : "");
             if (is_sel) {
-                if (!view_buf_puts(out, S_SEL_BOLD " \xe2\x80\xba ")) // ›
+                if (!view_buf_puts(out, S_SEL_CHEV " \xe2\x80\xba " S_SEL_BOLD)) // ›
                     goto fail;
                 for (unsigned k = 0; k < (it->indent < 6 ? it->indent : 6); ++k)
                     if (!view_buf_puts(out, "  "))
                         goto fail;
-                if (!view_buf_puts(out, status_dot(st, it->attention, it->working)) ||
+                if (!view_buf_puts(out, status_mark(st, it->attention, it->working)) ||
                     !view_buf_puts(out, " ") ||
                     !view_emit_padded(out, ititle, strlen(ititle), title_w))
                     goto fail;
                 if (status_w) {
                     if (!view_buf_puts(out, S_SEL_DESC) ||
-                        !view_emit_padded(out, st, strlen(st), status_w > 2 ? status_w - 2 : status_w) ||
+                        !view_emit_padded(out, label, strlen(label), status_w > 2 ? status_w - 2 : status_w) ||
                         (status_w > 2 && !view_buf_put(out, "  ", 2)))
                         goto fail;
                 }
@@ -418,7 +434,7 @@ bool tui_view_render_picker(tui_view *v, const tui_view_status *status, unsigned
                     if (!view_buf_puts(out, "  "))
                         goto fail;
                 if (!view_buf_puts(out, view_status_color(st, it->attention, it->working)) ||
-                    !view_buf_puts(out, status_dot(st, it->attention, it->working)) ||
+                    !view_buf_puts(out, status_mark(st, it->attention, it->working)) ||
                     !view_buf_puts(out, " ") ||
                     !view_buf_puts(out, it->active ? S_BOLD S_TEXT : S_TEXT) ||
                     !view_emit_padded(out, ititle, strlen(ititle), title_w) ||
@@ -426,7 +442,7 @@ bool tui_view_render_picker(tui_view *v, const tui_view_status *status, unsigned
                     goto fail;
                 if (status_w) {
                     if (!view_buf_puts(out, view_status_color(st, it->attention, it->working)) ||
-                        !view_emit_padded(out, st, strlen(st), status_w > 2 ? status_w - 2 : status_w) ||
+                        !view_emit_padded(out, label, strlen(label), status_w > 2 ? status_w - 2 : status_w) ||
                         (status_w > 2 && !view_buf_put(out, "  ", 2)) || !view_buf_puts(out, S_RST))
                         goto fail;
                 }
@@ -482,18 +498,18 @@ bool tui_view_render_picker(tui_view *v, const tui_view_status *status, unsigned
     // 7. Footer shortcut bar
     if (lines < budget) {
         if (!view_newline(out, &lines) || !view_buf_puts(out, "  " S_KEY "\xe2\x86\x91/\xe2\x86\x93" S_DIM
-                                                    " move  \xc2\xb7  " S_KEY "tab" S_DIM
+                                                    " move   " S_KEY "tab" S_DIM
                                                     " filter"))
             goto fail;
-        if (p->can_open && !view_buf_puts(out, "  \xc2\xb7  " S_KEY "enter" S_DIM " open"))
+        if (p->can_open && !view_buf_puts(out, "   " S_KEY "enter" S_DIM " open"))
             goto fail;
         if (p->can_approve &&
-            !view_buf_puts(out, "  \xc2\xb7  " S_GREEN "a" S_DIM " approve  \xc2\xb7  " S_RED "d" S_DIM
+            !view_buf_puts(out, "   " S_KEY "a" S_DIM " once   " S_KEY "A" S_DIM " all   " S_RED "d" S_DIM
                            " deny"))
             goto fail;
-        if (p->can_new && !view_buf_puts(out, "  \xc2\xb7  " S_KEY "n" S_DIM " new"))
+        if (p->can_new && !view_buf_puts(out, "   " S_KEY "n" S_DIM " new"))
             goto fail;
-        if (!view_buf_puts(out, "  \xc2\xb7  " S_KEY "esc" S_DIM " back" S_RST))
+        if (!view_buf_puts(out, "   " S_KEY "esc" S_DIM " back" S_RST))
             goto fail;
     }
 

@@ -360,8 +360,6 @@ const char *view_status_color(const char *st, bool attention, bool working) {
         return S_ACCENT;
     if (!st)
         return S_DIM;
-    if (!strcmp(st, "ready") || !strcmp(st, "completed"))
-        return S_GREEN;
     if (!strcmp(st, "failed") || !strcmp(st, "error"))
         return S_RED;
     if (!strcmp(st, "running"))
@@ -370,26 +368,32 @@ const char *view_status_color(const char *st, bool attention, bool working) {
 }
 
 bool view_render_detail_line(text_buf *out, const char *s, size_t n, unsigned max) {
-    // Highlight "Key: Value" lines with muted key and crisp value
+    // Highlight "Key: Value" lines with muted key and crisp value, and dim "Section:" headers
     const char *colon = memchr(s, ':', n);
-    if (colon && colon > s && (size_t)(colon - s) <= 18 &&
-        (size_t)(colon - s + 1) < n && colon[1] == ' ') {
+    if (colon && colon > s && (size_t)(colon - s) <= 18) {
         size_t klen = (size_t)(colon - s);
-        const char *val = colon + 2;
-        size_t vlen = n - (size_t)(val - s);
-        unsigned used = 0;
-        if (!view_buf_puts(out, S_DIM) || !view_emit_line(out, s, klen, max, &used))
-            return false;
-        if (used + 2 < max) {
-            if (!view_buf_puts(out, S_FAINT ": " S_TEXT))
-                return false;
-            used += 2;
-            unsigned vused = 0;
-            if (!view_emit_line(out, val, vlen, max - used, &vused))
-                return false;
-            used += vused;
+        if ((size_t)(colon - s + 1) == n) {
+            return view_buf_puts(out, S_DIM) && view_emit_padded(out, s, n, max) &&
+                   view_buf_puts(out, S_RST);
         }
-        return view_buf_puts(out, S_RST) && (used < max ? view_buf_repeat(out, " ", max - used) : true);
+        if ((size_t)(colon - s + 1) < n && colon[1] == ' ') {
+            const char *val = colon + 2;
+            size_t vlen = n - (size_t)(val - s);
+            unsigned used = 0;
+            if (!view_buf_puts(out, S_DIM) || !view_emit_line(out, s, klen, max, &used))
+                return false;
+            if (used + 2 < max) {
+                if (!view_buf_puts(out, ": " S_RST S_TEXT))
+                    return false;
+                used += 2;
+                unsigned vused = 0;
+                if (!view_emit_line(out, val, vlen, max - used, &vused))
+                    return false;
+                used += vused;
+            }
+            return view_buf_puts(out, S_RST) &&
+                   (used < max ? view_buf_repeat(out, " ", max - used) : true);
+        }
     }
     if (!view_buf_puts(out, S_TEXT))
         return false;

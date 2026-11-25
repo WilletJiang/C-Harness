@@ -206,8 +206,11 @@ static bool is_blank(const char *s, size_t n) {
 static tui_action enter(tui_view *v, const tui_view_status *status) {
     const char *s = v->draft.data;
     size_t n = v->draft.len;
-    if (!n || is_blank(s, n))
+    if (!n || is_blank(s, n)) {
+        if (status && status->image_name && *status->image_name && !status->busy && !status->has_pending)
+            return view_action(v, TUI_SUBMIT, "", 0);
         return (tui_action){TUI_NO_ACTION, NULL};
+    }
     if (v->cursor == n && s[n - 1] == '\\') {
         v->draft.data[n - 1] = '\n';
         edited(v);
@@ -297,6 +300,24 @@ tui_action tui_view_key(tui_view *v, const tui_view_status *status, tui_key key,
     size_t n = v->draft.len;
     switch (key) {
     case TUI_TEXT:
+        if (!n && text && count == 1 && status && status->pending && status->pending->active &&
+            status->pending->kind && !strcmp(status->pending->kind, "approval")) {
+            char c = view_lower(text[0]);
+            if (c == 'y' && status->pending->operation)
+                return view_action(v, TUI_PICK_APPROVE, status->pending->operation,
+                            strlen(status->pending->operation));
+            if (c == 'a' && status->pending->operation)
+                return view_action(v, TUI_PICK_APPROVE_ALL, status->pending->operation,
+                            strlen(status->pending->operation));
+            if (c == 'n' && status->pending->operation)
+                return view_action(v, TUI_PICK_DENY, status->pending->operation,
+                            strlen(status->pending->operation));
+            if (c == 'i')
+                return view_action(v, TUI_COMMAND, "pending", 7);
+        }
+        if (text && count)
+            (void)insert_text(v, text, count);
+        break;
     case TUI_PASTE:
         if (text && count)
             (void)insert_text(v, text, count);

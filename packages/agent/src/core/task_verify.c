@@ -140,7 +140,7 @@ ah_code core_task_verify(ah_engine *e, const char *sid, const ah_task_verifier *
         context.failed || result.outcome_unknown || (invoked && (code != AH_OK || !valid));
     bool passed = invoked && code == AH_OK && !result.is_error && parsed &&
                   yyjson_is_true(yyjson_obj_get(yyjson_doc_get_root(parsed), "ok"));
-    ah_code drained = core_drain_steering(e, &session, true, NULL, &check_error);
+    ah_code drained = core_drain_inputs(e, &session, true, NULL, &check_error);
     bool superseded = session.state != AH_COMPLETED;
     core_session_free(&session);
     if (drained != AH_OK)

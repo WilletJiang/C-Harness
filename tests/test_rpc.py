@@ -40,8 +40,11 @@ class Service(http.server.BaseHTTPRequestHandler):
 
 
 class Client:
-    def __init__(self, db, endpoint, token=True, extra=()):
+    def __init__(self, db, endpoint, token=True, extra=(), proxy=None, env_overrides=None):
         env = dict(os.environ)
+        env.update(env_overrides or {})
+        if proxy is not None:
+            env.update(https_proxy=proxy, HTTPS_PROXY=proxy, no_proxy="", NO_PROXY="")
         env.pop("AH_ACCESS_TOKEN", None)
         if token:
             env["AH_ACCESS_TOKEN"] = SECRET

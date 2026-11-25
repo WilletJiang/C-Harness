@@ -129,13 +129,13 @@ static void scan_blocks(tui_stream *stream) {
 
 static size_t plain_boundary(const char *text, size_t size, unsigned cols) {
     size_t width = cols < 16 ? 16 : cols;
-    if (size < 3 * width)
+    if (size < 2 * width)
         return 0;
-    size_t cut = size - 2 * width;
+    size_t cut = size - width;
     while (cut > width / 2 && text[cut - 1] != ' ' && text[cut - 1] != '\t')
         --cut;
     if (cut <= width / 2) {
-        cut = size - 2 * width;
+        cut = size - width;
         while (cut && ((unsigned char)text[cut] & 0xc0) == 0x80)
             --cut;
     }
@@ -143,9 +143,10 @@ static size_t plain_boundary(const char *text, size_t size, unsigned cols) {
 }
 
 static void print_assistant(tui_app *app, bool first) {
-    tui_terminal_clear(&app->tty);
     if (first)
-        fputs("\033[38;5;75m \xe2\x80\xa2\033[0m\n", stdout);
+        tui_block_begin(app, TUI_BLOCK_ASSISTANT);
+    else
+        tui_terminal_clear(&app->tty);
 }
 
 void tui_stream_render(tui_app *app) {
@@ -187,6 +188,7 @@ void tui_stream_render(tui_app *app) {
         return;
     print_assistant(app, first);
     if (plain) {
+        fputs("  ", stdout);
         tui_safe_text(stdout, chunk, cut);
         fputc('\n', stdout);
     } else {

@@ -99,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = b"x" * 10000
         elif path == "/backoff":
             status = 429
-            headers["Retry-After"] = "30"
+            headers["Retry-After"] = "1"
         elif path in ("/hang", "/timeout"):
             payload = b""
         elif path == "/after-delta":
@@ -237,7 +237,7 @@ def main():
         assert not empty["first_content"]["present"] and empty["terminal_completed"]
         empty_items = run("/empty-items", expected={**EMPTY_RESPONSE, "output": EMPTY_ITEMS})["metrics"][0]
         assert empty_items["first_output_item"]["present"] and not empty_items["first_content"]["present"]
-        failed = run("/failed-before-content", code=4)["metrics"][0]
+        failed = run("/failed-before-content", code=4, requests=3)["metrics"][0]
         assert failed["terminal"]["present"] and not failed["terminal_completed"]
         assert not failed["first_content"]["present"]
         phases = run("/phases")["metrics"][0]

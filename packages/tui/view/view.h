@@ -25,6 +25,7 @@ typedef enum {
     TUI_QUIT,
     TUI_PICK_OPEN,
     TUI_PICK_APPROVE,
+    TUI_PICK_APPROVE_ALL,
     TUI_PICK_DENY,
     TUI_PICK_NEW,
     TUI_PICK_CLOSE,
@@ -82,8 +83,19 @@ typedef struct {
 } tui_auth_state;
 
 typedef struct {
+    bool active;
+    const char *kind;      // "approval", "input", or "unknown"
+    const char *operation; // operation id
+    const char *tool;      // tool name
+    const char *summary;   // multiline formatted arguments or question
+} tui_pending_card;
+
+typedef struct {
     bool busy;
     bool steering;
+    bool replying;
+    const char *activity;  // active tool summary while running (optional)
+    unsigned active_tools; // number of tools currently executing
     const char *model;
     const char *session;
     const char *state;
@@ -94,8 +106,10 @@ typedef struct {
     const char *notice;
     bool notice_error;
     const char *preview;
+    const char *image_name;
     const tui_command *commands;
     size_t command_count;
+    const tui_pending_card *pending;
     const tui_picker *picker;
     const tui_auth_state *auth;
 } tui_view_status;

@@ -212,10 +212,11 @@ def exercise_stream_and_model_options(binary):
             assert b"**scrollback-block-00" not in early
             assert len(server.requests) == 1
             server.release.set()
-            final = receive(master, b"Worked for")
+            final = receive(master, b"Final answer after the tool")
             assert b"Final answer after the tool" in final
             assert b"scrollback-block-00" not in final
-            assert final.index(b"Before the tool") < final.index(b"find")
+            receipt = re.search(rb"find +\x1b\[0m +mode=files", final)
+            assert receipt and final.index(b"Before the tool") < receipt.start()
             assert len(server.requests) == 2
             for body in server.requests:
                 assert body["model"] == "picked-model"
@@ -229,10 +230,19 @@ def exercise_stream_and_model_options(binary):
             os.write(master, b"\x1b[A\r")
             receive(master, b"Reasoning effort: low")
             os.write(master, b"Follow up\r")
-            receive(master, b"Worked for")
+            receive(master, b"Final answer after the tool")
             assert server.requests[2]["reasoning"] == {"effort": "low"}
             with sqlite3.connect((root / "test.db").as_uri() + "?mode=ro", uri=True) as db:
                 assert db.execute("SELECT COUNT(*) FROM sessions").fetchone() == (2,)
+            os.write(master, b"/sessions\r")
+            listing = receive(master, b"Choose a conversation")
+            if b"Last message" not in listing:
+                listing += receive(master, b"Last message", 5)
+            if b"Empty chat" not in listing:
+                listing += receive(master, b"Empty chat", 5)
+            assert b"Check the workspace" in listing and b"Empty chat" in listing
+            os.write(master, b"\x1b[B\r")
+            assert b"fixture" in receive(master, b"Ask ah anything")
         finally:
             server.release.set()
             process.kill()
