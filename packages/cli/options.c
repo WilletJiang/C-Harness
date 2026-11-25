@@ -14,7 +14,11 @@ void cli_usage(bool all) {
 #endif
          "\nSession and input:\n"
          "  --model NAME         Model for new session (required by new)\n"
+#ifdef AH_BUILD_TUI
+         "  --workspace PATH     Local tools root (tui defaults to the current directory)\n"
+#else
          "  --workspace PATH     Register bounded local file tools\n"
+#endif
          "  --db PATH            Session database (default ./harness.db)\n"
          "  --session ID         Target session\n"
          "  --prompt TEXT        Submit user text before run\n"
@@ -32,15 +36,24 @@ void cli_usage(bool all) {
 
          "  --tool-timeout-ms N      Tool deadline in milliseconds (default 30000)\n"
          "  --parallel-tools N   Concurrent opt-in read tools (default 4; 0/1 serial; max 16)\n"
-         "\nOpt-in capabilities (default off):\n"
+         "\nCapabilities:\n"
          "  --agents N           Fresh-context subagents, N concurrent model requests\n"
+#ifdef AH_BUILD_TUI
+         "                       TUI defaults to 4 concurrent requests\n"
+#endif
          "  --enable-exec        Allow process execution with approval (not sandboxed)\n"
-         "  --workflows          Enable host check presets (workspace search is always available)\n"
+#ifdef AH_BUILD_TUI
+         "                       Enabled by default in tui\n"
+#endif
+         "  --workflows          Enable host check presets\n"
          "  --coordinate-writes  Require explicit workspace write grants via RPC\n"
          "  --skills             Lazy skill discovery and loading\n"
          "  --mcp                Lazy MCP discovery/calls with approval\n"
          "  --plugins            Discover installed plugin bundles\n"
-         "                       Plugin skills/MCP also require --skills/--mcp");
+#ifdef AH_BUILD_TUI
+         "                       TUI enables skills, MCP, and plugins by default\n"
+#endif
+         "                       Plugin members use the corresponding skills and MCP tools");
     if (all)
         puts("\nAdvanced configuration:\n"
              "  --search-endpoint URL   Override the Keenable REST endpoint for this host\n"

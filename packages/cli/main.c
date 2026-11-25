@@ -181,10 +181,6 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if ((exec_enabled || workflows || policies.coordinate_writes) && !workspace) {
-        fputs("--enable-exec/--workflows/--coordinate-writes require --workspace\n", stderr);
-        return 2;
-    }
     if (prompt && !command_id) {
         fputs("--prompt requires --command-id\n", stderr);
         return 2;
@@ -206,9 +202,20 @@ int main(int argc, char **argv) {
         fputs("Use ah run or ah rpc for --prompt or --events\n", stderr);
         return 2;
     }
-    if (tui)
+    if (tui) {
+        if (!workspace)
+            workspace = ".";
+        exec_enabled = true;
+        extensions.enable_skills = true;
+        extensions.enable_mcp = true;
+        extensions.enable_plugins = true;
         policies.automatic_context = true;
+    }
 #endif
+    if ((exec_enabled || workflows || policies.coordinate_writes) && !workspace) {
+        fputs("--enable-exec/--workflows/--coordinate-writes require --workspace\n", stderr);
+        return 2;
+    }
     known |= tui;
     for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++)
         if (!strcmp(command, commands[i]))
@@ -294,6 +301,8 @@ int main(int argc, char **argv) {
         (extensions.enable_skills || extensions.enable_mcp || extensions.enable_plugins)) {
         extensions.workspace = workspace;
         extensions.allow_http_loopback = allow_http;
+        if (tui && extensions.max_context_bytes > config.max_context_bytes)
+            extensions.max_context_bytes = config.max_context_bytes;
         code = ah_extensions_enable(cli.engine, &extensions, &error);
     }
     ah_local_tools *tools = NULL;
@@ -308,11 +317,12 @@ int main(int argc, char **argv) {
         if (code == AH_OK)
             cli.local_tools = tools;
     }
-    if (code == AH_OK && agents) {
+    if (code == AH_OK && (agents || tui)) {
         ah_agents_config ac;
         ah_agents_config_init(&ac);
         ac.provider = ah_responses_async_provider(responses);
-        ac.max_active = agents;
+        if (agents)
+            ac.max_active = agents;
         ac.max_agents = agent_limit;
         ac.max_depth = agent_depth;
         code = ah_agents_enable(cli.engine, &ac, &error);

@@ -78,7 +78,9 @@ class StreamingProvider(Provider):
                 return
             text = self.blocks + "Before the tool"
             tools = [{"type": "function_call", "call_id": "find-once", "name": "find",
-                      "arguments": '{"mode":"files"}'}]
+                      "arguments": '{"mode":"files"}'},
+                     {"type": "function_call", "call_id": "discover-once", "name": "discover",
+                      "arguments": '{"query":"workspace-fixture"}'}]
         else:
             text = "Final answer after the tool"
             tools = []
@@ -182,15 +184,30 @@ def exercise_stream_and_model_options(binary):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         root = Path(directory)
+        (root / "workspace-probe.txt").write_text("default TUI workspace\n")
+        codex_home = root / "codex"
+        skill = codex_home / "skills" / "workspace-fixture-skill" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: workspace-fixture-skill\ndescription: Fixture skill\n---\nInstructions.\n")
+        plugin = codex_home / "plugins/cache/test/workspace-fixture-plugin/1/.codex-plugin/plugin.json"
+        plugin.parent.mkdir(parents=True)
+        plugin.write_text('{"name":"workspace-fixture-plugin"}')
+        marker = root / "mcp-started"
+        fixture = root / "mcp-fixture"
+        fixture.write_text('#!/bin/sh\nprintf started > "$1"\n')
+        fixture.chmod(0o700)
+        (codex_home / "config.toml").write_text(
+            f"[mcp_servers.workspace-fixture-server]\ncommand = {json.dumps(str(fixture))}\n"
+            f"args = [{json.dumps(str(marker))}]\n")
         env = dict(os.environ, TERM="xterm-256color", AH_ACCESS_TOKEN="graphics-fixture",
-                   AH_TUI_MATH="text", XDG_CONFIG_HOME=str(root / "config"))
+                   AH_TUI_MATH="text", CODEX_HOME=str(codex_home), XDG_CONFIG_HOME=str(root / "config"))
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 27, 92, 0, 0))
         endpoint = f"http://127.0.0.1:{server.server_port}/v1/responses"
         process = subprocess.Popen(
-            [binary, "tui", "--db", root / "test.db", "--model", "fixture", "--workspace", root,
+            [binary, "tui", "--db", root / "test.db", "--model", "fixture",
              "--allow-http-loopback", "--endpoint", endpoint, "--no-web-search"],
-            stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True,
+            cwd=root, stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True,
         )
         try:
             receive(master, b"Ask ah anything")
@@ -221,8 +238,17 @@ def exercise_stream_and_model_options(binary):
             for body in server.requests:
                 assert body["model"] == "picked-model"
                 assert body["reasoning"] == {"effort": "high"}
-            assert any(item.get("type") == "function_call_output"
-                       for item in server.requests[1]["input"])
+                local = next(tool for tool in body["tools"] if tool.get("name") == "local")
+                names = {tool["name"] for tool in local["tools"]}
+                assert {"find", "read_file", "exec", "discover", "skill", "mcp", "mcp_call", "spawn"} <= names
+            results = {item["call_id"]: json.loads(item["output"])["result"]
+                       for item in server.requests[1]["input"] if item.get("type") == "function_call_output"}
+            assert {"path": "workspace-probe.txt"} in results["find-once"]["results"]
+            assert {(item["kind"], item["name"]) for item in results["discover-once"]["items"]} == {
+                ("skill", "workspace-fixture-skill"), ("mcp", "workspace-fixture-server"),
+                ("plugin", "workspace-fixture-plugin"),
+            }
+            assert not marker.exists()
             os.write(master, b"/model\r")
             receive(master, b"Enter to choose effort")
             os.write(master, b"\r")
