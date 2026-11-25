@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+enum { TUI_APPROVAL_SCOPE = 1 };
+
 typedef struct {
     char *data;
     size_t capacity;
@@ -118,9 +120,12 @@ void tui_config_load(tui_app *app) {
     char *workspace = realpath(app->cli->workspace ? app->cli->workspace : ".", NULL);
     const char *saved_workspace = profile_string(&prefs, "workspace");
     const char *saved_endpoint = profile_string(&prefs, "endpoint");
+    yyjson_val *preferences = yyjson_doc_get_root(prefs.doc);
+    /* Persist consent for the current default tool set. */
     app->approve_all = workspace && saved_workspace && saved_endpoint &&
                        !strcmp(workspace, saved_workspace) && !strcmp(app->endpoint, saved_endpoint) &&
-                       yyjson_get_bool(yyjson_obj_get(yyjson_doc_get_root(prefs.doc), "yolo"));
+                       yyjson_get_int(yyjson_obj_get(preferences, "tool_scope")) == TUI_APPROVAL_SCOPE &&
+                       yyjson_get_bool(yyjson_obj_get(preferences, "yolo"));
     ah_set_approve_all(app->cli->engine, app->approve_all);
     free(workspace);
     close_profile(&prefs);
@@ -230,6 +235,7 @@ bool tui_yolo_set(tui_app *app, bool enabled) {
     char *json = NULL;
     if (root && yyjson_mut_obj_add_str(doc, root, "workspace", workspace) &&
         yyjson_mut_obj_add_str(doc, root, "endpoint", app->endpoint) &&
+        yyjson_mut_obj_add_int(doc, root, "tool_scope", TUI_APPROVAL_SCOPE) &&
         yyjson_mut_obj_add_bool(doc, root, "yolo", enabled)) {
         yyjson_mut_doc_set_root(doc, root);
         json = yyjson_mut_write(doc, YYJSON_WRITE_PRETTY_TWO_SPACES, &length);

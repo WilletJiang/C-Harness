@@ -9,10 +9,19 @@ OpenAI Responses endpoint in this build.
 ```sh
 cmake -S . -B build-tui -DAH_BUILD_TUI=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-tui --parallel
-./build-tui/ah tui --workspace .
-./build-tui/ah tui --model MODEL --workspace .
-./build-tui/ah tui --session SESSION_ID --db harness.db --workspace .
+./build-tui/ah tui
+./build-tui/ah tui --model MODEL
+./build-tui/ah tui --session SESSION_ID --db harness.db
 ```
+
+The TUI makes the launch directory available to its local file tools. Use
+`--workspace PATH` to choose another directory. Process execution is available
+with approval.
+
+Skills, MCP servers and plugins are discovered on demand. Configured MCP tool
+calls require approval. Subagents are available with up to four concurrent
+model requests, including the main agent. Set `--agents N` to choose a
+different limit.
 
 Use a file-backed database. The ChatGPT option opens the browser and uses the
 existing [ChatGPT host adapter](../host/README.md) and macOS Keychain. The TUI
@@ -68,9 +77,10 @@ execution require manual approval. Each automatically approved edit records
 an `approval.auto` event.
 
 `/yolo on` approves all already-enabled tools for the current workspace and
-endpoint and saves that choice for reopening the TUI. Use `/yolo off` to turn
-it off. In the pending picker, `a` approves once and `A` enables YOLO and
-approves the pending operation. Process execution is available with `--enable-exec`.
+endpoint and saves that choice for reopening the TUI. Confirm older grants once
+for the current tool set. Use `/yolo off` to turn it off.
+In the pending picker, `a` approves once and `A` enables YOLO and approves the
+pending operation.
 
 ## Source layout
 

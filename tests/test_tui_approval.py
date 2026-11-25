@@ -45,6 +45,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
             ]
         elif item["content"] == "Process check":
             output = [call("test", "process", {})]
+        elif item["content"] == "List files":
+            output = [call("exec", "list-files", {"argv": ["/bin/ls", "-a"]})]
         else:
             prompt = item["content"]
             output = [call("write_file", prompt, {"path": prompt + ".txt", "content": "pending",
@@ -94,10 +96,17 @@ def main():
         root = Path(directory)
         db = root / "test.db"
         (root / "existing.txt").write_text("before\n")
+        prefs = root / "config" / "ah" / "tui-preferences.json"
+        prefs.parent.mkdir(parents=True, mode=0o700)
+        prefs.write_text(json.dumps({"workspace": str(root.resolve()), "yolo": True, "exec": True,
+                                     "endpoint": f"http://127.0.0.1:{server.server_port}/v1/responses"}))
+        prefs.chmod(0o600)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             with terminal(binary, root, server, "--model", "fixture") as master:
+                submit(master, "List files", b"waiting_approval")
+                submit(master, "/approve", b"Turn finished.")
                 submit(master, "default", b"waiting_approval")
                 submit(master, "/deny", b"Turn finished.")
                 submit(master, "/auto-approve", b"Auto-approve on")
@@ -119,11 +128,14 @@ def main():
                     "SELECT o.call_id,e.type FROM events e JOIN operations o ON e.operation_id=o.id "
                     "WHERE e.type IN ('approval.auto','approval.requested') ORDER BY e.seq"
                 ).fetchall()
-                assert approvals == [("default", "approval.requested"),
+                assert approvals == [("list-files", "approval.requested"),
+                                     ("default", "approval.requested"),
                                      ("new-note", "approval.auto"), ("patch-note", "approval.auto"),
                                      ("protected", "approval.requested"), ("process", "approval.requested"),
                                      ("disabled", "approval.requested")], approvals
-                assert conn.execute("SELECT COUNT(*) FROM events WHERE type='input.submitted'").fetchone() == (4,)
+                assert conn.execute("SELECT COUNT(*) FROM events WHERE type='input.submitted'").fetchone() == (5,)
+                result, = conn.execute("SELECT result FROM operations WHERE call_id='list-files'").fetchone()
+                assert "existing.txt" in json.loads(result)["stdout"]
             with terminal(binary, root, server, "--session", session) as master:
                 submit(master, "reopened", b"waiting_approval")
                 assert not (root / "reopened.txt").exists()
