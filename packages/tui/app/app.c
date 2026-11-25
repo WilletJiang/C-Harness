@@ -26,19 +26,23 @@ static void resize(int sig) {
     errno = saved;
 }
 
+static void drain_wake(int fd) {
+    char discard[4096];
+    ssize_t count;
+    do {
+        count = read(fd, discard, sizeof(discard));
+    } while (count < 0 && errno == EINTR);
+}
+
 static void detect_workspace(tui_app *app) {
     char raw[512];
     if (getcwd(raw, sizeof(raw))) {
         const char *home = getenv("HOME");
-        if (home && *home) {
-            size_t hlen = strlen(home);
-            if (!strncmp(raw, home, hlen) && (raw[hlen] == '/' || raw[hlen] == 0))
-                snprintf(app->cwd, sizeof(app->cwd), "~%s", raw + hlen);
-            else
-                snprintf(app->cwd, sizeof(app->cwd), "%s", raw);
-        } else {
-            snprintf(app->cwd, sizeof(app->cwd), "%s", raw);
-        }
+        size_t hlen = home ? strlen(home) : 0;
+        if (hlen && !strncmp(raw, home, hlen) && (raw[hlen] == '/' || raw[hlen] == 0))
+            snprintf(app->cwd, sizeof(app->cwd), "~%.*s", (int)sizeof(app->cwd) - 2, raw + hlen);
+        else
+            snprintf(app->cwd, sizeof(app->cwd), "%.*s", (int)sizeof(app->cwd) - 1, raw);
     }
     // Walk up at most 6 directories to read .git/HEAD without spawning a subprocess
     char dir[512];
@@ -56,7 +60,8 @@ static void detect_workspace(tui_app *app) {
                     line[--len] = 0;
                 const char *prefix = "ref: refs/heads/";
                 if (!strncmp(line, prefix, strlen(prefix)))
-                    snprintf(app->branch, sizeof(app->branch), "%s", line + strlen(prefix));
+                    snprintf(app->branch, sizeof(app->branch), "%.*s",
+                             (int)sizeof(app->branch) - 1, line + strlen(prefix));
                 else if (len >= 7)
                     snprintf(app->branch, sizeof(app->branch), "%.7s", line);
             }
@@ -232,8 +237,7 @@ static bool terminal_loop(tui_app *app) {
         if (ready[3].revents)
             tui_oauth_read(app);
         if (ready[1].revents & POLLIN) {
-            char discard[4096];
-            (void)read(app->wake[0], discard, sizeof(discard));
+            drain_wake(app->wake[0]);
             app->refresh_events |= atomic_exchange(&app->journal_dirty, false);
         }
         if (app->refresh_events)
@@ -372,10 +376,8 @@ done:
         while (!atomic_load(&app.worker_done)) {
             ah_cancel(cli->engine);
             struct pollfd ready = {app.wake[0], POLLIN, 0};
-            if (poll(&ready, 1, 30) > 0) {
-                char discard[4096];
-                (void)read(app.wake[0], discard, sizeof(discard));
-            }
+            if (poll(&ready, 1, 30) > 0 && (ready.revents & POLLIN))
+                drain_wake(app.wake[0]);
         }
         pthread_join(app.worker, NULL);
     }

@@ -11,22 +11,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#endif
-
 static bool sibling(char path[PATH_MAX]) {
-#ifdef __APPLE__
-    uint32_t size = PATH_MAX;
-    char binary[PATH_MAX];
-    if (_NSGetExecutablePath(binary, &size) || !realpath(binary, path))
+    if (!ah_executable_path(path))
         return false;
-#else
-    ssize_t n = readlink("/proc/self/exe", path, PATH_MAX - 1);
-    if (n <= 0 || n >= PATH_MAX - 1)
-        return false;
-    path[n] = 0;
-#endif
     char *slash = strrchr(path, '/');
     if (!slash || (size_t)(slash - path) + sizeof("/ah-flow-vm") > PATH_MAX)
         return false;

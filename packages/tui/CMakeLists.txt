@@ -42,9 +42,10 @@ target_include_directories(ah_cli PRIVATE "${PROJECT_SOURCE_DIR}/packages"
 target_link_libraries(ah_cli PRIVATE "${math_lib}" ah_tui_md4c PkgConfig::AH_UTF8PROC
                                      "${AH_TERMINFO_LIBRARY}" ${CMAKE_DL_LIBS} m)
 find_program(AH_TUI_PYTHON python3)
+set(AH_TUI_HOST_ROOT "${PROJECT_SOURCE_DIR}" CACHE PATH "Development fallback for the TUI host adapter")
 if(AH_TUI_PYTHON)
   target_compile_definitions(ah_cli PRIVATE AH_TUI_PYTHON="${AH_TUI_PYTHON}"
-                                            AH_TUI_HOST_ROOT="${PROJECT_SOURCE_DIR}")
+                                            AH_TUI_HOST_ROOT="${AH_TUI_HOST_ROOT}")
 endif()
 
 if(AH_TESTS_ENABLED)
