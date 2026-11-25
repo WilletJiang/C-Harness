@@ -36,7 +36,7 @@ void cli_usage(bool all) {
 
          "  --tool-timeout-ms N      Tool deadline in milliseconds (default 30000)\n"
          "  --parallel-tools N   Concurrent opt-in read tools (default 4; 0/1 serial; max 16)\n"
-         "\nCapabilities:\n"
+         "\nCapabilities (default off for headless commands):\n"
          "  --agents N           Fresh-context subagents, N concurrent model requests\n"
 #ifdef AH_BUILD_TUI
          "                       TUI defaults to 4 concurrent requests\n"
