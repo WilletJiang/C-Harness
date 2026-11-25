@@ -19,7 +19,7 @@ def main():
     with TemporaryDirectory(prefix="ah-bundle-host-") as tmp:
         root = Path(tmp)
         config = root / "config" / "ah"
-        config.mkdir(parents=True)
+        config.mkdir(parents=True, mode=0o700)
         profile = config / "tui.json"
         profile.write_text(json.dumps({"endpoint": "https://api.openai.com/v1/responses",
                                        "provider": "chatgpt", "model": "fixture"}))
