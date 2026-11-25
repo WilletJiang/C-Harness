@@ -1,15 +1,25 @@
 #include "scheduler.h"
 #include "../providers/turn.h"
 
-static bool cancelled(void *context) {
+static bool hard_cancelled(void *context) {
     agent_job *job = context;
     return job->cancelled || atomic_load_explicit(&job->engine->cancelled, memory_order_relaxed) ||
-           ah_now_ms() >= job->deadline || core_model_has_steer(job->engine, job->session.id);
+           ah_now_ms() >= job->deadline;
+}
+
+static bool cancelled(void *context) {
+    agent_job *job = context;
+    return hard_cancelled(context) || core_model_has_steer(job->engine, job->session.id);
+}
+
+static const char *peek_steer(void *context, char command[257]) {
+    agent_job *job = context;
+    return core_model_peek_steer(job->engine, job->session.id, command);
 }
 
 static void delta(void *context, const char *text, size_t length) {
     agent_job *job = context;
-    if (!cancelled(job))
+    if (!hard_cancelled(job) && (job->steer.successor || !cancelled(job)))
         core_emit_delta(job->engine, job->session.id, text, length);
 }
 
@@ -48,6 +58,8 @@ ah_code agents_model_start(agent_job *job, ah_error *error) {
     ah_engine *e = job->engine;
     core_session *session = &job->session;
     job->cancelled = false;
+    job->steer = (responses_turn_steer){.context = job, .peek = peek_steer,
+                                       .hard_cancelled = hard_cancelled};
     ah_code code = core_model_prepare(e, session, &job->request, error);
     job->deadline = e->deadline;
     if (code != AH_OK)
@@ -58,13 +70,13 @@ ah_code agents_model_start(agent_job *job, ah_error *error) {
     job->started = ah_now_us();
     ah_async_provider *provider = &e->agents.provider;
     code = responses_start_in_turn(*provider, session->id, session->turn, job->request, delta, job,
-                                   cancelled, job, &job->handle, error);
+                                   cancelled, job, &job->steer, &job->handle, error);
     if (code == AH_OK && !job->handle)
         code = ah_fail(error, AH_PROTOCOL, "async provider returned no request handle");
     if (code != AH_OK) {
         agents_model_release(job);
         if (code == AH_CANCELLED && core_model_has_steer(e, session->id))
-            return core_model_finish(e, session, NULL, code, error);
+            return core_model_finish(e, session, NULL, code, NULL, error);
     }
     return code;
 }
@@ -110,15 +122,17 @@ ah_code agents_model_finish(agent_job *job, bool *done, ah_error *error) {
         *done = true;
         return code == AH_OK ? agents_job_notify(job, error) : code;
     }
-    if (!*done && code == AH_OK && !core_model_has_steer(e, job->session.id)) {
+    if (!*done && code == AH_OK &&
+        (job->steer.in_flight || !core_model_has_steer(e, job->session.id))) {
         free(response);
         return AH_OK;
     }
     *done = true;
     core_metric(e, job->session.id, NULL, "model", job->started, ah_now_us(),
                 response ? strlen(response) : 0, job->session.model_calls,
-                code == AH_OK && core_model_has_steer(e, job->session.id) ? AH_CANCELLED : code);
-    if (code != AH_OK || cancelled(job)) {
+                code == AH_OK && !job->steer.applied && core_model_has_steer(e, job->session.id) ?
+                    AH_CANCELLED : code);
+    if (code != AH_OK || (!job->steer.applied && cancelled(job))) {
         ah_error usage_error = {0};
         ah_code saved = save_usage(job, response, &usage_error);
         if (saved != AH_OK) {
@@ -127,9 +141,9 @@ ah_code agents_model_finish(agent_job *job, bool *done, ah_error *error) {
                 *error = usage_error;
         }
     }
-    if (core_model_has_steer(e, job->session.id))
+    if (!job->steer.applied && core_model_has_steer(e, job->session.id))
         job->cancelled = true;
-    code = core_model_finish(e, &job->session, response, code, error);
+    code = core_model_finish(e, &job->session, response, code, &job->steer, error);
     free(response);
     agents_model_release(job);
     bool changed = false;

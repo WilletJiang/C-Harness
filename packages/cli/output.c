@@ -1,5 +1,6 @@
 #include "cli.h"
 #include "internal.h"
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,8 @@ void cli_print(cli_context *cli, const char *json) {
 }
 void cli_observe(void *context, const ah_event *event) {
     cli_context *cli = context;
+    if (cli->event_sink)
+        cli->event_sink(cli->event_context, event);
     if (!cli->json_events && !cli->rpc)
         return;
     yyjson_mut_doc *doc = ah_mut_doc_new();
@@ -35,4 +38,22 @@ void cli_observe(void *context, const ah_event *event) {
     free(text);
     yyjson_doc_free(payload);
     ah_mut_doc_free(doc);
+}
+
+void cli_network_state(void *context, const ah_responses_state *state) {
+    cli_context *cli = context;
+    if (!cli->event_sink && !cli->json_events && !cli->rpc)
+        return;
+    char payload[400];
+    snprintf(payload, sizeof(payload),
+             "{\"phase\":\"%s\",\"attempt\":%u,\"turn\":%u,\"http_status\":%ld,"
+             "\"retry_in_ms\":%" PRIu64 ",\"reason\":\"%s\",\"transport\":\"%s\","
+             "\"uploaded_bytes\":%zu,\"connection\":%" PRIu64 ",\"proxy_used\":%s,"
+             "\"proxy_connect_status\":%ld,\"curl_code\":%d}",
+             state->phase, state->attempt, state->turn, state->http_status, state->retry_in_ms,
+             state->reason ? state->reason : "", state->transport, state->uploaded_bytes,
+             state->connection, state->proxy_used ? "true" : "false",
+             state->proxy_connect_status, state->curl_code);
+    ah_event event = {.type = "network.state", .session_id = state->session_id, .json = payload};
+    cli_observe(cli, &event);
 }

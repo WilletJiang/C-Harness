@@ -176,7 +176,14 @@ ah_code core_write_batch(ah_engine *e, core_session *session, const core_operati
     if (code == AH_OK && n >= 2) {
         *handled = true;
         for (unsigned i = 0; i < n; i++) {
-            if (ops[i].approval && ops[i].decision != 1) {
+            if (ops[i].approval && ops[i].decision != 1 && !ah_approve_all(e) &&
+                !core_auto_approve(core_find_tool(e, ops[i].name), &ops[i])) {
+                if (i && ah_local_tools_auto_approve(workspace)) {
+                    *handled = i >= 2;
+                    if (*handled)
+                        code = run_batch(e, session, ops, coordinated, i, error);
+                    goto cleanup;
+                }
                 if (strcmp(ops[i].status, "approval"))
                     code = core_pause_approval(e, session, &ops[i], error);
                 else

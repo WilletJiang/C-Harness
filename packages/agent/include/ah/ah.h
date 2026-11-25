@@ -92,6 +92,7 @@ typedef struct {
     /* Owner-authorized coordinated writes must supply an observed revision or
      * explicit absent expectation; immutable through background dispatch. */
     bool require_revision;
+    bool auto_approved; /* Host policy approved this particular local edit. */
     /* Durable tools only: borrowed state and wake reason for this invocation.
      * generation fences late completions; operation_id remains stable. */
     const char *checkpoint_json;
@@ -158,11 +159,24 @@ ah_code ah_register_tool(ah_engine *engine, const ah_tool *tool, ah_error *error
  * Pass "" to use just the built-in policy. Forks inherit the stored instructions. */
 ah_code ah_session_create(ah_engine *engine, const char *model, const char *instructions,
                           char id[AH_ID_CAP], ah_error *error);
+/* Create the session and its initial effort in one transaction. */
+ah_code ah_session_create_with_reasoning(ah_engine *, const char *model, const char *instructions,
+                                         const char *effort, char id[AH_ID_CAP], ah_error *);
+/* Set effort between turns; an empty string uses the provider default. */
+ah_code ah_session_set_reasoning(ah_engine *, const char *session, const char *effort, ah_error *);
+/* The effort is malloc-owned, including an empty string for the provider default. */
+ah_code ah_session_reasoning(ah_engine *, const char *session, char **effort, ah_error *);
 ah_code ah_submit(ah_engine *engine, const char *session_id, const char *command_id,
                   const char *text, ah_error *error);
+/* Like ah_submit, but a session paused on an uncertain tool outcome may start
+ * a new turn. The old exchange is closed without replaying its calls. */
+ah_code ah_submit_after_interruption(ah_engine *engine, const char *session_id,
+                                     const char *command_id, const char *text, ah_error *error);
 ah_code ah_run(ah_engine *engine, const char *session_id, ah_error *error);
 /* Cross-thread operations. Engine must remain alive until the owner joins. */
 void ah_cancel(ah_engine *engine);
+void ah_set_approve_all(ah_engine *engine, bool enabled);
+bool ah_approve_all(const ah_engine *engine);
 /* Queues a bounded update. Active inference yields and uncommitted model output is discarded.
  * Already admitted tool work settles before the next inference. AH_OK means
  * queued; input.steered is the durable acknowledgment. Retry unacknowledged
@@ -174,6 +188,15 @@ ah_code ah_steer(ah_engine *engine, const char *session_id, const char *command_
 ah_code ah_steer_turn(ah_engine *engine, const char *session_id, unsigned expected_turn,
                       const char *command_id, const char *text, unsigned *accepted_turn,
                       ah_error *error);
+/* Queue text for the next settled request without superseding current inference. */
+ah_code ah_queue_turn_input(ah_engine *engine, const char *session_id, unsigned expected_turn,
+                            const char *command_id, const char *text, unsigned *accepted_turn,
+                            ah_error *error);
+/* Cross-thread reply to a nonblocking ask. It joins the next settled model
+ * boundary without preempting inference. input.question_answered acknowledges
+ * durable delivery; input.reply_rejected reports a closed or mismatched question. */
+ah_code ah_queue_reply(ah_engine *engine, const char *session_id, unsigned expected_turn,
+                       const char *operation_id, const char *reply_json, ah_error *error);
 ah_code ah_resume(ah_engine *engine, const char *session_id, ah_error *error);
 ah_code ah_decide(ah_engine *engine, const char *session_id, const char *operation_id, bool allow,
                   ah_error *error);

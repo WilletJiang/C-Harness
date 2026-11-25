@@ -177,15 +177,19 @@ class SessionManager:
             )
         return record
 
-    def access_token(self, min_validity=120):
+    def access_token(self, min_validity=120, rejected_sha256=None):
         with self.account.locked():
             profile = self.account.load()
             record = self._load(profile)
             now = self.clock()
-            if record["expires_at"] > now + min_validity:
+            rejected = rejected_sha256 is not None and (
+                hashlib.sha256(record["access_token"].encode()).hexdigest()
+                == rejected_sha256
+            )
+            if not rejected and record["expires_at"] > now + min_validity:
                 return record["access_token"]
             if earliest(record.get("earliest_refresh_at")) > now:
-                if record["expires_at"] > now:
+                if not rejected and record["expires_at"] > now:
                     return record["access_token"]
                 raise AuthError(
                     "refresh_deferred",
@@ -200,7 +204,7 @@ class SessionManager:
                 elif error.earliest_refresh_at is not None:
                     record["earliest_refresh_at"] = error.earliest_refresh_at
                     self.vault.save(profile["client_id"], record)
-                    if record["expires_at"] > now:
+                    if not rejected and record["expires_at"] > now:
                         return record["access_token"]
                 raise
             replacement = self._record(profile, value, previous=record)

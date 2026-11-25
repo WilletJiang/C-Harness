@@ -1,6 +1,13 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
-find_dependency(CURL)
+if("@AH_BUNDLE_CURL@")
+  find_dependency(CURL 8.16 CONFIG COMPONENTS WSS
+    PATHS "@PACKAGE_CMAKE_INSTALL_LIBDIR@/cmake/CURL" NO_DEFAULT_PATH)
+elseif("@AH_HAVE_CURL_WS@")
+  find_dependency(CURL 8.16)
+else()
+  find_dependency(CURL)
+endif()
 find_dependency(SQLite3 3.37)
 find_dependency(Threads)
 include("${CMAKE_CURRENT_LIST_DIR}/ahTargets.cmake")

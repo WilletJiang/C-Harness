@@ -6,14 +6,22 @@
 typedef struct {
     ah_engine *engine;
     const char *session;
+    responses_turn_steer steer;
 } delta_context;
+static bool hard_cancelled(void *context) {
+    return core_cancelled(((delta_context *)context)->engine);
+}
+static const char *peek_steer(void *context, char command[257]) {
+    delta_context *sink = context;
+    return core_model_peek_steer(sink->engine, sink->session, command);
+}
 static bool model_cancelled(void *context) {
     delta_context *sink = context;
     return core_cancelled(sink->engine) || core_model_has_steer(sink->engine, sink->session);
 }
 static void on_delta(void *context, const char *text, size_t length) {
     delta_context *sink = context;
-    if (!core_model_has_steer(sink->engine, sink->session))
+    if (sink->steer.successor || !core_model_has_steer(sink->engine, sink->session))
         core_emit_delta(sink->engine, sink->session, text, length);
 }
 ah_code ah_run(ah_engine *e, const char *sid, ah_error *err) {
@@ -80,10 +88,14 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
         if (rc != AH_OK)
             break;
         if (!needs_model) {
-            if (!session.flow_batch && core_jobs_running(e, sid))
+            if (session.state == AH_WAITING_INPUT || session.state == AH_WAITING_APPROVAL)
+                rc = core_drain_inputs(e, &session, true, NULL, err);
+            else if (!session.flow_batch && core_jobs_running(e, sid))
                 core_jobs_wait(e, 20);
-            else if (session.state == AH_WAITING_WORK)
+            else if (session.state == AH_WAITING_WORK) {
+                rc = core_drain_inputs(e, &session, true, NULL, err);
                 break;
+            }
             continue;
         }
         if (host) {
@@ -96,15 +108,17 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
         if (rc != AH_OK)
             break;
         char *response = NULL;
-        delta_context sink = {e, sid};
+        delta_context sink = {.engine = e, .session = sid};
+        sink.steer = (responses_turn_steer){.context = &sink, .peek = peek_steer,
+                                            .hard_cancelled = hard_cancelled};
         uint64_t started = ah_now_us();
         rc = responses_complete_in_turn(e->config.provider, sid, session.turn, request, on_delta,
-                                        &sink, model_cancelled, &sink, &response, err);
+                                        &sink, model_cancelled, &sink, &sink.steer, &response, err);
         core_metric(e, sid, NULL, "model", started, ah_now_us(), response ? strlen(response) : 0,
                     session.model_calls,
-                    rc == AH_OK && core_model_has_steer(e, sid) ? AH_CANCELLED : rc);
+                    rc == AH_OK && !sink.steer.applied && core_model_has_steer(e, sid) ? AH_CANCELLED : rc);
         free(request);
-        rc = core_model_finish(e, &session, response, rc, err);
+        rc = core_model_finish(e, &session, response, rc, &sink.steer, err);
         free(response);
     }
     if (core_jobs_running(e, sid))
@@ -121,6 +135,15 @@ ah_code core_run(ah_engine *e, const char *sid, bool host, ah_error *err) {
     }
     rc = core_run_failure(e, &session, rc, err, NULL);
     core_mailbox_active(e, NULL, 0);
+    if (rc != AH_OK && !host) {
+        ah_error delivery_error = {0};
+        ah_code delivered = core_drain_inputs(e, &session, false, NULL, &delivery_error);
+        if (delivered != AH_OK) {
+            rc = delivered;
+            if (err)
+                *err = delivery_error;
+        }
+    }
     e->deadline = 0;
     core_flow_close(e);
     e->running = false;

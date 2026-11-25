@@ -82,24 +82,57 @@ static void phase(ah_stream *s, ah_stream_phase kind) {
         s->phase(s->phase_context, kind);
 }
 
-static ah_code event(ah_stream *s) {
-    if (!s->data_len)
-        return AH_OK;
+responses_failure ah_stream_failure(yyjson_val *root) {
+    yyjson_val *response = yyjson_obj_get(root, "response");
+    yyjson_val *error = yyjson_obj_get(response, "error");
+    if (!yyjson_is_obj(error))
+        error = yyjson_obj_get(root, "error");
+    yyjson_val *code = yyjson_obj_get(error, "code");
+    if (!yyjson_is_str(code))
+        code = yyjson_obj_get(root, "code");
+    if (!yyjson_is_str(code))
+        code = yyjson_obj_get(error, "type");
+    static const struct { const char *code; responses_failure failure; } known[] = {
+        {"invalid_api_key", RESP_AUTH}, {"authentication_error", RESP_AUTH},
+        {"invalid_token", RESP_AUTH}, {"token_expired", RESP_AUTH},
+        {"permission_denied", RESP_PERMISSION}, {"insufficient_quota", RESP_QUOTA},
+        {"subscription_sharing_usage_limit_exceeded", RESP_SUBSCRIPTION_LIMIT},
+        {"subscription_sharing_usage_unavailable", RESP_SUBSCRIPTION_UNAVAILABLE},
+        {"rate_limit_exceeded", RESP_RATE}, {"slow_down", RESP_RATE},
+        {"server_is_overloaded", RESP_SERVER}, {"server_error", RESP_SERVER},
+        {"context_length_exceeded", RESP_CONTEXT},
+    };
+    for (size_t i = 0; i < sizeof(known) / sizeof(*known); ++i)
+        if (equal(code, known[i].code))
+            return known[i].failure;
+    yyjson_val *reason = yyjson_obj_get(yyjson_obj_get(response, "incomplete_details"), "reason");
+    return equal(reason, "max_output_tokens") ? RESP_OUTPUT_LIMIT : RESP_NONE;
+}
+
+ah_code ah_stream_failure_error(responses_failure failure, ah_error *error) {
+    switch (failure) {
+    case RESP_AUTH: return ah_fail(error, AH_AUTH, "provider authentication failed");
+    case RESP_PERMISSION: return ah_fail(error, AH_AUTH, "provider permission denied");
+    case RESP_QUOTA: return ah_fail(error, AH_LIMIT, "provider quota exhausted");
+    case RESP_SUBSCRIPTION_LIMIT:
+        return ah_fail(error, AH_LIMIT, "provider subscription sharing usage limit exceeded");
+    case RESP_SUBSCRIPTION_UNAVAILABLE:
+        return ah_fail(error, AH_LIMIT, "provider subscription sharing usage unavailable");
+    case RESP_RATE: return ah_fail(error, AH_LIMIT, "provider rate limit exceeded");
+    case RESP_SERVER: return ah_fail(error, AH_NETWORK, "provider is temporarily unavailable");
+    case RESP_CONTEXT: return ah_fail(error, AH_LIMIT, "provider context length exceeded");
+    case RESP_OUTPUT_LIMIT: return ah_fail(error, AH_LIMIT, "provider output token limit reached");
+    default: return ah_fail(error, AH_PROTOCOL, "provider returned a failed or incomplete response");
+    }
+}
+
+ah_code ah_stream_apply(ah_stream *s, yyjson_val *root) {
     if (s->terminal)
         return fail(s, AH_PROTOCOL, "event after terminal response");
-    yyjson_doc *doc = yyjson_read(s->data, s->data_len, 0);
-    if (!doc)
-        return fail(s, AH_PROTOCOL, "invalid JSON in SSE event");
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    ah_code checked = ah_json_check(root, &s->error);
-    if (checked) {
-        yyjson_doc_free(doc);
-        return checked;
-    }
     yyjson_val *type = yyjson_obj_get(root, "type");
     ah_code code = AH_OK;
     if (!yyjson_is_obj(root) || !yyjson_is_str(type)) {
-        code = fail(s, AH_PROTOCOL, "SSE event requires a type");
+        code = fail(s, AH_PROTOCOL, "Responses event requires a type");
     } else if (equal(type, "response.completed")) {
         yyjson_val *response = yyjson_obj_get(root, "response");
         if (!yyjson_is_obj(response) || !equal(yyjson_obj_get(response, "status"), "completed") ||
@@ -121,34 +154,8 @@ static ah_code event(ah_stream *s) {
         }
     } else if (equal(type, "response.failed") || equal(type, "response.incomplete") ||
                equal(type, "error")) {
-        yyjson_val *response = yyjson_obj_get(root, "response");
-        yyjson_val *error = yyjson_obj_get(response, "error");
-        if (!error)
-            error = yyjson_obj_get(root, "error");
-        yyjson_val *reason =
-            yyjson_obj_get(yyjson_obj_get(response, "incomplete_details"), "reason");
-        yyjson_val *error_code = yyjson_obj_get(error, "code");
-        if (!error_code)
-            error_code = yyjson_obj_get(root, "code");
-        ah_code status = AH_PROTOCOL;
-        if (equal(error_code, "rate_limit_exceeded") || equal(error_code, "insufficient_quota") ||
-            equal(error_code, "subscription_sharing_usage_limit_exceeded") ||
-            equal(error_code, "subscription_sharing_usage_unavailable") ||
-            equal(reason, "max_output_tokens"))
-            status = AH_LIMIT;
-        else if (equal(error_code, "invalid_api_key") || equal(error_code, "authentication_error"))
-            status = AH_AUTH;
-        const char *message =
-            equal(error_code, "subscription_sharing_usage_limit_exceeded")
-                ? "provider subscription sharing usage limit exceeded"
-            : equal(error_code, "subscription_sharing_usage_unavailable")
-                ? "provider subscription sharing usage unavailable"
-            : equal(error_code, "insufficient_quota")  ? "provider quota exhausted"
-            : equal(error_code, "rate_limit_exceeded") ? "provider rate limit exceeded"
-            : equal(reason, "max_output_tokens")       ? "provider output token limit reached"
-            : status == AH_AUTH                        ? "provider authentication failed"
-                                : "provider returned a failed or incomplete response";
-        code = fail(s, status, message);
+        s->failure = ah_stream_failure(root);
+        code = ah_stream_failure_error(s->failure, &s->error);
         phase(s, AH_STREAM_TERMINAL);
     } else if (equal(type, "response.output_item.added") ||
                equal(type, "response.output_item.done")) {
@@ -180,6 +187,19 @@ static ah_code event(ah_stream *s) {
                 phase(s, AH_STREAM_CONTENT);
         }
     }
+    return code;
+}
+
+static ah_code event(ah_stream *s) {
+    if (!s->data_len)
+        return AH_OK;
+    yyjson_doc *doc = yyjson_read(s->data, s->data_len, 0);
+    if (!doc)
+        return fail(s, AH_PROTOCOL, "invalid JSON in SSE event");
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    ah_code code = ah_json_check(root, &s->error);
+    if (!code)
+        code = ah_stream_apply(s, root);
     yyjson_doc_free(doc);
     return code;
 }

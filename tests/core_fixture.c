@@ -60,8 +60,12 @@ ah_code fixture_complete(void *context, const char *request, ah_delta_sink delta
         assert(pthread_join(thread, NULL) == 0);
     }
     *response = copy(answer);
-    if (f->cancel_model)
+    if (f->cancel_model) {
+        if (f->steering_session)
+            ok(ah_queue_turn_input(f->engine, f->steering_session, 1, "before-cancel",
+                                   "Keep this note on resume.", NULL, error), error);
         ah_cancel(f->engine);
+    }
     return AH_OK;
 }
 void fixture_observe(void *context, const ah_event *event) {
@@ -80,6 +84,11 @@ void fixture_observe(void *context, const ah_event *event) {
     f->durable++;
     if (!strcmp(event->type, "tool.started"))
         f->started = true;
+    if (f->steer_at_question && !strcmp(event->type, "input.requested")) {
+        ah_error error = {0};
+        ok(ah_steer(f->engine, event->session_id, "at-question", "Use the narrower option.", &error),
+           &error);
+    }
 }
 ah_code fixture_execute(void *context, const ah_tool_call *call_info, ah_tool_result *result,
                         ah_error *error) {

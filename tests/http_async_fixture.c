@@ -4,12 +4,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
     pthread_t owner;
     ah_responses *provider;
     ah_responses_metrics receipts[32];
-    size_t count;
+    size_t count, refreshes;
+    bool refresh_started;
 } fixture;
 
 typedef struct {
@@ -20,13 +22,14 @@ typedef struct {
     char *response;
     uint64_t started, finished;
     ah_code code;
-    bool done, cancel_on_delta;
+    bool done, cancel_on_delta, cancel_on_refresh;
 } request;
 
 static bool cancelled(void *context) {
     request *r = context;
     assert(pthread_equal(pthread_self(), r->fixture->owner));
-    return r->cancel_on_delta && r->length;
+    return (r->cancel_on_delta && r->length) ||
+           (r->cancel_on_refresh && r->fixture->refresh_started);
 }
 
 static void delta(void *context, const char *bytes, size_t length) {
@@ -55,6 +58,32 @@ static void observe(void *context, const ah_responses_metrics *metrics) {
     assert(!json && !handle);
 }
 
+static ah_code refresh(void *context, const char *rejected, uint64_t deadline,
+                       ah_cancel_check stop, void *stop_context, char **replacement) {
+    fixture *f = context;
+    assert(!pthread_equal(pthread_self(), f->owner));
+    assert(!strcmp(rejected, "local-test-token"));
+    ++f->refreshes;
+    uint64_t until = ah_now_ms() + 250;
+    struct timespec interval = {.tv_nsec = 10000000};
+    while (ah_now_ms() < until) {
+        if (stop(stop_context) || ah_now_ms() >= deadline)
+            return AH_CANCELLED;
+        nanosleep(&interval, NULL);
+    }
+    *replacement = malloc(sizeof("rotated-test-token"));
+    assert(*replacement);
+    strcpy(*replacement, "rotated-test-token");
+    return AH_OK;
+}
+
+static void state(void *context, const ah_responses_state *network) {
+    fixture *f = context;
+    assert(pthread_equal(pthread_self(), f->owner));
+    if (!strcmp(network->phase, "refreshing"))
+        f->refresh_started = true;
+}
+
 static void begin(ah_async_provider async, request *r, size_t index) {
     char route[64] = "";
     if (!(index % 2))
@@ -80,7 +109,8 @@ int main(int argc, char **argv) {
     if (argc != 3)
         return 2;
     const char *mode = argv[2];
-    size_t count = !strcmp(mode, "overlap") ? 8 : 2;
+    bool refreshing = !strcmp(mode, "refresh"), cancel_refresh = !strcmp(mode, "cancel-refresh");
+    size_t count = !strcmp(mode, "overlap") ? 8 : refreshing ? 3 : 2;
     bool stagger = !strcmp(mode, "deadline");
     fixture f = {.owner = pthread_self()};
     ah_responses_config config;
@@ -91,6 +121,12 @@ int main(int argc, char **argv) {
     config.timeout_ms = stagger ? 1000 : 3000;
     config.observe = observe;
     config.observe_context = &f;
+    if (refreshing || cancel_refresh) {
+        config.refresh = refresh;
+        config.refresh_context = &f;
+        config.state = state;
+        config.state_context = &f;
+    }
     ah_error error;
     assert(ah_responses_open(&config, &f.provider, &error) == AH_OK);
     ah_async_provider async = ah_responses_async_provider(f.provider);
@@ -108,6 +144,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < count; i++) {
         requests[i].fixture = &f;
         requests[i].cancel_on_delta = i == 0 && !strcmp(mode, "cancel");
+        requests[i].cancel_on_refresh = i == 0 && cancel_refresh;
         if (i < begun)
             begin(async, &requests[i], i);
     }
@@ -156,6 +193,8 @@ int main(int argc, char **argv) {
         assert(!done && !json);
     }
     assert(ah_responses_set_token(f.provider, "replacement-token", &error) == AH_OK);
+    if (refreshing || cancel_refresh)
+        assert(f.refreshes == 1);
     size_t receipts = f.count;
     uint64_t idle = ah_now_ms();
     assert(async.poll(async.context, 20, &error) == AH_OK);

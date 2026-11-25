@@ -164,8 +164,12 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
         return code;
     }
     code = job->recover ? recover_job(job, error) : AH_OK;
-    if (code == AH_OK && !strcmp(session->id, scheduler->root) && session->state == AH_COMPLETED)
-        code = core_drain_steering(e, session, true, NULL, error);
+    if (code == AH_OK && !strcmp(session->id, scheduler->root) &&
+        (session->state == AH_COMPLETED || session->state == AH_WAITING_INPUT ||
+         session->state == AH_WAITING_APPROVAL || session->state == AH_WAITING_WORK))
+        code = core_drain_inputs(e, session, true, NULL, error);
+    if (code == AH_OK && session->state == AH_WAITING_AGENTS)
+        code = core_drain_deferred_input(e, session, error);
     bool changed = false;
     if (code == AH_OK)
         code = agents_drain(e, session, &changed, error);
@@ -177,6 +181,12 @@ static ah_code advance(agent_scheduler *scheduler, agent_job *job, ah_error *err
     code = core_session_step(e, session, &needs_model, error);
     if (code != AH_OK)
         return code;
+    if (!strcmp(session->id, scheduler->root) &&
+        (session->state == AH_WAITING_INPUT || session->state == AH_WAITING_APPROVAL)) {
+        code = core_drain_inputs(e, session, true, NULL, error);
+        if (code != AH_OK)
+            return code;
+    }
     if (session->state != AH_RUNNING && session->state != AH_WAITING_AGENTS)
         return agents_job_notify(job, error);
     if (!needs_model || scheduler->active >= e->agents.max_active)
@@ -231,7 +241,9 @@ static ah_code suspend_jobs(agent_scheduler *scheduler, ah_error *error) {
             saved = core_commit(e, after, error);
         else
             core_rollback(e);
-        if (saved != AH_OK)
+        if (saved == AH_OK)
+            job->session.state = AH_STOPPED;
+        else
             code = saved;
     }
     return code;
@@ -339,7 +351,8 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
         bool changed =
             before != sqlite3_total_changes64(e->db) || active_before != scheduler.active;
         bool tools_active = core_jobs_running(e, NULL);
-        if (!scheduler.active && !tools_active && !changed && (!waiting || durable_waiting))
+        if (!scheduler.active && !tools_active && !changed && (!waiting || durable_waiting) &&
+            core_mailbox_close_if_idle(e, scheduler.root))
             break;
         e->deadline = scheduler.deadline;
         unsigned delay = changed ? 0 : 20;
@@ -347,16 +360,18 @@ ah_code agents_run(ah_engine *e, const char *sid, ah_error *error) {
         if (tools_active && code == AH_OK)
             core_jobs_wait(e, delay);
     }
+    core_mailbox_active(e, NULL, 0);
     if (code != AH_OK) {
         ah_error cleanup_error = {0};
         ah_code saved = suspend_jobs(&scheduler, &cleanup_error);
+        if (saved == AH_OK)
+            saved = core_drain_inputs(e, &scheduler.jobs[0]->session, false, NULL, &cleanup_error);
         if (saved != AH_OK) {
             code = saved;
             if (error)
                 *error = cleanup_error;
         }
     }
-    core_mailbox_active(e, NULL, 0);
     e->deadline = 0;
     core_flow_close(e);
     e->running = false;

@@ -11,12 +11,13 @@
 #include <stdatomic.h>
 #include <pthread.h>
 
-typedef struct core_steering {
+typedef struct core_turn_input {
     char *session, *command, *text;
     enum { STEER_UNCHECKED, STEER_NEW, STEER_RECORDED } command_status;
     unsigned turn;
-    struct core_steering *next;
-} core_steering;
+    bool reply, deferred;
+    struct core_turn_input *next;
+} core_turn_input;
 typedef struct {
     ah_tool tool;
     bool background;
@@ -45,6 +46,7 @@ struct ah_engine {
     unsigned inline_tools;
     _Atomic(struct core_jobs *) jobs;
     atomic_bool cancelled;
+    atomic_bool approve_all;
     bool running;
     bool observing;
     uint64_t deadline;
@@ -53,11 +55,12 @@ struct ah_engine {
     bool mailbox_initialized;
     char active_session[AH_ID_CAP];
     unsigned active_turn;
-    core_steering *mailbox_head, *mailbox_tail;
+    core_turn_input *mailbox_head, *mailbox_tail;
     atomic_size_t mailbox_bytes;
 };
 typedef struct {
     char *id, *model, *instructions, *summary;
+    char reasoning[16];
     ah_state state;
     unsigned turn, model_calls, tool_calls;
     bool completion_committed;
@@ -72,13 +75,19 @@ typedef struct {
     ah_tool_result_format result_format;
     uint64_t generation;
     bool hidden;
+    bool auto_approved;
     bool durable;
 } core_operation;
 
 void core_mailbox_active(ah_engine *, const char *, unsigned);
 void core_mailbox_free(ah_engine *);
+bool core_mailbox_close_if_idle(ah_engine *, const char *);
 bool core_model_has_steer(ah_engine *, const char *);
-ah_code core_drain_steering(ah_engine *, core_session *, bool, const char *, ah_error *);
+const char *core_model_peek_steer(ah_engine *, const char *, char command[257]);
+ah_code core_drain_inputs(ah_engine *, core_session *, bool, const char *, ah_error *);
+ah_code core_drain_deferred_input(ah_engine *, core_session *, ah_error *);
+ah_code core_stage_user_item(ah_engine *, const char *, unsigned, const char *, ah_error *);
+ah_code core_publish_user_items(ah_engine *, const core_session *, ah_error *);
 ah_code core_sql(ah_engine *, const char *, ah_error *);
 ah_code core_prepare(ah_engine *, const char *, sqlite3_stmt **, ah_error *);
 ah_code core_done(ah_engine *, sqlite3_stmt *, ah_error *);
@@ -103,7 +112,13 @@ ah_code core_context_fork(ah_engine *, const char *, const char *, ah_error *);
 ah_code core_context_recall(void *, const ah_tool_call *, ah_tool_result *, ah_error *);
 ah_code core_context_native(ah_engine *, const char *, sqlite3_int64, ah_error *);
 ah_code core_pending_operation(ah_engine *, const char *, ah_state, core_operation *, ah_error *);
+ah_code core_open_question(ah_engine *, const core_session *, const core_operation *, ah_error *);
+ah_code core_pending_question(ah_engine *, const char *, core_operation *, ah_error *);
+ah_code core_answer_question(ah_engine *, const char *, const char *, const char *, bool *,
+                             ah_error *);
+ah_code core_question_finish_state(ah_engine *, const char *, ah_state *, ah_error *);
 ah_code core_next_operation(ah_engine *, const char *, core_operation *, ah_error *);
+ah_code core_close_interrupted_tools(ah_engine *, const char *, ah_error *);
 ah_code core_get_operation(ah_engine *, const char *, const char *, core_operation *, ah_error *);
 void core_operation_free(core_operation *);
 ah_code core_normalize_result(ah_engine *, const char *, core_operation *, ah_tool_result *,
@@ -145,6 +160,7 @@ void core_jobs_close(ah_engine *);
 ah_code core_tools_step(ah_engine *, core_session *, bool *, ah_error *);
 ah_code core_write_batch(ah_engine *, core_session *, const core_operation *, bool *, ah_error *);
 ah_code core_pause_approval(ah_engine *, core_session *, core_operation *, ah_error *);
+bool core_auto_approve(core_tool *, core_operation *);
 ah_code core_job_checkpoint(ah_engine *, const char *, const char *, const char *, ah_error *);
 bool core_independent_read(ah_engine *, const core_operation *);
 ah_code core_collect_reads(ah_engine *, const char *, const char *, const char *, core_operation *,
@@ -184,7 +200,10 @@ ah_code core_run_transition(ah_engine *, const char *, ah_state, const char *, c
 ah_code core_model_intent(ah_engine *, core_session *, ah_error *);
 ah_code core_session_step(ah_engine *, core_session *, bool *, ah_error *);
 ah_code core_model_prepare(ah_engine *, core_session *, char **, ah_error *);
-ah_code core_model_finish(ah_engine *, core_session *, const char *, ah_code, ah_error *);
+struct responses_turn_steer;
+ah_code core_apply_native_steer(ah_engine *, core_session *, const char *, ah_error *);
+ah_code core_model_finish(ah_engine *, core_session *, const char *, ah_code,
+                          const struct responses_turn_steer *, ah_error *);
 ah_code core_run_failure(ah_engine *, core_session *, ah_code, ah_error *, bool *);
 ah_code core_run(ah_engine *, const char *, bool, ah_error *);
 void core_emit_delta(ah_engine *, const char *, const char *, size_t);

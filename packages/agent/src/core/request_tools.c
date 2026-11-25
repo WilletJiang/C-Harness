@@ -3,7 +3,7 @@
 
 static const char ask_schema[] =
     "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\"},\"options\":{\"type\":"
-    "\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"question\"],"
+    "\"array\",\"items\":{\"type\":\"string\"}},\"blocking\":{\"type\":\"boolean\"}},\"required\":[\"question\"],"
     "\"additionalProperties\":false}";
 static const char wait_schema[] =
     "{\"type\":\"object\",\"properties\":{\"reason\":{\"type\":\"string\"}},\"required\":["
@@ -76,7 +76,8 @@ ah_code core_request_tools(const ah_engine *e, yyjson_mut_doc *d, yyjson_mut_val
     yyjson_mut_obj_add_str(d, space, "name", "local");
     yyjson_mut_obj_add_str(d, space, "description", "Host controlled tools and input requests.");
     yyjson_mut_obj_add_val(d, space, "tools", functions);
-    if (!add_definition(d, functions, "ask", "Ask the user a question and wait for a JSON reply.",
+    if (!add_definition(d, functions, "ask",
+                        "Ask one question. Set blocking=false to keep working.",
                         ask_schema) ||
         !add_definition(d, functions, "wait",
                         "Pause until the host explicitly supplies a JSON continuation.",

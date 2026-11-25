@@ -152,7 +152,7 @@ static ah_code complete(void *context, const char *request, ah_delta_sink delta,
     uint64_t started = ah_now_ms();
     ah_code code =
         responses_complete_in_turn(model->inner, model->session, model->turn, json, delta,
-                                   delta_ctx, cancelled, cancel_ctx, response, error);
+                                   delta_ctx, cancelled, cancel_ctx, NULL, response, error);
     if (model->trace)
         response_event(*response, code, error, ah_now_ms() - started, request_id);
     if (code == AH_OK)
@@ -182,7 +182,7 @@ static ah_code start(void *context, const char *request, ah_delta_sink delta, vo
     ah_code code =
         call->request
             ? responses_start_in_turn(*inner, model->session, model->turn, call->request, delta,
-                                      delta_ctx, cancelled, cancel_ctx, &call->inner, error)
+                                      delta_ctx, cancelled, cancel_ctx, NULL, &call->inner, error)
             : AH_IO;
     if (code != AH_OK) {
         free(call->request);

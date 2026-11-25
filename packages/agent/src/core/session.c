@@ -24,13 +24,38 @@ ah_code ah_session_state(ah_engine *e, const char *sid, ah_state *state, ah_erro
     return code;
 }
 
-ah_code ah_session_create(ah_engine *e, const char *model, const char *instructions,
-                          char id[AH_ID_CAP], ah_error *err) {
+static bool valid_effort(const char *effort) {
+    static const char *const levels[] = {
+        "", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+    };
+    if (!effort)
+        return false;
+    for (size_t i = 0; i < sizeof(levels) / sizeof(*levels); i++)
+        if (!strcmp(effort, levels[i]))
+            return true;
+    return false;
+}
+
+static ah_code save_effort(ah_engine *e, const char *sid, const char *effort, ah_error *err) {
+    sqlite3_stmt *s = NULL;
+    ah_code rc = core_prepare(e, "INSERT INTO session_reasoning(session_id,effort) VALUES(?,?) "
+                         "ON CONFLICT(session_id) DO UPDATE SET effort=excluded.effort", &s, err);
+    if (rc != AH_OK)
+        return rc;
+    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 2, effort, -1, SQLITE_TRANSIENT);
+    return core_done(e, s, err);
+}
+
+ah_code ah_session_create_with_reasoning(ah_engine *e, const char *model, const char *instructions,
+                                         const char *effort, char id[AH_ID_CAP], ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
     if (!model || !*model || !instructions || !id || strlen(model) > 256)
         return ah_fail(err, AH_INVALID, "bounded model and instructions required");
+    if (!valid_effort(effort))
+        return ah_fail(err, AH_INVALID, "invalid reasoning effort");
     size_t extra_bytes = strlen(instructions);
     if (extra_bytes > e->config.max_context_bytes)
         return ah_fail(err, AH_INVALID, "bounded model and instructions required");
@@ -58,6 +83,8 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
         sqlite3_bind_int(s, 5, AH_IDLE);
         rc = core_done(e, s, err);
     }
+    if (rc == AH_OK && *effort)
+        rc = save_effort(e, id, effort, err);
     if (rc == AH_OK)
         rc = core_event(e, id, NULL, "session.created", "{}", err);
     if (rc == AH_OK)
@@ -66,8 +93,51 @@ ah_code ah_session_create(ah_engine *e, const char *model, const char *instructi
         core_rollback(e);
     return rc;
 }
+
+ah_code ah_session_create(ah_engine *e, const char *model, const char *instructions,
+                          char id[AH_ID_CAP], ah_error *err) {
+    return ah_session_create_with_reasoning(e, model, instructions, "", id, err);
+}
+
+ah_code ah_session_set_reasoning(ah_engine *e, const char *sid, const char *effort, ah_error *err) {
+    ah_code rc = core_guard(e, err);
+    if (rc != AH_OK)
+        return rc;
+    if (!sid || !*sid || !valid_effort(effort))
+        return ah_fail(err, AH_INVALID, "invalid session or reasoning effort");
+    ah_state state;
+    rc = ah_session_state(e, sid, &state, err);
+    if (rc != AH_OK)
+        return rc;
+    if (state != AH_IDLE && state != AH_COMPLETED)
+        return ah_fail(err, AH_BUSY, "reasoning effort can change between turns");
+    return save_effort(e, sid, effort, err);
+}
+
+ah_code ah_session_reasoning(ah_engine *e, const char *sid, char **effort, ah_error *err) {
+    if (!effort)
+        return ah_fail(err, AH_INVALID, "reasoning effort output required");
+    *effort = NULL;
+    if (!e || !sid || !*sid)
+        return ah_fail(err, AH_INVALID, "engine and session required");
+    sqlite3_stmt *s = NULL;
+    ah_code rc = core_prepare(e, "SELECT COALESCE(r.effort,'') FROM sessions s "
+                                 "LEFT JOIN session_reasoning r ON r.session_id=s.id WHERE s.id=?", &s, err);
+    if (rc != AH_OK)
+        return rc;
+    sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+    int step = sqlite3_step(s);
+    if (step == SQLITE_ROW)
+        *effort = ah_strdup((const char *)sqlite3_column_text(s, 0));
+    sqlite3_finalize(s);
+    if (!*effort)
+        return ah_fail(err, step == SQLITE_DONE ? AH_NOT_FOUND : AH_IO, "reasoning effort unavailable");
+    ah_error_clear(err);
+    return AH_OK;
+}
 ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, const char *identity,
-                         int kind, const core_content *content, ah_error *err) {
+                         int kind, bool allow_interruption, const core_content *content,
+                         ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -98,18 +168,21 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     rc = core_load(e, sid, &session, err);
     if (rc != AH_OK)
         return rc;
-    core_operation op;
-    ah_code pending = core_next_operation(e, sid, &op, err);
-    if (pending == AH_OK) {
-        core_operation_free(&op);
-        core_session_free(&session);
-        return ah_fail(err, AH_BUSY, "finish pending tool exchange before submitting");
+    bool close_previous = allow_interruption && session.state == AH_OUTCOME_UNKNOWN;
+    if (!close_previous) {
+        core_operation op;
+        ah_code pending = core_next_operation(e, sid, &op, err);
+        if (pending == AH_OK) {
+            core_operation_free(&op);
+            pending = ah_fail(err, AH_BUSY, "finish pending tool exchange before submitting");
+        }
+        if (pending != AH_NOT_FOUND) {
+            core_session_free(&session);
+            return pending;
+        }
     }
-    if (pending != AH_NOT_FOUND) {
-        core_session_free(&session);
-        return pending;
-    }
-    if (session.state == AH_RUNNING || session.state == AH_OUTCOME_UNKNOWN) {
+    if (session.state == AH_RUNNING || session.state == AH_WAITING_INPUT ||
+        (!close_previous && session.state == AH_OUTCOME_UNKNOWN)) {
         core_session_free(&session);
         return ah_fail(err, AH_BUSY, "session cannot accept input in current state");
     }
@@ -117,6 +190,8 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
     uint64_t after = 0;
     rc = core_begin(e, &after, err);
+    if (rc == AH_OK && close_previous)
+        rc = core_close_interrupted_tools(e, sid, err);
     if (rc == AH_OK)
         rc = core_prepare(e, "INSERT INTO commands(session_id,id,text,kind) VALUES(?,?,?,?)", &s,
                           err);
@@ -151,8 +226,8 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     core_session_free(&session);
     return rc;
 }
-ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char *text,
-                  ah_error *err) {
+static ah_code submit_text(ah_engine *e, const char *sid, const char *command, const char *text,
+                           bool allow_interruption, ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -169,10 +244,20 @@ ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char
     yyjson_mut_obj_add_strcpy(d, item, "content", text);
     core_content content = {.json = ah_mut_write(d)};
     ah_mut_doc_free(d);
-    rc = content.json ? core_submit_item(e, sid, command, text, 0, &content, err)
+    rc = content.json ? core_submit_item(e, sid, command, text, 0, allow_interruption, &content, err)
                       : ah_fail(err, AH_IO, "out of memory");
     core_content_free(&content);
     return rc;
+}
+
+ah_code ah_submit(ah_engine *e, const char *sid, const char *command, const char *text,
+                  ah_error *err) {
+    return submit_text(e, sid, command, text, false, err);
+}
+
+ah_code ah_submit_after_interruption(ah_engine *e, const char *sid, const char *command,
+                                     const char *text, ah_error *err) {
+    return submit_text(e, sid, command, text, true, err);
 }
 ah_code ah_resume(ah_engine *e, const char *sid, ah_error *err) {
     ah_code rc = core_guard(e, err);
@@ -269,8 +354,31 @@ ah_code core_pending_operation(ah_engine *e, const char *sid, ah_state state, co
             rc = step == SQLITE_DONE ? AH_NOT_FOUND : ah_fail(err, AH_IO, "pending lookup failed");
     }
     sqlite3_finalize(s);
+    if (rc == AH_NOT_FOUND && state == AH_WAITING_INPUT)
+        rc = core_pending_question(e, sid, op, err);
     return rc;
 }
+
+static void add_pending_value(yyjson_mut_doc *d, yyjson_mut_val *root, const char *key,
+                              core_operation *op) {
+    yyjson_mut_val *p = yyjson_mut_obj(d);
+    bool question = !strcmp(op->status, "done");
+    yyjson_mut_obj_add_val(d, root, key, p);
+    yyjson_mut_obj_add_strcpy(d, p, "operation_id", op->id);
+    yyjson_mut_obj_add_strcpy(d, p, "call_id", op->call_id);
+    yyjson_mut_obj_add_strcpy(d, p, "name", op->name);
+    yyjson_mut_obj_add_strcpy(d, p, "status", question ? "input" : op->status);
+    if (question)
+        yyjson_mut_obj_add_bool(d, p, "background", true);
+    yyjson_doc *args = yyjson_read(op->arguments, strlen(op->arguments), 0);
+    if (args)
+        yyjson_mut_obj_add_val(d, p, "arguments", yyjson_val_mut_copy(d, yyjson_doc_get_root(args)));
+    else
+        yyjson_mut_obj_add_strcpy(d, p, "arguments", op->arguments);
+    yyjson_doc_free(args);
+    core_operation_free(op);
+}
+
 ah_code ah_session_json(ah_engine *e, const char *sid, char **json, ah_error *err) {
     if (json)
         *json = NULL;
@@ -298,24 +406,19 @@ ah_code ah_session_json(ah_engine *e, const char *sid, char **json, ah_error *er
     sqlite3_finalize(s);
     core_operation op;
     rc = core_pending_operation(e, sid, state, &op, err);
-    if (rc == AH_OK) {
-        yyjson_mut_val *p = yyjson_mut_obj(d);
-        yyjson_mut_obj_add_val(d, o, "pending", p);
-        yyjson_mut_obj_add_strcpy(d, p, "operation_id", op.id);
-        yyjson_mut_obj_add_strcpy(d, p, "call_id", op.call_id);
-        yyjson_mut_obj_add_strcpy(d, p, "name", op.name);
-        yyjson_mut_obj_add_strcpy(d, p, "status", op.status);
-        yyjson_doc *args = yyjson_read(op.arguments, strlen(op.arguments), 0);
-        if (args)
-            yyjson_mut_obj_add_val(d, p, "arguments",
-                                   yyjson_val_mut_copy(d, yyjson_doc_get_root(args)));
-        else
-            yyjson_mut_obj_add_strcpy(d, p, "arguments", op.arguments);
-        yyjson_doc_free(args);
-        core_operation_free(&op);
-    } else if (rc == AH_NOT_FOUND) {
+    if (rc == AH_OK)
+        add_pending_value(d, o, "pending", &op);
+    else if (rc == AH_NOT_FOUND) {
         yyjson_mut_obj_add_null(d, o, "pending");
         rc = AH_OK;
+    }
+    if (rc == AH_OK && (state == AH_RUNNING || state == AH_WAITING_AGENTS ||
+                        state == AH_WAITING_WORK)) {
+        rc = core_pending_question(e, sid, &op, err);
+        if (rc == AH_OK)
+            add_pending_value(d, o, "question", &op);
+        else if (rc == AH_NOT_FOUND)
+            rc = AH_OK;
     }
     if (rc == AH_OK) {
         *json = ah_mut_write(d);

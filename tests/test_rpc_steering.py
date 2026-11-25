@@ -1,5 +1,6 @@
 """Verify prefix and cache affinity through live steering, ask replies and a restart."""
 import json
+import sqlite3
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 import tempfile
@@ -38,6 +39,35 @@ class Service(BaseHTTPRequestHandler):
             self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+
+class BackgroundQuestionService(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        n = len(self.server.requests)
+        self.server.requests.append(body)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        if n == 0:
+            output = [
+                {"type": "function_call", "namespace": "local", "name": "ask", "call_id": "question",
+                 "arguments": json.dumps({"question": "What should the report emphasize?", "blocking": False})},
+                {"type": "function_call", "namespace": "local", "name": "read_file", "call_id": "independent",
+                 "arguments": json.dumps({"path": "source.txt"})},
+            ]
+        else:
+            if n == 1:
+                self.server.independent.set()
+                self.server.release.wait(6)
+            text = "Independent work is ready." if n == 1 else "The answer was applied."
+            output = [{"type": "message", "role": "assistant",
+                       "content": [{"type": "output_text", "text": text}]}]
+        event = {"type": "response.completed", "response": {"status": "completed", "output": output}}
+        self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
 
 
 def exercise(extra):
@@ -110,6 +140,78 @@ def exercise(extra):
             worker.join()
 
 
+def exercise_background_question(reply_while_running, extra=()):
+    with tempfile.TemporaryDirectory() as tmp, LoopbackServer(("127.0.0.1", 0), BackgroundQuestionService) as server:
+        root = Path(tmp)
+        (root / "source.txt").write_text("Independent material.\n")
+        server.requests = []
+        server.independent, server.release = threading.Event(), threading.Event()
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        db = root / "session.db"
+        endpoint = f"http://127.0.0.1:{server.server_port}/responses"
+        options = ("--workspace", str(root), *extra)
+        client = Client(db, endpoint, extra=options)
+        try:
+            sid = client.request("create", "create", model="gpt-6.2-sol")["result"]["id"]
+            assert client.request("submit", "submit", session=sid, command="start", text="Draft a report")["status"] == "ok"
+            client.send(dict(id="run", method="run", session=sid))
+            question = client.receive(lambda r: r.get("event") == "input.question_opened")
+            operation = question["operation"]
+            assert question["data"]["arguments"]["blocking"] is False
+            assert server.independent.wait(4), "Independent read was blocked by the question"
+            receipts = {item["call_id"]: json.loads(item["output"])["result"]
+                        for item in server.requests[1]["input"] if item.get("type") == "function_call_output"}
+            assert receipts["question"] == {"pending_question": operation}
+            assert "Independent material." in receipts["independent"]["content"]
+            answer = dict(session=sid, operation=operation, value="Emphasize verbatim 用户选择")
+            if reply_while_running:
+                rejected = client.request("wrong-turn", "reply", expected_turn=2, **answer)
+                assert rejected["status"] == "busy", rejected
+                assert client.request("reply", "reply", expected_turn=1, **answer)["result"] == {"queued": True}
+                assert client.request("duplicate", "reply", **answer)["status"] == "ok"
+                assert client.request("note", "steer", session=sid, expected_turn=1, command="note",
+                                      text="Also include a table.", interrupt=False)["status"] == "ok"
+                assert len(server.requests) == 2
+                server.release.set()
+                state = client.reply("run")["result"]
+            else:
+                server.release.set()
+                state = client.reply("run")["result"]
+                assert state["state"] == "waiting_input" and state["pending"]["background"]
+                assert state["pending"]["operation_id"] == operation
+                client.close()
+                client = Client(db, endpoint, extra=options)
+                assert client.request("inspect", "inspect", session=sid)["result"]["pending"] == state["pending"]
+                assert client.request("reply", "reply", **answer)["status"] == "ok"
+                assert client.request("duplicate", "reply", **answer)["status"] == "ok"
+                state = client.request("continue", "run", session=sid)["result"]
+            assert state["state"] == "completed" and state["turn"] == 1, state
+            assert len(server.requests) == 3
+            items = server.requests[-1]["input"]
+            final_message, answer_item = (items[-3], items[-2]) if reply_while_running else items[-2:]
+            assert final_message["content"][0]["text"] == "Independent work is ready."
+            if reply_while_running:
+                assert items[-1] == {"role": "user", "content": "Also include a table."}
+            assert answer_item["role"] == "user"
+            response = json.loads(answer_item["content"])
+            assert response["reply_to_question"] == operation and response["answer"] == answer["value"]
+            assert sum(item.get("type") == "function_call_output" and item["call_id"] == "question"
+                       for item in items) == 1
+            with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
+                events = [kind for kind, in conn.execute("SELECT type FROM events WHERE session_id=?", (sid,))]
+            assert events.count("input.question_answered") == 1, events
+            assert "model.interrupted" not in events
+        finally:
+            server.release.set()
+            client.close()
+            server.shutdown()
+            worker.join()
+
+
 if __name__ == "__main__":
     exercise(())
     exercise(("--agents", "2"))
+    exercise_background_question(True)
+    exercise_background_question(False)
+    exercise_background_question(True, ("--agents", "2"))

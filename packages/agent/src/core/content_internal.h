@@ -20,7 +20,7 @@ ah_code core_content_parts_prepare(ah_engine *, const char *, const char *, size
                                    ah_error *);
 void core_content_free(core_content *);
 ah_code core_content_save(ah_engine *, const char *, const core_content *, ah_error *);
-ah_code core_submit_item(ah_engine *, const char *, const char *, const char *, int,
+ah_code core_submit_item(ah_engine *, const char *, const char *, const char *, int, bool,
                          const core_content *, ah_error *);
 bool content_mime_valid(const char *, const unsigned char *, size_t);
 bool content_image_mime(const char *);

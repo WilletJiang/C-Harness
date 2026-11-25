@@ -1,4 +1,5 @@
 #include "local_internal.h"
+#include <regex.h>
 
 const char ah_find_schema[] =
     "{\"type\":\"object\",\"properties\":{"
@@ -7,6 +8,7 @@ const char ah_find_schema[] =
     "\"force\":{\"type\":\"boolean\"},"
     "\"path\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":4096},"
     "\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},"
+    "\"syntax\":{\"type\":\"string\",\"enum\":[\"literal\",\"ere\"]},"
     "\"glob\":{\"type\":\"string\",\"maxLength\":256},"
     "\"context_lines\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":5},"
     "\"max_results\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100},"
@@ -21,6 +23,48 @@ typedef struct {
     unsigned context;
     bool full;
 } find_output;
+
+enum { FIND_ALTERNATIVES = 16, FIND_QUERY_BYTES = 1024 };
+
+typedef struct {
+    regex_t regex;
+    const char *alternatives[FIND_ALTERNATIVES];
+    size_t count;
+    bool compiled;
+} find_pattern;
+
+static size_t literal_alternatives(const char *query, size_t length, char *storage,
+                                   const char **alternatives) {
+    if (length > FIND_QUERY_BYTES || strpbrk(query, ".[]\\*^$+?(){}"))
+        return 0;
+    memcpy(storage, query, length + 1);
+    size_t count = 0;
+    char *part = storage;
+    for (char *bar = strchr(part, '|'); bar; bar = strchr(part, '|')) {
+        if (bar == part || count == FIND_ALTERNATIVES - 1)
+            return 0;
+        *bar = '\0';
+        alternatives[count++] = part;
+        part = bar + 1;
+    }
+    if (!count || !*part)
+        return 0;
+    alternatives[count++] = part;
+    return count;
+}
+
+/* Each alternative advances only when its cached hit has already been covered. */
+static const char *alternative_match(const find_pattern *pattern, const char *start,
+                                     const char *end, const char **hits) {
+    const char *first = end;
+    for (size_t i = 0; i < pattern->count; ++i) {
+        if (hits[i] && hits[i] < start)
+            hits[i] = strstr(start, pattern->alternatives[i]);
+        if (hits[i] && hits[i] < first)
+            first = hits[i];
+    }
+    return first < end ? first : NULL;
+}
 
 static void excerpt(find_output *out, const char *path, const char *revision, const char *source,
                     size_t offset, size_t end, size_t first, size_t last, const char *query) {
@@ -67,19 +111,77 @@ static void excerpt(find_output *out, const char *path, const char *revision, co
         out->full = true;
 }
 
+static bool has_backreference(const char *pattern) {
+    for (const char *p = pattern; *p; ++p) {
+        if (*p == '\\' && p[1]) {
+            ++p;
+            if (*p >= '1' && *p <= '9')
+                return true;
+        }
+    }
+    return false;
+}
+
+/* Each invocation sees a single line, including for expressions such as [[:space:]].
+ * Check cancellation on sparse searches too and avoid allocating line copies. */
+static ah_code find_regex_line(const regex_t *regex, char *text, size_t length,
+                               const ah_tool_call *call, const char **match,
+                               const char **after_line) {
+    *match = NULL;
+    size_t lines = 0;
+    char *end = text + length;
+    for (char *line = text; line < end;) {
+        if (!(lines++ % 256)) {
+            ah_code code = ah_local_stopped(call);
+            if (code != AH_OK)
+                return code;
+        }
+        char *boundary = memchr(line, '\n', (size_t)(end - line));
+#ifdef REG_STARTEND
+        regmatch_t bounds = {.rm_so = 0, .rm_eo = (regoff_t)((boundary ? boundary : end) - line)};
+        int status = regexec(regex, line, 1, &bounds, REG_STARTEND);
+#else
+        if (boundary)
+            *boundary = '\0';
+        int status = regexec(regex, line, 0, NULL, 0);
+        if (boundary)
+            *boundary = '\n';
+#endif
+        if (!status) {
+            *match = line;
+            *after_line = boundary ? boundary + 1 : end;
+            return AH_OK;
+        }
+        if (status != REG_NOMATCH)
+            return status == REG_ESPACE ? AH_LIMIT : AH_IO;
+        line = boundary ? boundary + 1 : end;
+    }
+    return AH_OK;
+}
+
 /* A matching line contributes one context range, regardless of hit count.
  * Retain only the preceding context line starts, not an index for the whole file. */
 static ah_code find_source(find_output *out, const char *path, const char *revision,
-                           const char *source, size_t length, const char *query,
+                           char *source, size_t length, const char *query, const find_pattern *pattern,
                            const ah_tool_call *call) {
-    const char *match = strstr(source, query);
-    if (!match)
-        return ah_local_stopped(call);
+    const char *match = NULL, *after_line = NULL;
+    const char *hits[FIND_ALTERNATIVES];
+    ah_code code = AH_OK;
+    if (pattern->compiled)
+        code = find_regex_line(&pattern->regex, source, length, call, &match, &after_line);
+    else if (pattern->count) {
+        for (size_t i = 0; i < pattern->count; ++i)
+            hits[i] = strstr(source, pattern->alternatives[i]);
+        match = alternative_match(pattern, source, source + length, hits);
+    } else
+        match = strstr(source, query);
+    if (code != AH_OK)
+        return code;
     size_t previous[6] = {0}, cursor = 0, line = 0;
     size_t group_start = 0, group_end = 0, first = 0, last = 0;
     bool pending = false;
     while (match) {
-        ah_code code = ah_local_stopped(call);
+        code = ah_local_stopped(call);
         if (code != AH_OK)
             return code;
         size_t position = (size_t)(match - source);
@@ -92,8 +194,13 @@ static ah_code find_source(find_output *out, const char *path, const char *revis
         }
         size_t start_line = line > out->context ? line - out->context : 0;
         size_t start = previous[start_line % 6];
-        newline = memchr(match, '\n', length - position);
-        size_t next_line = newline ? (size_t)(newline - source) + 1 : length;
+        size_t next_line;
+        if (pattern->compiled)
+            next_line = (size_t)(after_line - source);
+        else {
+            newline = memchr(match, '\n', length - position);
+            next_line = newline ? (size_t)(newline - source) + 1 : length;
+        }
         size_t end = next_line, end_line = line;
         for (unsigned i = 0; i < out->context && end < length; i++) {
             newline = memchr(source + end, '\n', length - end);
@@ -116,7 +223,15 @@ static ah_code find_source(find_output *out, const char *path, const char *revis
         }
         if (next_line == length)
             break;
-        match = strstr(source + next_line, query);
+        if (pattern->compiled)
+            code = find_regex_line(&pattern->regex, source + next_line, length - next_line, call,
+                                   &match, &after_line);
+        else if (pattern->count)
+            match = alternative_match(pattern, source + next_line, source + length, hits);
+        else
+            match = strstr(source + next_line, query);
+        if (code != AH_OK)
+            return code;
     }
     if (pending)
         excerpt(out, path, revision, source, group_start, group_end, first, last, query);
@@ -150,18 +265,40 @@ ah_code ah_local_find(void *context, const ah_tool_call *call, ah_tool_result *r
         return error->code;
     yyjson_val *root = yyjson_doc_get_root(args), *scope = yyjson_obj_get(root, "path"),
                *q = yyjson_obj_get(root, "query"), *g = yyjson_obj_get(root, "glob"),
-               *snap = yyjson_obj_get(root, "snapshot");
+               *snap = yyjson_obj_get(root, "snapshot"), *syntax = yyjson_obj_get(root, "syntax");
     const char *query = yyjson_get_str(q), *glob = g ? yyjson_get_str(g) : "*";
     size_t offset = (size_t)yyjson_get_num(yyjson_obj_get(root, "offset"));
     bool files = yyjson_equals_str(yyjson_obj_get(root, "mode"), "files");
     bool ignored = yyjson_is_true(yyjson_obj_get(root, "include_ignored"));
-    if ((files && (q || yyjson_obj_get(root, "context_lines"))) ||
+    bool ere = yyjson_equals_str(syntax, "ere");
+    if ((files && (q || syntax || yyjson_obj_get(root, "context_lines"))) ||
         (!files && (!query || memchr(query, 0, yyjson_get_len(q)) || strchr(query, '\n'))) ||
         (g && memchr(glob, 0, yyjson_get_len(g))) || (offset && !snap)) {
         yyjson_doc_free(args);
         return ah_local_error(call, result, error, AH_INVALID,
                               "Content search needs a single-line query; files mode omits "
-                              "query/context_lines. Continue with a snapshot");
+                              "query/syntax/context_lines. Continue with a snapshot");
+    }
+    find_pattern pattern = {0};
+    char alternative_storage[FIND_QUERY_BYTES + 1];
+    bool expression = ere && strpbrk(query, ".[]\\*^$+?(){}|");
+    if (expression)
+        pattern.count = literal_alternatives(query, yyjson_get_len(q), alternative_storage,
+                                             pattern.alternatives);
+    if (expression && !pattern.count) {
+        char message[256];
+        int status = has_backreference(query) ? REG_ESUBREG
+                                              : regcomp(&pattern.regex, query, REG_EXTENDED | REG_NOSUB);
+        if (status) {
+            if (status == REG_ESUBREG)
+                strcpy(message, "ERE backreferences are unsupported");
+            else
+                regerror(status, &pattern.regex, message, sizeof(message));
+            yyjson_doc_free(args);
+            return ah_local_error(call, result, error, status == REG_ESPACE ? AH_LIMIT : AH_INVALID,
+                                  message);
+        }
+        pattern.compiled = true;
     }
     yyjson_mut_doc *doc = ah_mut_doc_new();
     yyjson_mut_val *output = yyjson_mut_obj(doc);
@@ -189,6 +326,8 @@ ah_code ah_local_find(void *context, const ah_tool_call *call, ah_tool_result *r
     ah_hash_update(&hash, mode, sizeof mode);
     if (query)
         ah_hash_update(&hash, query, strlen(query) + 1);
+    if (ere)
+        ah_hash_update(&hash, "\0ere", 4);
     ah_hash_update(&hash, glob, strlen(glob) + 1);
     const char *scope_path = scope ? yyjson_get_str(scope) : ".";
     ah_hash_update(&hash, scope_path, strlen(scope_path) + 1);
@@ -227,7 +366,7 @@ ah_code ah_local_find(void *context, const ah_tool_call *call, ah_tool_result *r
         ah_hash_update(&hash, paths.items[i], strlen(paths.items[i]) + 1);
         ah_hash_update(&hash, revision, 64);
         scanned++;
-        code = find_source(&out, paths.items[i], revision, source, length, query, call);
+        code = find_source(&out, paths.items[i], revision, source, length, query, &pattern, call);
         free(source);
     }
     char revision[65];
@@ -257,6 +396,8 @@ ah_code ah_local_find(void *context, const ah_tool_call *call, ah_tool_result *r
         result->is_error = true;
     }
     ah_local_paths_free(&paths);
+    if (pattern.compiled)
+        regfree(&pattern.regex);
     yyjson_doc_free(args);
     if (code != AH_OK || (!out.emitted && out.total > offset && !stale)) {
         ah_mut_doc_free(doc);

@@ -1,6 +1,7 @@
 #include "core.h"
 #include "work.h"
 #include "../agents/agents_internal.h"
+#include "../tools/local_internal.h"
 
 static ah_code count_calls(ah_engine *, const char *, unsigned, ah_error *);
 
@@ -91,6 +92,12 @@ ah_code core_pause_approval(ah_engine *e, core_session *session, core_operation 
                             ah_error *error) {
     return set_pause(e, session, op, "approval", AH_WAITING_APPROVAL, "approval.requested", error);
 }
+bool core_auto_approve(core_tool *tool, core_operation *op) {
+    op->auto_approved = tool && !tool->work && !strcmp(op->status, "pending") &&
+                        ah_local_auto_approve_call(&tool->tool, op->arguments);
+    return op->auto_approved;
+}
+
 static ah_code count_calls(ah_engine *e, const char *sid, unsigned count, ah_error *err) {
     sqlite3_stmt *s = NULL;
     ah_code rc =
@@ -229,18 +236,29 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
                             validation.message[0] ? validation.message
                                                   : "tool arguments failed schema validation",
                             ARGUMENTS_REJECTED, err);
-    if (op->approval && op->decision != 1)
+    if (op->approval && op->decision != 1 && !ah_approve_all(e) &&
+        !core_auto_approve(registered, op))
         return core_pause_approval(e, session, op, err);
     if (builtin && strcmp(op->name, "read_result") && strcmp(op->name, "recall")) {
+        bool background = false;
+        if (!strcmp(op->name, "ask") || !strcmp(op->name, "harness_ask")) {
+            yyjson_doc *args = yyjson_read(op->arguments, strlen(op->arguments), 0);
+            if (!args)
+                return ah_fail(err, AH_IO, "cannot read validated question");
+            background = yyjson_is_false(yyjson_obj_get(yyjson_doc_get_root(args), "blocking"));
+            yyjson_doc_free(args);
+        }
         uint64_t after = 0;
         ah_code rc = core_begin(e, &after, err);
         if (rc == AH_OK)
             rc = count_calls(e, session->id, 1, err);
-        if (rc == AH_OK)
+        if (rc == AH_OK && background)
+            rc = core_open_question(e, session, op, err);
+        if (rc == AH_OK && !background)
             rc = core_set_operation(e, session->id, op->id, "input", err);
-        if (rc == AH_OK)
+        if (rc == AH_OK && !background)
             rc = core_state(e, session->id, AH_WAITING_INPUT, err);
-        if (rc == AH_OK)
+        if (rc == AH_OK && !background)
             rc = core_event(e, session->id, op->id, "input.requested", op->arguments, err);
         if (rc == AH_OK) {
             rc = core_commit(e, after, err);
@@ -250,7 +268,8 @@ ah_code core_execute_operation(ah_engine *e, core_session *session, core_operati
             core_rollback(e);
         if (rc == AH_OK) {
             session->tool_calls++;
-            session->state = AH_WAITING_INPUT;
+            if (!background)
+                session->state = AH_WAITING_INPUT;
         }
         return rc;
     }
@@ -283,6 +302,9 @@ ah_code core_record_intents(ah_engine *e, core_session *session, core_operation 
             rc = core_work_claim(e, session->id, op, err);
         else
             rc = core_set_operation(e, session->id, op->id, "executing", err);
+        if (rc == AH_OK && op->auto_approved)
+            rc = core_event(e, session->id, op->id, "approval.auto",
+                            "{\"policy\":\"workspace_edit\"}", err);
         if (rc == AH_OK)
             rc = core_event(e, session->id, op->id, "tool.started", op->arguments, err);
     }
@@ -350,7 +372,8 @@ ah_code core_dispatch_tool(ah_engine *e, core_session *session, core_operation *
                          .checkpoint_context = &checkpoints,
                          .yield = e->yield,
                          .yield_context = e->yield_context,
-                         .require_revision = coordinated,
+                         .require_revision = coordinated || op->auto_approved,
+                         .auto_approved = op->auto_approved,
                          .checkpoint_json =
                              registered && registered->work
                                  ? (work.checkpoint_json ? work.checkpoint_json : "{}")

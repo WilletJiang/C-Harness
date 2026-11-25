@@ -54,6 +54,7 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
     }
     e->config.flow_runner_path = e->flow_runner_path;
     atomic_init(&e->cancelled, false);
+    atomic_init(&e->approve_all, false);
     atomic_init(&e->mailbox_bytes, 0);
     atomic_init(&e->jobs, NULL);
     if (pthread_mutex_init(&e->mailbox_lock, NULL) != 0) {
@@ -127,10 +128,16 @@ ah_code ah_open(const ah_config *config, ah_engine **out, ah_error *err) {
             "NULL,instructions TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',state INTEGER NOT "
             "NULL,turn INTEGER NOT NULL DEFAULT 0,model_calls INTEGER NOT NULL DEFAULT "
             "0,tool_calls INTEGER NOT NULL DEFAULT 0);"
+            "CREATE TABLE IF NOT EXISTS session_reasoning(session_id TEXT PRIMARY KEY "
+            "REFERENCES sessions(id) ON DELETE CASCADE,effort TEXT NOT NULL);"
             "CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id "
             "TEXT NOT NULL REFERENCES sessions(id),operation_id TEXT,type TEXT NOT NULL,json TEXT "
             "NOT NULL);"
             "CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);"
+            "CREATE INDEX IF NOT EXISTS question_events ON events(session_id,type,operation_id) "
+            "WHERE type='input.question_opened' OR type='input.question_answered';"
+            "CREATE INDEX IF NOT EXISTS staged_input_events ON events(session_id,type,seq) "
+            "WHERE type='input.staged' OR type='input.published';"
             "CREATE TABLE IF NOT EXISTS items(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id "
             "TEXT NOT NULL REFERENCES sessions(id),turn INTEGER NOT NULL,json TEXT NOT NULL,active "
             "INTEGER NOT NULL);"
@@ -342,6 +349,13 @@ core_tool *core_find_tool(ah_engine *e, const char *name) {
 void ah_cancel(ah_engine *e) {
     if (e)
         atomic_store_explicit(&e->cancelled, true, memory_order_relaxed);
+}
+void ah_set_approve_all(ah_engine *e, bool enabled) {
+    if (e)
+        atomic_store_explicit(&e->approve_all, enabled, memory_order_relaxed);
+}
+bool ah_approve_all(const ah_engine *e) {
+    return e && atomic_load_explicit(&e->approve_all, memory_order_relaxed);
 }
 bool core_cancelled(void *context) {
     ah_engine *e = context;

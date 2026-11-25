@@ -144,7 +144,7 @@ static void batch_bounds(ah_reader *reader, sqlite3 *db, const char *sid, uint64
     ok(ah_reader_events(reader, sid, last, 256, observe, &seen, &last, &error), &error);
     assert(seen.count == 2 && last == second);
     uint64_t small = append_event(db, sid, 2);
-    append_event(db, sid, 4 * 1024 * 1024 + 1);
+    uint64_t oversized = append_event(db, sid, 4 * 1024 * 1024 + 1);
     ok(ah_reader_events(reader, sid, last, 256, observe, &seen, &last, &error), &error);
     assert(seen.count == 3 && last == small);
     assert(ah_reader_events(reader, sid, last, 256, observe, &seen, &last, &error) == AH_LIMIT);
@@ -154,6 +154,28 @@ static void batch_bounds(ah_reader *reader, sqlite3 *db, const char *sid, uint64
     assert(ah_reader_events(reader, sid, last, 0, observe, &seen, &last, &error) == AH_INVALID);
     ok(ah_reader_events(reader, sid, UINT64_MAX, 1, observe, &seen, &last, &error), &error);
     assert(last == UINT64_MAX && seen.count == 3);
+
+    observed recent = {0};
+    assert(ah_reader_recent_events(reader, sid, 0, 3, observe, &recent, &last, &error) ==
+           AH_LIMIT);
+    assert(last == 0 && recent.count == 0);
+    ok(ah_reader_recent_events(reader, sid, oversized, 2, observe, &recent, &last, &error),
+       &error);
+    assert(last == second && recent.count == 2 && recent.last == small);
+    recent = (observed){0};
+    ok(ah_reader_recent_events(reader, sid, last, 1, observe, &recent, &last, &error), &error);
+    assert(last == first && recent.count == 1 && recent.last == first);
+    ok(ah_reader_recent_events(reader, sid, 1, 1, observe, &recent, &last, &error), &error);
+    assert(last == 0 && recent.count == 1);
+
+    ok(ah_reader_set_busy_timeout(reader, 0, &error), &error);
+    assert(sqlite3_exec(db, "BEGIN EXCLUSIVE", NULL, NULL, NULL) == SQLITE_OK);
+    char *json = NULL;
+    assert(ah_reader_session_json(reader, sid, &json, &error) == AH_BUSY && !json);
+    last = second;
+    assert(ah_reader_events(reader, sid, last, 1, observe, &seen, &last, &error) == AH_BUSY);
+    assert(last == second && seen.count == 3);
+    assert(sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL) == SQLITE_OK);
 }
 
 int main(void) {

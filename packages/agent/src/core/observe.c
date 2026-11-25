@@ -1,5 +1,6 @@
 #include "core.h"
 #include "ah/observe.h"
+#include <limits.h>
 #include <sys/stat.h>
 
 #define READER_BYTES (4 * 1024 * 1024)
@@ -37,7 +38,18 @@ void ah_reader_close(ah_reader *reader) {
     free(reader);
 }
 
-ah_code ah_reader_open(const char *path, ah_reader **out, ah_error *error) {
+ah_code ah_reader_set_busy_timeout(ah_reader *reader, unsigned milliseconds, ah_error *error) {
+    ah_code code = reader_guard(reader, error);
+    if (code != AH_OK)
+        return code;
+    if (milliseconds > INT_MAX)
+        return ah_fail(error, AH_INVALID, "reader timeout exceeds INT_MAX");
+    if (sqlite3_busy_timeout(reader->view.db, (int)milliseconds) != SQLITE_OK)
+        return reader_error(reader, error, "cannot set reader timeout");
+    return AH_OK;
+}
+
+static ah_code reader_open(const char *path, int flags, ah_reader **out, ah_error *error) {
     if (out)
         *out = NULL;
     if (!path || !*path || !strcmp(path, ":memory:") || !out)
@@ -48,13 +60,14 @@ ah_code ah_reader_open(const char *path, ah_reader **out, ah_error *error) {
     ah_reader *reader = calloc(1, sizeof(*reader));
     if (!reader)
         return ah_fail(error, AH_IO, "out of memory");
-    int opened =
-        sqlite3_open_v2(path, &reader->view.db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL);
+    int opened = sqlite3_open_v2(path, &reader->view.db, flags | SQLITE_OPEN_NOMUTEX, NULL);
     ah_code code = opened == SQLITE_OK ? AH_OK : reader_error(reader, error, "cannot open reader");
     if (reader->view.db)
         sqlite3_busy_timeout(reader->view.db, 1000);
     reader->view.has_work = true;
     sqlite3_stmt *row = NULL;
+    if (code == AH_OK && flags == SQLITE_OPEN_READWRITE)
+        code = core_sql(&reader->view, "PRAGMA query_only=ON", error);
     if (code == AH_OK)
         code = core_prepare(&reader->view, "PRAGMA user_version", &row, error);
     if (code == AH_OK) {
@@ -71,6 +84,20 @@ ah_code ah_reader_open(const char *path, ah_reader **out, ah_error *error) {
     *out = reader;
     ah_error_clear(error);
     return AH_OK;
+}
+
+ah_code ah_reader_open(const char *path, ah_reader **out, ah_error *error) {
+    return reader_open(path, SQLITE_OPEN_READONLY, out, error);
+}
+
+ah_code ah_reader_open_with_writer(const char *path, ah_reader **out, ah_error *error) {
+#ifdef __APPLE__
+    /* Apple's SQLite can report SQLITE_IOERR_LOCK for concurrent DELETE-mode
+     * connections when their file access modes differ. Keep SQL writes disabled. */
+    return reader_open(path, SQLITE_OPEN_READWRITE, out, error);
+#else
+    return ah_reader_open(path, out, error);
+#endif
 }
 
 static ah_code snapshot_cursor(ah_reader *reader, char **json, ah_error *error) {
@@ -118,6 +145,9 @@ ah_code ah_reader_session_json(ah_reader *reader, const char *sid, char **json, 
     if (code == AH_OK)
         code = core_sql(&reader->view, "COMMIT", error);
     if (code != AH_OK) {
+        int sqlite_code = sqlite3_errcode(reader->view.db);
+        if (code == AH_IO && (sqlite_code == SQLITE_BUSY || sqlite_code == SQLITE_LOCKED))
+            code = reader_error(reader, error, "cannot read session snapshot");
         core_rollback(&reader->view);
         free(*json);
         *json = NULL;
@@ -158,31 +188,43 @@ static ah_code copy_event(sqlite3_stmt *row, reader_event *out, size_t *remainin
     return AH_OK;
 }
 
-ah_code ah_reader_events(ah_reader *reader, const char *sid, uint64_t after, unsigned limit,
-                         ah_observer observer, void *context, uint64_t *last, ah_error *error) {
+static ah_code read_events(ah_reader *reader, const char *sid, uint64_t cursor, unsigned limit,
+                           ah_observer observer, void *context, uint64_t *last, bool recent,
+                           ah_error *error) {
     if (last)
-        *last = after;
+        *last = recent ? 0 : cursor;
     ah_code code = reader_guard(reader, error);
     if (code != AH_OK)
         return code;
     if (!observer || !last || !limit || limit > READER_EVENTS || (sid && !*sid))
         return ah_fail(error, AH_INVALID, "observer, cursor and event limit 1..256 required");
-    if (after >= INT64_MAX)
+    if (!recent && cursor >= INT64_MAX)
         return AH_OK;
     reader_event *events = calloc(limit, sizeof(*events));
     if (!events)
         return ah_fail(error, AH_IO, "out of memory copying events");
     sqlite3_stmt *row = NULL;
-    code = core_prepare(&reader->view,
-                        sid ? "SELECT seq,session_id,operation_id,type,json FROM events "
-                              "WHERE session_id=?2 AND seq>?1 ORDER BY seq LIMIT ?3"
-                            : "SELECT seq,session_id,operation_id,type,json FROM events "
-                              "WHERE seq>?1 ORDER BY seq LIMIT ?3",
-                        &row, error);
+    const char *sql;
+    if (recent)
+        sql = sid ? "SELECT seq,session_id,operation_id,type,json FROM events "
+                    "WHERE session_id=?2 AND seq<=?1 ORDER BY seq DESC LIMIT ?3"
+                  : "SELECT seq,session_id,operation_id,type,json FROM events "
+                    "WHERE seq<=?1 ORDER BY seq DESC LIMIT ?3";
+    else
+        sql = sid ? "SELECT seq,session_id,operation_id,type,json FROM events "
+                    "WHERE session_id=?2 AND seq>?1 ORDER BY seq LIMIT ?3"
+                  : "SELECT seq,session_id,operation_id,type,json FROM events "
+                    "WHERE seq>?1 ORDER BY seq LIMIT ?3";
+    code = core_prepare(&reader->view, sql, &row, error);
+    if (code != AH_OK)
+        code = reader_error(reader, error, "cannot prepare event page");
     unsigned count = 0;
     size_t remaining = READER_BYTES;
     if (code == AH_OK) {
-        sqlite3_bind_int64(row, 1, (sqlite3_int64)after);
+        uint64_t bound = cursor;
+        if (recent)
+            bound = !cursor || cursor > INT64_MAX ? INT64_MAX : cursor - 1;
+        sqlite3_bind_int64(row, 1, (sqlite3_int64)bound);
         if (sid)
             sqlite3_bind_text(row, 2, sid, -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(row, 3, (int)limit);
@@ -204,8 +246,10 @@ ah_code ah_reader_events(ah_reader *reader, const char *sid, uint64_t after, uns
     if (code == AH_OK) {
         reader->active = true;
         for (unsigned i = 0; i < count; i++) {
-            observer(context, &events[i].event);
-            *last = events[i].event.seq;
+            unsigned at = recent ? count - i - 1 : i;
+            observer(context, &events[at].event);
+            if (!recent || i == 0)
+                *last = events[at].event.seq;
         }
         reader->active = false;
     }
@@ -213,4 +257,15 @@ ah_code ah_reader_events(ah_reader *reader, const char *sid, uint64_t after, uns
         free(events[i].storage);
     free(events);
     return code;
+}
+
+ah_code ah_reader_events(ah_reader *reader, const char *sid, uint64_t after, unsigned limit,
+                         ah_observer observer, void *context, uint64_t *last, ah_error *error) {
+    return read_events(reader, sid, after, limit, observer, context, last, false, error);
+}
+
+ah_code ah_reader_recent_events(ah_reader *reader, const char *sid, uint64_t before, unsigned limit,
+                                ah_observer observer, void *context, uint64_t *first,
+                                ah_error *error) {
+    return read_events(reader, sid, before, limit, observer, context, first, true, error);
 }

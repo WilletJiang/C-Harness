@@ -5,6 +5,8 @@
 *.db-wal
 *.db-shm
 *.lock
+!/packages/tui/render/math/Cargo.lock
+/packages/tui/render/math/target/
 .env*
 
 __pycache__/

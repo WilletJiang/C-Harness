@@ -80,14 +80,7 @@ ah_code agents_join(ah_engine *e, const core_session *session, const core_operat
                          "join target must be a descendant of the calling agent");
         sqlite3_finalize(s);
     }
-    bool interrupted = false;
-    pthread_mutex_lock(&e->mailbox_lock);
-    for (core_steering *message = e->mailbox_head; message; message = message->next)
-        if (!strcmp(message->session, session->id)) {
-            interrupted = true;
-            break;
-        }
-    pthread_mutex_unlock(&e->mailbox_lock);
+    bool interrupted = core_model_has_steer(e, session->id);
     bool ready = needs_attention || (any_mode ? any : all);
     *parked = rc == AH_OK && !ready && !interrupted && core_wall_ms() < deadline;
     if (rc == AH_OK && *parked && strcmp(op->status, "agent_wait")) {
