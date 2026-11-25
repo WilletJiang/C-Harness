@@ -108,6 +108,10 @@ install -m 644 "$source_root/scripts/binary-package-readme.md" "$package/README.
 install -m 644 "$deps/openssl-src/LICENSE.txt" "$package/share/licenses/OpenSSL.txt"
 install -m 644 "$deps/nghttp2-src/COPYING" "$package/share/licenses/nghttp2.txt"
 install -m 644 "$deps/utf8proc-src/LICENSE.md" "$package/share/licenses/utf8proc.md"
+if [ "$system" = linux-x86_64 ]; then
+    install -m 644 /usr/share/doc/libncurses-dev/copyright "$package/share/licenses/ncurses.txt"
+    install -m 644 /usr/share/doc/zlib1g-dev/copyright "$package/share/licenses/zlib.txt"
+fi
 install -m 644 "${FETCHCONTENT_SOURCE_DIR_AH_CURL_SOURCE:-$build/_deps/ah_curl_source-src}/COPYING" \
     "$package/share/licenses/libcurl.txt"
 install -m 644 "${FETCHCONTENT_SOURCE_DIR_AH_MD4C_SOURCE:-$build/_deps/ah_md4c_source-src}/LICENSE.md" \
