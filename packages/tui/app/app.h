@@ -29,7 +29,7 @@ typedef struct {
 } tui_tool_entry;
 
 typedef struct {
-    char *id, *title, *status, *meta, *detail;
+    char *id, *title, *status, *meta, *detail, *database;
 } tui_pick_strings;
 
 typedef struct tui_stream tui_stream;
@@ -38,6 +38,9 @@ typedef struct {
     cli_context *cli;
     ah_responses *responses;
     ah_reader *reader;
+    const char *database, *state_directory;
+    tui_open_engine open_engine;
+    void *engine_context;
     tui_view *view;
     tui_terminal tty;
     tui_graphics graphics;
@@ -118,6 +121,7 @@ void tui_refresh(tui_app *);
 bool tui_start_run(tui_app *, ah_error *);
 void tui_picker_close(tui_app *);
 bool tui_picker_alloc(tui_app *, size_t count);
+bool tui_picker_extend(tui_app *, size_t count);
 void tui_picker_set(tui_app *, size_t, const char *, const char *, const char *, const char *,
                     const char *, unsigned, bool, bool, bool);
 ah_code tui_switch_session(tui_app *, const char *, ah_error *);

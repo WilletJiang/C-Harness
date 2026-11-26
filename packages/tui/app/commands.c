@@ -63,6 +63,7 @@ void tui_picker_close(tui_app *app) {
         free(app->pick_strings[i].status);
         free(app->pick_strings[i].meta);
         free(app->pick_strings[i].detail);
+        free(app->pick_strings[i].database);
     }
     free(app->pick_strings);
     free(app->pick_items);
@@ -75,15 +76,29 @@ void tui_picker_close(tui_app *app) {
 
 bool tui_picker_alloc(tui_app *app, size_t count) {
     tui_picker_close(app);
+    return tui_picker_extend(app, count);
+}
+
+bool tui_picker_extend(tui_app *app, size_t count) {
     if (!count)
         return true;
-    app->pick_items = calloc(count, sizeof(*app->pick_items));
-    app->pick_strings = calloc(count, sizeof(*app->pick_strings));
-    if (!app->pick_items || !app->pick_strings) {
-        tui_picker_close(app);
+    if (count > SIZE_MAX - app->pick_count)
         return false;
-    }
-    app->pick_count = count;
+    size_t total = app->pick_count + count;
+    if (total > SIZE_MAX / sizeof(*app->pick_items) ||
+        total > SIZE_MAX / sizeof(*app->pick_strings))
+        return false;
+    tui_pick_strings *strings = realloc(app->pick_strings, total * sizeof(*strings));
+    if (!strings)
+        return false;
+    app->pick_strings = strings;
+    tui_picker_item *items = realloc(app->pick_items, total * sizeof(*items));
+    if (!items)
+        return false;
+    app->pick_items = items;
+    memset(strings + app->pick_count, 0, count * sizeof(*strings));
+    memset(items + app->pick_count, 0, count * sizeof(*items));
+    app->pick_count = total;
     return true;
 }
 
@@ -234,66 +249,6 @@ ah_code tui_open_pending_picker(tui_app *app, ah_error *error) {
         .items = app->pick_items,
         .count = app->pick_count,
     };
-    return AH_OK;
-}
-
-static void reset_conversation_view(tui_app *app) {
-    app->ask_seen[0] = 0;
-    app->reply_operation[0] = 0;
-    if (strcmp(app->pending_session, app->session)) {
-        app->pending_ask = false;
-        app->pending_background = false;
-        app->pending_session[0] = app->operation[0] = app->pending_status[0] = 0;
-        app->pending_tool[0] = app->pending_summary[0] = 0;
-    }
-    app->active_tool[0] = 0;
-    app->active_tools = 0;
-    app->history = 0;
-    app->restore_history = false;
-    app->last_block = TUI_BLOCK_NONE;
-    memset(app->tool_cache, 0, sizeof(app->tool_cache));
-    app->notice[0] = 0;
-    app->status.notice_error = false;
-    if (app->image_id[0]) {
-        tui_clear_image(app);
-        snprintf(app->notice, sizeof(app->notice), "Image removed from previous conversation draft");
-    }
-    tui_picker_close(app);
-    tui_print_banner(app);
-}
-
-ah_code tui_open_draft(tui_app *app, const char *model, const char *effort, ah_error *error) {
-    if (app->running || app->catalog_loading)
-        return ah_fail(error, AH_BUSY, "Available when execution pauses");
-    app->session[0] = 0;
-    app->turn = 0;
-    snprintf(app->state, sizeof(app->state), "idle");
-    snprintf(app->model, sizeof(app->model), "%s", model);
-    snprintf(app->effort, sizeof(app->effort), "%s", effort);
-    reset_conversation_view(app);
-    return AH_OK;
-}
-
-ah_code tui_switch_session(tui_app *app, const char *target, ah_error *error) {
-    if (!target || !*target || strlen(target) >= sizeof(app->session))
-        return ah_fail(error, AH_INVALID, "Invalid session ID");
-    if (!strcmp(target, app->session)) {
-        tui_picker_close(app);
-        return AH_OK;
-    }
-    if (app->running || app->catalog_loading)
-        return ah_fail(error, AH_BUSY, "Available when execution pauses");
-    char previous[AH_ID_CAP];
-    strcpy(previous, app->session);
-    strcpy(app->session, target);
-    ah_code code = tui_snapshot(app, app->session, true, error);
-    if (code != AH_OK) {
-        strcpy(app->session, previous);
-        return code;
-    }
-    tui_models_sync(app);
-    reset_conversation_view(app);
-    (void)tui_history_page(app, app->cursor + 1, error);
     return AH_OK;
 }
 

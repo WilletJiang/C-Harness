@@ -16,6 +16,47 @@
 #include <unistd.h>
 #endif
 
+typedef struct {
+    ah_config config;
+    const cli_policy_options *policies;
+    const ah_extensions_config *extensions;
+    const char *workspace;
+    ah_agents_config agents;
+    bool enable_agents, exec_enabled, workflows;
+} cli_runtime;
+
+static ah_code open_engine(void *context, const char *db, ah_engine **engine,
+                           ah_local_tools **tools, ah_error *error) {
+    const cli_runtime *runtime = context;
+    ah_config config = runtime->config;
+    config.database_path = db;
+    *tools = NULL;
+    ah_code code = ah_open(&config, engine, error);
+    if (code == AH_OK)
+        code = cli_policy_enable(*engine, runtime->policies, runtime->workspace, error);
+    const ah_extensions_config *ext = runtime->extensions;
+    if (code == AH_OK && (ext->enable_skills || ext->enable_mcp || ext->enable_plugins))
+        code = ah_extensions_enable(*engine, ext, error);
+    if (code == AH_OK && runtime->workspace) {
+        ah_local_tools_config tc = {.workspace = runtime->workspace,
+                                    .enable_exec = runtime->exec_enabled,
+                                    .approve_writes = true,
+                                    .enable_workflows = runtime->workflows};
+        code = ah_local_tools_open(&tc, tools, error);
+        if (code == AH_OK)
+            code = ah_local_tools_register(*tools, *engine, error);
+    }
+    if (code == AH_OK && runtime->enable_agents)
+        code = ah_agents_enable(*engine, &runtime->agents, error);
+    if (code != AH_OK) {
+        ah_close(*engine);
+        ah_local_tools_close(*tools);
+        *engine = NULL;
+        *tools = NULL;
+    }
+    return code;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2 || !strcmp(argv[1], "--help") || !strcmp(argv[1], "help") ||
         !strcmp(argv[1], "--help-all")) {
@@ -26,7 +67,7 @@ int main(int argc, char **argv) {
         puts(AH_VERSION);
         return 0;
     }
-    const char *command = argv[1], *db = "harness.db", *workspace = NULL;
+    const char *command = argv[1], *db = NULL, *workspace = NULL;
     const char *model = NULL, *instructions = "", *session = NULL, *prompt = NULL;
     const char *command_id = NULL, *operation = NULL, *value = NULL, *summary = NULL;
     const char *endpoint = "https://api.openai.com/v1/responses", *token_file = NULL;
@@ -286,7 +327,6 @@ int main(int argc, char **argv) {
         config.tool_timeout_ms = 1800000;
         config.run_timeout_ms = 3600000;
     }
-    config.database_path = db;
     if (policies.context_bytes)
         config.max_context_bytes = policies.context_bytes;
     config.max_parallel_tools = parallel;
@@ -294,39 +334,39 @@ int main(int argc, char **argv) {
     config.provider = ah_responses_provider(responses);
     config.observer = cli_observe;
     config.observer_context = &cli;
-    code = ah_open(&config, &cli.engine, &error);
-    if (code == AH_OK)
-        code = cli_policy_enable(cli.engine, &policies, workspace, &error);
-    if (code == AH_OK &&
-        (extensions.enable_skills || extensions.enable_mcp || extensions.enable_plugins)) {
-        extensions.workspace = workspace;
-        extensions.allow_http_loopback = allow_http;
-        if (tui && extensions.max_context_bytes > config.max_context_bytes)
-            extensions.max_context_bytes = config.max_context_bytes;
-        code = ah_extensions_enable(cli.engine, &extensions, &error);
+    extensions.workspace = workspace;
+    extensions.allow_http_loopback = allow_http;
+    if (tui && extensions.max_context_bytes > config.max_context_bytes)
+        extensions.max_context_bytes = config.max_context_bytes;
+    cli_runtime runtime = {.config = config,
+                           .policies = &policies,
+                           .extensions = &extensions,
+                           .workspace = workspace,
+                           .enable_agents = agents || tui,
+                           .exec_enabled = exec_enabled,
+                           .workflows = workflows};
+    ah_agents_config_init(&runtime.agents);
+    runtime.agents.provider = ah_responses_async_provider(responses);
+    if (agents)
+        runtime.agents.max_active = agents;
+    runtime.agents.max_agents = agent_limit;
+    runtime.agents.max_depth = agent_depth;
+#ifdef AH_BUILD_TUI
+    char state_directory[PATH_MAX] = {0}, window_path[PATH_MAX];
+    if (tui && !db) {
+        code = tui_state_directory(workspace, state_directory, &error);
+        if (code == AH_OK && session)
+            code = tui_session_database(state_directory, session, window_path, &error);
+        if (code == AH_OK && !session)
+            code = tui_open_window(state_directory, window_path, open_engine, &runtime,
+                                   &cli.engine, &cli.local_tools, &error);
+        db = window_path;
     }
-    ah_local_tools *tools = NULL;
-    if (code == AH_OK && workspace) {
-        ah_local_tools_config tc = {.workspace = workspace,
-                                    .enable_exec = exec_enabled,
-                                    .approve_writes = true,
-                                    .enable_workflows = workflows};
-        code = ah_local_tools_open(&tc, &tools, &error);
-        if (code == AH_OK)
-            code = ah_local_tools_register(tools, cli.engine, &error);
-        if (code == AH_OK)
-            cli.local_tools = tools;
-    }
-    if (code == AH_OK && (agents || tui)) {
-        ah_agents_config ac;
-        ah_agents_config_init(&ac);
-        ac.provider = ah_responses_async_provider(responses);
-        if (agents)
-            ac.max_active = agents;
-        ac.max_agents = agent_limit;
-        ac.max_depth = agent_depth;
-        code = ah_agents_enable(cli.engine, &ac, &error);
-    }
+#endif
+    if (!db)
+        db = config.database_path;
+    if (code == AH_OK && !cli.engine)
+        code = open_engine(&runtime, db, &cli.engine, &cli.local_tools, &error);
     bool watching = code == AH_OK && app_signals_start(cli.engine);
     if (code == AH_OK && !watching) {
         code = AH_IO;
@@ -337,7 +377,8 @@ int main(int argc, char **argv) {
 #ifdef AH_BUILD_TUI
     if (code == AH_OK && tui)
         code = cli_tui(&cli, responses, db, session, model, instructions, endpoint,
-                       endpoint_explicit, has_cli_token, token_source, allow_http, &error);
+                       endpoint_explicit, has_cli_token, token_source, allow_http,
+                       state_directory[0] ? state_directory : NULL, open_engine, &runtime, &error);
 #endif
     if (code == AH_OK && !tui) {
         if (cli.rpc) {
@@ -394,7 +435,8 @@ int main(int argc, char **argv) {
     if (watching)
         app_signals_stop();
     ah_close(cli.engine);
-    ah_local_tools_close(tools);
+    ah_local_tools_close(cli.local_tools);
+    free(cli.owned_database);
     ah_responses_close(responses);
     pthread_mutex_destroy(&cli.output);
     if (code != AH_OK)

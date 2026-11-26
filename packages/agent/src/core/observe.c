@@ -100,6 +100,20 @@ ah_code ah_reader_open_with_writer(const char *path, ah_reader **out, ah_error *
 #endif
 }
 
+ah_code ah_reader_sessions_json(ah_reader *reader, char **json, ah_error *error) {
+    if (json)
+        *json = NULL;
+    ah_code code = reader_guard(reader, error);
+    if (code == AH_OK)
+        code = ah_sessions_json(&reader->view, json, error);
+    if (code == AH_IO) {
+        int sqlite_code = sqlite3_errcode(reader->view.db);
+        if (sqlite_code == SQLITE_BUSY || sqlite_code == SQLITE_LOCKED)
+            return reader_error(reader, error, "cannot list sessions");
+    }
+    return code;
+}
+
 static ah_code snapshot_cursor(ah_reader *reader, char **json, ah_error *error) {
     sqlite3_stmt *row = NULL;
     ah_code code =
