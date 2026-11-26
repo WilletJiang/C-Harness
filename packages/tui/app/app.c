@@ -266,9 +266,14 @@ static bool terminal_loop(tui_app *app) {
 ah_code cli_tui(cli_context *cli, ah_responses *responses, const char *database,
                 const char *session, const char *model, const char *instructions,
                 const char *endpoint, bool endpoint_explicit, bool has_cli_token,
-                const char *token_source, bool allow_loopback_http, ah_error *error) {
+                const char *token_source, bool allow_loopback_http, const char *state_directory,
+                tui_open_engine open_engine, void *engine_context, ah_error *error) {
     tui_app app = {.cli = cli,
                    .responses = responses,
+                   .database = database,
+                   .state_directory = state_directory,
+                   .open_engine = open_engine,
+                   .engine_context = engine_context,
                    .wake = {-1, -1},
                    .oauth_fd = -1,
                    .state = "idle",

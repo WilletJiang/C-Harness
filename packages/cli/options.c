@@ -20,6 +20,9 @@ void cli_usage(bool all) {
          "  --workspace PATH     Register bounded local file tools\n"
 #endif
          "  --db PATH            Session database (default ./harness.db)\n"
+#ifdef AH_BUILD_TUI
+         "                       TUI stores workspace history in user state by default\n"
+#endif
          "  --session ID         Target session\n"
          "  --prompt TEXT        Submit user text before run\n"
          "  --command-id ID      Stable idempotency key (required with prompt/content)\n"

@@ -11,7 +11,7 @@ cmake -S . -B build-tui -DAH_BUILD_TUI=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-tui --parallel
 ./build-tui/ah tui
 ./build-tui/ah tui --model MODEL
-./build-tui/ah tui --session SESSION_ID --db harness.db
+./build-tui/ah tui --session SESSION_ID
 ```
 
 The TUI makes the launch directory available to its local file tools. Use
@@ -46,11 +46,15 @@ updated built-in instructions.
 
 For CLI-supplied credentials use `AH_ACCESS_TOKEN` or `--token-file`, with
 `--endpoint` for a custom endpoint. The default model applies to new sessions.
-Submitted messages, completed replies, and tool events are saved in SQLite
-under `--db` (default `./harness.db`). Reopen the same database to find the
-sessions you previously used.
-`/sessions` lists saved conversations and highlights the current one. Move
-with the arrow keys and press Enter to switch, or press `n` for a new draft.
+The TUI stores SQLite history under `$XDG_STATE_HOME/ah/tui` or
+`~/.local/state/ah/tui`, grouped by the resolved workspace path. Multiple
+windows can run in the same workspace. Each holds a separate database while
+it is open. Use `--db PATH` to explicitly open a single database, including
+an existing `./harness.db` from an earlier version.
+`/sessions` lists saved conversations across the workspace and highlights the
+current one. Move with the arrow keys and press Enter to switch, or press `n`
+for a new draft. To reopen a conversation whose database is held by another
+window, close that window first.
 A draft becomes a saved conversation when you send its first message. `/history`
 reads the preceding event page, and `/pending` opens the operation targeted by
 a reply or approval.

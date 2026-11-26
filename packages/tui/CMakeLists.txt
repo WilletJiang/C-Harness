@@ -31,7 +31,8 @@ add_custom_target(ah_tui_math_build DEPENDS "${math_lib}")
 add_dependencies(ah_cli ah_tui_math_build)
 target_compile_definitions(ah_cli PRIVATE AH_BUILD_TUI=1)
 target_sources(ah_cli PRIVATE
-    app/app.c app/ask.c app/attachments.c app/commands.c app/events.c app/sessions.c app/stream.c
+    app/app.c app/ask.c app/attachments.c app/commands.c app/events.c app/sessions.c app/storage.c
+    app/stream.c
     provider/config.c provider/models.c provider/oauth.c
     terminal/terminal.c terminal/graphics.c
     view/view.c view/auth.c view/chat.c view/picker.c view/text.c
@@ -57,5 +58,7 @@ if(AH_TESTS_ENABLED)
       "${PROJECT_SOURCE_DIR}/tests/test_tui_approval.py" $<TARGET_FILE:ah_cli>)
   add_test(NAME tui_ask COMMAND "${Python3_EXECUTABLE}" -B
       "${PROJECT_SOURCE_DIR}/tests/test_tui_ask.py" $<TARGET_FILE:ah_cli>)
-  set_tests_properties(tui_graphics tui_outcome tui_approval tui_ask PROPERTIES TIMEOUT 60)
+  add_test(NAME tui_storage COMMAND "${Python3_EXECUTABLE}" -B
+      "${PROJECT_SOURCE_DIR}/tests/test_tui_storage.py" $<TARGET_FILE:ah_cli>)
+  set_tests_properties(tui_graphics tui_outcome tui_approval tui_ask tui_storage PROPERTIES TIMEOUT 60)
 endif()

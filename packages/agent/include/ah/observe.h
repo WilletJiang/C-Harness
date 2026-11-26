@@ -19,6 +19,8 @@ ah_code ah_reader_open_with_writer(const char *database_path, ah_reader **, ah_e
 void ah_reader_close(ah_reader *);
 /* Defaults to 1000 ms. A zero timeout makes lock contention return immediately. */
 ah_code ah_reader_set_busy_timeout(ah_reader *, unsigned milliseconds, ah_error *);
+/* Lists session metadata without acquiring writer ownership. */
+ah_code ah_reader_sessions_json(ah_reader *, char **json, ah_error *);
 /* Consistent session snapshot plus "cursor", the last global event sequence in
  * that same read transaction. Read events after cursor to continue without gaps. */
 ah_code ah_reader_session_json(ah_reader *, const char *session_id, char **json, ah_error *);

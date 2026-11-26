@@ -13,6 +13,7 @@ typedef struct {
     bool json_events;
     bool rpc;
     const char *workspace;
+    char *owned_database;
     ah_observer event_sink;
     void *event_context;
 } cli_context;

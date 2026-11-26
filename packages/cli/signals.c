@@ -11,6 +11,7 @@ static int read_fd = -1;
 static int shutdown_read_fd = -1;
 static pthread_t watcher;
 static ah_engine *active_engine;
+static pthread_mutex_t engine_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct sigaction previous_int, previous_term;
 
 static void notify_signal(int fd, char number) {
@@ -39,9 +40,16 @@ static void *watch_signals(void *context) {
             continue;
         if (n != 1)
             break;
+        pthread_mutex_lock(&engine_lock);
         ah_cancel(active_engine);
+        pthread_mutex_unlock(&engine_lock);
     }
     return NULL;
+}
+void app_signals_set_engine(ah_engine *engine) {
+    pthread_mutex_lock(&engine_lock);
+    active_engine = engine;
+    pthread_mutex_unlock(&engine_lock);
 }
 static bool make_pipe(int fds[2], bool nonblocking_reader) {
     if (pipe(fds) != 0)
