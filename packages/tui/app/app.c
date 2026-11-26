@@ -267,6 +267,7 @@ ah_code cli_tui(cli_context *cli, ah_responses *responses, const char *database,
                    .responses = responses,
                    .wake = {-1, -1},
                    .oauth_fd = -1,
+                   .state = "idle",
                    .instructions = instructions,
                    .has_token = has_cli_token,
                    .endpoint_explicit = endpoint_explicit,
@@ -333,13 +334,9 @@ ah_code cli_tui(cli_context *cli, ah_responses *responses, const char *database,
     } else if (!app.has_token || !app.default_model[0]) {
         tui_auth_open(&app, true);
     } else {
-        code = ah_session_create(cli->engine, app.default_model, instructions, app.session, error);
+        code = tui_open_draft(&app, app.default_model, "", error);
         if (code != AH_OK)
             goto done;
-        code = tui_snapshot(&app, app.session, true, error);
-        if (code != AH_OK)
-            goto done;
-        tui_print_banner(&app);
     }
     if (app.session[0])
         tui_models_sync(&app);
@@ -369,6 +366,7 @@ done:
     tui_oauth_cancel(&app);
     tui_auth_close(&app);
     tui_picker_close(&app);
+    tui_clear_image(&app);
     tui_terminal_close(&app.tty);
     if (app.running) {
         while (!atomic_load(&app.worker_done)) {

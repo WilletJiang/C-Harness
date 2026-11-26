@@ -1,4 +1,5 @@
 #include "app.h"
+#include "core/content_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -44,11 +45,20 @@ static char *image_path(const char *arg) {
     return path;
 }
 
+void tui_clear_image(tui_app *app) {
+    if (app->draft_image) {
+        core_content content = {.blobs = app->draft_image};
+        core_content_free(&content);
+        app->draft_image = NULL;
+    }
+    app->image_id[0] = app->image_name[0] = 0;
+}
+
 ah_code tui_image_command(tui_app *app, const char *arg, ah_error *error) {
     while (*arg == ' ' || *arg == '\t')
         ++arg;
     if (!strcmp(arg, "clear")) {
-        app->image_id[0] = app->image_name[0] = 0;
+        tui_clear_image(app);
         app->status.notice_error = false;
         snprintf(app->notice, sizeof(app->notice), "Image removed from draft");
         return AH_OK;
@@ -72,20 +82,30 @@ ah_code tui_image_command(tui_app *app, const char *arg, ah_error *error) {
         snprintf(error->message, sizeof(error->message), "Choose a PNG, JPEG, GIF, or WebP image");
     } else {
         char id[AH_ARTIFACT_ID_CAP];
-        code = ah_artifact_import(app->cli->engine, app->session, path, mime, id, error);
+        content_blob *draft = NULL;
+        if (app->session[0]) {
+            code = ah_artifact_import(app->cli->engine, app->session, path, mime, id, error);
+        } else {
+            draft = calloc(1, sizeof(*draft));
+            code = draft ? content_artifact_read(path, mime, draft, error)
+                         : ah_fail(error, AH_IO, "Cannot allocate image draft");
+        }
         if (code == AH_OK) {
-            strcpy(app->image_id, id);
+            tui_clear_image(app);
+            app->draft_image = draft;
+            strcpy(app->image_id, draft ? draft->id : id);
             // On filesystems with a 255-byte component limit, this keeps the entire name.
             snprintf(app->image_name, sizeof(app->image_name), "%s", name);
             app->status.notice_error = false;
             app->notice[0] = 0;
-        }
+        } else
+            free(draft);
     }
     free(path);
     return code;
 }
 
-ah_code tui_submit_image(tui_app *app, const char *command, const char *text, ah_error *error) {
+static char *image_input(const char *text, const char *image_id) {
     yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
     yyjson_mut_val *parts = doc ? yyjson_mut_arr(doc) : NULL;
     yyjson_mut_val *message = parts && *text ? yyjson_mut_arr_add_obj(doc, parts) : NULL;
@@ -93,19 +113,36 @@ ah_code tui_submit_image(tui_app *app, const char *command, const char *text, ah
                                    yyjson_mut_obj_add_str(doc, message, "text", text)));
     yyjson_mut_val *image = ok ? yyjson_mut_arr_add_obj(doc, parts) : NULL;
     ok = image && yyjson_mut_obj_add_str(doc, image, "type", "input_image") &&
-         yyjson_mut_obj_add_str(doc, image, "artifact_id", app->image_id);
+         yyjson_mut_obj_add_str(doc, image, "artifact_id", image_id);
     char *json = NULL;
     if (ok) {
         yyjson_mut_doc_set_root(doc, parts);
         json = yyjson_mut_write(doc, 0, NULL);
     }
-    ah_code code = json ? ah_submit_content_after_interruption(app->cli->engine, app->session,
-                                                               command, json, error)
-                        : AH_IO;
-    free(json);
     yyjson_mut_doc_free(doc);
+    return json;
+}
+
+ah_code tui_submit_input(tui_app *app, const char *command, const char *text, ah_error *error) {
+    char *json = app->image_id[0] ? image_input(text, app->image_id) : NULL;
+    if (app->image_id[0] && !json)
+        return ah_fail(error, AH_IO, "Cannot prepare image input");
+    ah_engine *engine = app->cli->engine;
+    ah_code code;
+    if (!app->session[0]) {
+        code = core_submit_first(engine, app->model, app->instructions, app->effort, command,
+                                 json ? json : text, app->draft_image, app->session,
+                                 &app->cursor, error);
+        if (code == AH_OK)
+            app->turn = 1;
+    } else if (json) {
+        code = ah_submit_content_after_interruption(engine, app->session, command, json, error);
+    } else {
+        code = ah_submit_after_interruption(engine, app->session, command, text, error);
+    }
+    free(json);
     if (code == AH_OK)
-        app->image_id[0] = app->image_name[0] = 0;
+        tui_clear_image(app);
     return code;
 }
 

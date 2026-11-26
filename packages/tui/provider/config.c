@@ -320,18 +320,14 @@ static ah_code apply_connection(tui_app *app, const char *url, const char *token
         app->has_token = true;
         strcpy(app->token_source, chatgpt ? "Keychain" : app->config_path[0] ? "saved" : "this run");
     }
-    if (!existing) {
-        code = ah_session_create(app->cli->engine, app->default_model, app->instructions,
-                                 app->session, error);
-        if (code != AH_OK)
-            return code;
-        code = tui_snapshot(app, app->session, true, error);
-        if (code != AH_OK)
-            return code;
+    if (!existing && strcmp(app->model, model)) {
+        snprintf(app->model, sizeof(app->model), "%s", model);
+        app->effort[0] = 0;
     }
     tui_auth_close(app);
-    if (onboarding) {
+    if (onboarding || !existing)
         tui_print_banner(app);
+    if (onboarding) {
         if (existing && tui_history_page(app, app->cursor + 1, error) != AH_OK)
             tui_show_error(app, error->code, error);
     } else {

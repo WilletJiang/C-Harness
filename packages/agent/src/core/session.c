@@ -47,8 +47,8 @@ static ah_code save_effort(ah_engine *e, const char *sid, const char *effort, ah
     return core_done(e, s, err);
 }
 
-ah_code ah_session_create_with_reasoning(ah_engine *e, const char *model, const char *instructions,
-                                         const char *effort, char id[AH_ID_CAP], ah_error *err) {
+static ah_code prepare_session(ah_engine *e, const char *model, const char *instructions,
+                               const char *effort, char id[AH_ID_CAP], ah_error *err) {
     ah_code rc = core_guard(e, err);
     if (rc != AH_OK)
         return rc;
@@ -63,14 +63,13 @@ ah_code ah_session_create_with_reasoning(ah_engine *e, const char *model, const 
     if (prefix_bytes > e->config.max_context_bytes ||
         extra_bytes > e->config.max_context_bytes - prefix_bytes)
         return ah_fail(err, AH_LIMIT, "session instructions exceed context byte budget");
-    rc = core_id(id, err);
-    if (rc != AH_OK)
-        return rc;
-    uint64_t after = 0;
-    rc = core_begin(e, &after, err);
+    return core_id(id, err);
+}
+
+static ah_code insert_session(ah_engine *e, const char *id, const char *model,
+                              const char *instructions, const char *effort, ah_error *err) {
     sqlite3_stmt *s = NULL;
-    if (rc == AH_OK)
-        rc = core_prepare(
+    ah_code rc = core_prepare(
             e,
             "INSERT INTO sessions(id,model,instructions,state) "
             "VALUES(?1,?2,?3 || CASE WHEN ?4='' THEN '' ELSE char(10,10) || ?4 END,?5)",
@@ -87,6 +86,18 @@ ah_code ah_session_create_with_reasoning(ah_engine *e, const char *model, const 
         rc = save_effort(e, id, effort, err);
     if (rc == AH_OK)
         rc = core_event(e, id, NULL, "session.created", "{}", err);
+    return rc;
+}
+
+ah_code ah_session_create_with_reasoning(ah_engine *e, const char *model, const char *instructions,
+                                         const char *effort, char id[AH_ID_CAP], ah_error *err) {
+    ah_code rc = prepare_session(e, model, instructions, effort, id, err);
+    if (rc != AH_OK)
+        return rc;
+    uint64_t after;
+    rc = core_begin(e, &after, err);
+    if (rc == AH_OK)
+        rc = insert_session(e, id, model, instructions, effort, err);
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else
@@ -135,6 +146,37 @@ ah_code ah_session_reasoning(ah_engine *e, const char *sid, char **effort, ah_er
     ah_error_clear(err);
     return AH_OK;
 }
+static ah_code save_input(ah_engine *e, const char *sid, const char *command, const char *identity,
+                          int kind, unsigned turn, const core_content *content, ah_error *err) {
+    sqlite3_stmt *s = NULL;
+    ah_code rc = core_prepare(e, "INSERT INTO commands(session_id,id,text,kind) VALUES(?,?,?,?)", &s,
+                              err);
+    if (rc == AH_OK) {
+        sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 2, command, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(s, 3, identity, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(s, 4, kind);
+        rc = core_done(e, s, err);
+    }
+    if (rc == AH_OK)
+        rc = core_content_save(e, sid, content, err);
+    if (rc == AH_OK)
+        rc = core_add_item(e, sid, turn, content->json, err);
+    if (rc == AH_OK)
+        rc = core_prepare(e, "UPDATE sessions SET turn=?,model_calls=0,tool_calls=0 WHERE id=?", &s,
+                          err);
+    if (rc == AH_OK) {
+        sqlite3_bind_int64(s, 1, turn);
+        sqlite3_bind_text(s, 2, sid, -1, SQLITE_TRANSIENT);
+        rc = core_done(e, s, err);
+    }
+    if (rc == AH_OK)
+        rc = core_event(e, sid, NULL, "input.submitted", content->json, err);
+    if (rc == AH_OK)
+        rc = core_state(e, sid, AH_READY, err);
+    return rc;
+}
+
 ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, const char *identity,
                          int kind, bool allow_interruption, const core_content *content,
                          ah_error *err) {
@@ -186,39 +228,14 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
         core_session_free(&session);
         return ah_fail(err, AH_BUSY, "session cannot accept input in current state");
     }
-    const char *json = content->json;
     atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
     uint64_t after = 0;
     rc = core_begin(e, &after, err);
     if (rc == AH_OK && close_previous)
         rc = core_close_interrupted_tools(e, sid, err);
-    if (rc == AH_OK)
-        rc = core_prepare(e, "INSERT INTO commands(session_id,id,text,kind) VALUES(?,?,?,?)", &s,
-                          err);
-    if (rc == AH_OK) {
-        sqlite3_bind_text(s, 1, sid, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(s, 2, command, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(s, 3, identity, -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(s, 4, kind);
-        rc = core_done(e, s, err);
-    }
-    if (rc == AH_OK)
-        rc = core_content_save(e, sid, content, err);
     unsigned turn = session.turn + (session.state == AH_READY ? 0 : 1);
     if (rc == AH_OK)
-        rc = core_add_item(e, sid, turn, json, err);
-    if (rc == AH_OK)
-        rc = core_prepare(e, "UPDATE sessions SET turn=?,model_calls=0,tool_calls=0 WHERE id=?", &s,
-                          err);
-    if (rc == AH_OK) {
-        sqlite3_bind_int64(s, 1, turn);
-        sqlite3_bind_text(s, 2, sid, -1, SQLITE_TRANSIENT);
-        rc = core_done(e, s, err);
-    }
-    if (rc == AH_OK)
-        rc = core_event(e, sid, NULL, "input.submitted", json, err);
-    if (rc == AH_OK)
-        rc = core_state(e, sid, AH_READY, err);
+        rc = save_input(e, sid, command, identity, kind, turn, content, err);
     if (rc == AH_OK)
         rc = core_commit(e, after, err);
     else
@@ -226,11 +243,7 @@ ah_code core_submit_item(ah_engine *e, const char *sid, const char *command, con
     core_session_free(&session);
     return rc;
 }
-static ah_code submit_text(ah_engine *e, const char *sid, const char *command, const char *text,
-                           bool allow_interruption, ah_error *err) {
-    ah_code rc = core_guard(e, err);
-    if (rc != AH_OK)
-        return rc;
+static ah_code prepare_text(ah_engine *e, const char *text, core_content *content, ah_error *err) {
     size_t complete = 0;
     if (!text || !*text || strlen(text) > e->config.max_context_bytes ||
         !ah_utf8_prefix(text, strlen(text), &complete) || complete != strlen(text))
@@ -242,10 +255,59 @@ static ah_code submit_text(ah_engine *e, const char *sid, const char *command, c
     yyjson_mut_doc_set_root(d, item);
     yyjson_mut_obj_add_str(d, item, "role", "user");
     yyjson_mut_obj_add_strcpy(d, item, "content", text);
-    core_content content = {.json = ah_mut_write(d)};
+    content->json = ah_mut_write(d);
     ah_mut_doc_free(d);
-    rc = content.json ? core_submit_item(e, sid, command, text, 0, allow_interruption, &content, err)
-                      : ah_fail(err, AH_IO, "out of memory");
+    return content->json ? AH_OK : ah_fail(err, AH_IO, "out of memory");
+}
+
+static ah_code submit_text(ah_engine *e, const char *sid, const char *command, const char *text,
+                           bool allow_interruption, ah_error *err) {
+    ah_code rc = core_guard(e, err);
+    if (rc != AH_OK)
+        return rc;
+    core_content content = {0};
+    rc = prepare_text(e, text, &content, err);
+    if (rc == AH_OK)
+        rc = core_submit_item(e, sid, command, text, 0, allow_interruption, &content, err);
+    core_content_free(&content);
+    return rc;
+}
+
+ah_code core_submit_first(ah_engine *e, const char *model, const char *instructions,
+                          const char *effort, const char *command, const char *input,
+                          const content_blob *image, char id[AH_ID_CAP], uint64_t *cursor,
+                          ah_error *err) {
+    char sid[AH_ID_CAP];
+    ah_code rc = prepare_session(e, model, instructions, effort, sid, err);
+    if (rc != AH_OK)
+        return rc;
+    if (!command || !*command || strlen(command) > 256)
+        return ah_fail(err, AH_INVALID, "bounded command required");
+    core_content content = {0};
+    if (!image)
+        rc = prepare_text(e, input, &content, err);
+    uint64_t after;
+    if (rc == AH_OK)
+        rc = core_begin(e, &after, err);
+    if (rc == AH_OK) {
+        rc = insert_session(e, sid, model, instructions, effort, err);
+        if (rc == AH_OK && image)
+            rc = content_artifact_save(e, sid, image, err);
+        if (rc == AH_OK && image)
+            rc = core_content_prepare(e, sid, input, &content, err);
+        if (rc == AH_OK)
+            rc = save_input(e, sid, command, image ? content.json : input, image != NULL, 1,
+                            &content, err);
+        if (rc == AH_OK)
+            rc = core_commit(e, after, err);
+        else
+            core_rollback(e);
+        if (rc == AH_OK) {
+            atomic_store_explicit(&e->cancelled, false, memory_order_relaxed);
+            memcpy(id, sid, AH_ID_CAP);
+            *cursor = after;
+        }
+    }
     core_content_free(&content);
     return rc;
 }

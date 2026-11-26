@@ -102,7 +102,7 @@ static ah_code model_picker(tui_app *app, const char *focus, ah_error *error) {
 }
 
 static bool updates_current(const tui_app *app, const char *model) {
-    return !strcmp(model, app->model) &&
+    return app->session[0] && !strcmp(model, app->model) &&
            (!strcmp(app->state, "idle") || !strcmp(app->state, "completed"));
 }
 
@@ -130,7 +130,8 @@ static ah_code effort_picker(tui_app *app, const char *model, ah_error *error) {
         }
     }
     bool current = updates_current(app, model);
-    const char *effort = current ? app->effort : "";
+    const char *effort = current || (!app->session[0] && !strcmp(model, app->model))
+                            ? app->effort : "";
     if (!tui_picker_alloc(app, count + 1))
         return ah_fail(error, AH_IO, "Cannot allocate reasoning picker");
     tui_picker_set(app, 0, "default", "Provider default", NULL, default_level, NULL, 0,
@@ -144,7 +145,8 @@ static ah_code effort_picker(tui_app *app, const char *model, ah_error *error) {
     }
     snprintf(app->chosen_model, sizeof(app->chosen_model), "%s", model);
     snprintf(app->model_picker_subtitle, sizeof(app->model_picker_subtitle), "%s · %s", model,
-             current ? "Applies next turn" : "Enter starts a new session");
+             current ? "Applies next turn" :
+             app->session[0] ? "Enter opens a new draft" : "Applies to this draft");
     open_picker(app, TUI_PICK_EFFORT, "Reasoning effort", app->model_picker_subtitle, selected);
     return AH_OK;
 }
@@ -229,12 +231,20 @@ ah_code tui_models_choose(tui_app *app, const char *id, ah_error *error) {
         }
         return code;
     }
-    char session[AH_ID_CAP];
-    ah_code code = ah_session_create_with_reasoning(app->cli->engine, model, app->instructions,
-                                                    effort, session, error);
-    if (code == AH_OK)
-        code = tui_switch_session(app, session, error);
-    if (code == AH_OK && !tui_config_save_model(app, model)) {
+    ah_code code = AH_OK;
+    if (app->session[0]) {
+        code = tui_open_draft(app, model, effort, error);
+    } else {
+        bool model_changed = strcmp(app->model, model) != 0;
+        snprintf(app->model, sizeof(app->model), "%s", model);
+        snprintf(app->effort, sizeof(app->effort), "%s", effort);
+        tui_picker_close(app);
+        app->status.notice_error = false;
+        snprintf(app->notice, sizeof(app->notice), "Reasoning effort: %s", *effort ? effort : "provider default");
+        if (model_changed)
+            tui_print_banner(app);
+    }
+    if (code == AH_OK && strcmp(app->default_model, model) && !tui_config_save_model(app, model)) {
         app->status.notice_error = true;
         snprintf(app->notice, sizeof(app->notice), "Cannot save the default model to %s",
                  app->config_display);

@@ -47,6 +47,7 @@ typedef struct {
     char session[AH_ID_CAP], pending_session[AH_ID_CAP], operation[AH_ID_CAP];
     char ask_seen[AH_ID_CAP];
     char image_id[AH_ARTIFACT_ID_CAP], image_name[256];
+    struct content_blob *draft_image;
     bool pending_ask;
     char *ask_prompt;
     char model[257], default_model[257], endpoint[512], cwd[256], branch[128];
@@ -120,6 +121,7 @@ bool tui_picker_alloc(tui_app *, size_t count);
 void tui_picker_set(tui_app *, size_t, const char *, const char *, const char *, const char *,
                     const char *, unsigned, bool, bool, bool);
 ah_code tui_switch_session(tui_app *, const char *, ah_error *);
+ah_code tui_open_draft(tui_app *, const char *model, const char *effort, ah_error *);
 ah_code tui_models_open(tui_app *, ah_error *);
 void tui_models_ready(tui_app *);
 void tui_models_sync(tui_app *);
@@ -146,7 +148,8 @@ ah_code tui_oauth_refresh(ah_responses *, ah_error *);
 ah_code tui_oauth_rejected(void *, const char *, uint64_t, ah_cancel_check, void *, char **);
 ah_code tui_open_sessions_picker(tui_app *, ah_error *);
 ah_code tui_image_command(tui_app *, const char *, ah_error *);
-ah_code tui_submit_image(tui_app *, const char *, const char *, ah_error *);
+void tui_clear_image(tui_app *);
+ah_code tui_submit_input(tui_app *, const char *, const char *, ah_error *);
 void tui_input_summary(yyjson_val *, char *, size_t);
 void tui_handle_key(void *, tui_key, const char *, size_t);
 #endif

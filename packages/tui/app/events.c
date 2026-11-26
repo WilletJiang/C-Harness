@@ -950,6 +950,10 @@ void tui_restore_history(tui_app *app) {
 }
 
 void tui_refresh(tui_app *app) {
+    if (!app->session[0]) {
+        app->refresh_events = false;
+        return;
+    }
     uint64_t last;
     ah_error error = {0};
     ah_code code = ah_reader_events(app->reader, NULL, app->cursor, LIVE_PAGE, journal, app, &last,
