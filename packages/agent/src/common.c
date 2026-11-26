@@ -2,6 +2,25 @@
 #include "internal.h"
 #include <stdio.h>
 #include <time.h>
+#include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
+bool ah_executable_path(char path[PATH_MAX]) {
+#ifdef __APPLE__
+    uint32_t size = PATH_MAX;
+    char binary[PATH_MAX];
+    if (_NSGetExecutablePath(binary, &size) || !realpath(binary, path))
+        return false;
+#else
+    ssize_t n = readlink("/proc/self/exe", path, PATH_MAX - 1);
+    if (n <= 0 || n >= PATH_MAX - 1)
+        return false;
+    path[n] = 0;
+#endif
+    return true;
+}
 
 ah_code ah_fail(ah_error *error, ah_code code, const char *format, ...) {
     if (error) {

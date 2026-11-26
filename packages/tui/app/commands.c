@@ -631,7 +631,8 @@ void tui_handle_key(void *context, tui_key key, const char *text, size_t count) 
             code = chatgpt ? tui_oauth_start(app, mdl, true, &error)
                            : tui_config_apply(app, ep, tok, mdl, &error);
             if (code != AH_OK) {
-                snprintf(app->auth_error, sizeof(app->auth_error), "%s",
+                snprintf(app->auth_error, sizeof(app->auth_error), "%.*s",
+                         (int)sizeof(app->auth_error) - 1,
                          error.message[0] ? error.message : ah_code_name(code));
                 return;
             }
